@@ -327,12 +327,12 @@ USE_PROXY = False
 TIMEOUT_REQUEST = 30
 RETRY_ATTEMPTS = 3
 DELAY_ON_RETRY = 5
-
+NUM_CHAPTER_BATCHES = 5
 STATE_FILE = "crawl_state.json"
 
 # --- Cấu hình cơ bản ---
 BASE_URL = "https://truyenfull.vision"
-REQUEST_DELAY = 1  # Giây, độ trễ giữa các request
+REQUEST_DELAY = 5  # Giây, độ trễ giữa các request
 DATA_FOLDER = "truyen_data"
 PROXIES_FOLDER = "proxies"
 PROXIES_FILE = os.path.join(PROXIES_FOLDER, "proxies.txt")
@@ -343,7 +343,7 @@ GLOBAL_PROXY_USERNAME = os.getenv("PROXY_USER", "muonroi-zone-resi")
 GLOBAL_PROXY_PASSWORD = os.getenv("PROXY_PASS", "0967442142")
 
 _UA_OBJ = None
-_DISABLE_FAKE_UA = False
+_DISABLE_FAKE_UA = True
 
 def _init_user_agent():
     try:

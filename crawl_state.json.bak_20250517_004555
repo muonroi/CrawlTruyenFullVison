@@ -1,0 +1,32 @@
+{
+    "current_genre_index": 0,
+    "current_genre_url": "https://truyenfull.vision/the-loai/tien-hiep/",
+    "current_story_index_in_genre": 12,
+    "previous_genre_url_in_state_for_stories": "https://truyenfull.vision/the-loai/tien-hiep/",
+    "current_story_url": "https://truyenfull.vision/bi-mat-cua-troc-yeu-su/",
+    "previous_story_url_in_state_for_chapters": "https://truyenfull.vision/bi-mat-cua-troc-yeu-su/",
+    "globally_completed_story_urls": [
+        "https://truyenfull.vision/hay-toa-sang-dung-chi-duoc-chieu-roi/",
+        "https://truyenfull.vision/mot-nua-kich-ban-bach-nguyet-quang/",
+        "https://truyenfull.vision/nam-vung-ma-gioi-300-nam/",
+        "https://truyenfull.vision/nhieu-nam-roi-ta-khong-dung-kiem/",
+        "https://truyenfull.vision/nu-phu-phan-dien-lai-lam-sup-do-cot-truyen-roi/",
+        "https://truyenfull.vision/thuong-than-xin-nhe-chut-lac-boi-boi/",
+        "https://truyenfull.vision/vong-tran-bat-vong-xuyen/",
+        "https://truyenfull.vision/xuyen-nhanh-hong-nhan-khuynh-quoc-van-chung-me-hon/"
+    ],
+    "processed_chapter_urls_for_current_story": [
+        "https://truyenfull.vision/bi-mat-cua-troc-yeu-su/chuong-7/",
+        "https://truyenfull.vision/bi-mat-cua-troc-yeu-su/chuong-6/",
+        "https://truyenfull.vision/bi-mat-cua-troc-yeu-su/chuong-5/",
+        "https://truyenfull.vision/bi-mat-cua-troc-yeu-su/chuong-1/",
+        "https://truyenfull.vision/bi-mat-cua-troc-yeu-su/chuong-3/",
+        "https://truyenfull.vision/bi-mat-cua-troc-yeu-su/chuong-10/",
+        "https://truyenfull.vision/bi-mat-cua-troc-yeu-su/chuong-9/",
+        "https://truyenfull.vision/bi-mat-cua-troc-yeu-su/chuong-8/",
+        "https://truyenfull.vision/bi-mat-cua-troc-yeu-su/chuong-12/",
+        "https://truyenfull.vision/bi-mat-cua-troc-yeu-su/chuong-11/",
+        "https://truyenfull.vision/bi-mat-cua-troc-yeu-su/chuong-2/",
+        "https://truyenfull.vision/bi-mat-cua-troc-yeu-su/chuong-4/"
+    ]
+}
