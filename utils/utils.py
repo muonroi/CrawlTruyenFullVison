@@ -1,9 +1,10 @@
 # utils.py
 import os
 import re
+import json
 import logging
 from logging.handlers import RotatingFileHandler
-
+from config.config import STATE_FILE
 # --- Thiết lập Logging ---
 LOG_FILE_PATH = "crawler.log"
 # Tạo logger
@@ -29,6 +30,60 @@ fh.setFormatter(formatter)
 # Thêm handlers vào logger
 logger.addHandler(ch)
 logger.addHandler(fh)
+
+def load_crawl_state() -> dict:
+    if os.path.exists(STATE_FILE):
+        try:
+            with open(STATE_FILE, 'r', encoding='utf-8') as f:
+                state = json.load(f)
+                logger.info(f"Đã tải trạng thái crawl từ {STATE_FILE}: {state}")
+                return state
+        except Exception as e:
+            logger.error(f"Lỗi khi tải trạng thái crawl từ {STATE_FILE}: {e}. Bắt đầu crawl mới.")
+    return {}
+
+def clear_specific_state_keys(state: dict, keys_to_remove: list):
+    """
+    Xóa các key cụ thể khỏi dictionary trạng thái và lưu lại trạng thái.
+    Hàm này thay đổi trực tiếp dict 'state' được truyền vào.
+    """
+    updated = False
+    for key in keys_to_remove:
+        if key in state:
+            del state[key]
+            updated = True
+            logger.debug(f"Đã xóa key '{key}' khỏi trạng thái crawl.")
+    if updated:
+        save_crawl_state(state) # Lưu lại state sau khi đã xóa các key
+
+def save_crawl_state(state: dict):
+    try:
+        with open(STATE_FILE, 'w', encoding='utf-8') as f:
+            json.dump(state, f, ensure_ascii=False, indent=4)
+        logger.info(f"Đã lưu trạng thái crawl vào {STATE_FILE}")
+    except Exception as e:
+        logger.error(f"Lỗi khi lưu trạng thái crawl vào {STATE_FILE}: {e}")
+
+def clear_crawl_state_component(state: dict, component_key: str):
+    """Xóa một phần của state, ví dụ khi một truyện/thể loại hoàn thành"""
+    if component_key in state:
+        del state[component_key]
+        # Có thể cần xóa thêm các key phụ thuộc, ví dụ khi xóa genre thì xóa luôn story và chapter
+        if component_key == "current_genre_url":
+            state.pop("current_story_url", None)
+            state.pop("current_story_index_in_genre", None)
+            state.pop("processed_chapter_urls_for_current_story", None)
+        elif component_key == "current_story_url":
+            state.pop("processed_chapter_urls_for_current_story", None)
+    save_crawl_state(state)
+
+def clear_all_crawl_state():
+    if os.path.exists(STATE_FILE):
+        try:
+            os.remove(STATE_FILE)
+            logger.info(f"Đã xóa file trạng thái crawl: {STATE_FILE}")
+        except Exception as e:
+            logger.error(f"Lỗi khi xóa file trạng thái crawl: {e}")
 
 
 def sanitize_filename(name: str) -> str:
