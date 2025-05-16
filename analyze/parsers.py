@@ -4,7 +4,7 @@ from typing import List, Tuple, Optional, Dict, Any
 from bs4 import BeautifulSoup, Comment
 from urllib.parse import urljoin, urlparse
 
-from utils.utils import logger
+from utils.logger import logger
 from scraper import make_request
 from config.config import (
     MAX_STORIES_PER_GENRE_PAGE,

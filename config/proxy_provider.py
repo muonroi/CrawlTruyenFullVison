@@ -61,6 +61,9 @@ def get_proxy_url(username: str = None, password: str = None) -> Optional[str]: 
     return get_random_proxy_url(username, password)
 
 def remove_bad_proxy(bad_proxy_url):
+    if not bad_proxy_url:
+        return
+    
     global loaded_proxies
     # Chuẩn hóa về ip:port để remove chính xác
     import re

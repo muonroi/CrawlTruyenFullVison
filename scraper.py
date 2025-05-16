@@ -3,7 +3,7 @@ import cloudscraper
 from typing import Optional, Dict
 import cloudscraper
 from config.proxy_provider import get_proxy_url, remove_bad_proxy
-from utils.utils import logger
+from utils.logger import logger
 from config.config import (
     GLOBAL_PROXY_PASSWORD,
     GLOBAL_PROXY_USERNAME,
