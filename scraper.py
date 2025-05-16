@@ -7,6 +7,7 @@ from utils.utils import logger
 from config.config import (
     GLOBAL_PROXY_PASSWORD,
     GLOBAL_PROXY_USERNAME,
+    USE_PROXY,
     get_random_headers)
 
 scraper: Optional[cloudscraper.CloudScraper] = None
@@ -42,7 +43,7 @@ def make_request(url, headers_override=None, timeout=30):
         headers.update(headers_override)
 
     # Lấy proxy random
-    proxy_url = get_proxy_url(GLOBAL_PROXY_USERNAME, GLOBAL_PROXY_PASSWORD)
+    proxy_url = get_proxy_url(GLOBAL_PROXY_USERNAME, GLOBAL_PROXY_PASSWORD) if USE_PROXY else None
     proxies = {}
     if proxy_url:
         proxies = {
@@ -50,6 +51,7 @@ def make_request(url, headers_override=None, timeout=30):
             "https": proxy_url
         }
     try:
+        print (f"Đang sử dụng proxy: {proxy_url}")
         resp = scraper.get(url, headers=headers, proxies=proxies, timeout=timeout)
         resp.raise_for_status()
         return resp

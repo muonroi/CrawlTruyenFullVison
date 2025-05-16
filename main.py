@@ -110,7 +110,7 @@ async def async_download_and_save_chapter(
     current_discovery_genre_data: Dict[str, Any],
     chapter_filename_full_path: str, chapter_filename_only: str,
     pass_description: str, chapter_display_idx_log: str,
-    crawl_state: Dict[str, Any], successfully_saved: set, failed_list: List[Dict[str, Any]]
+    crawl_state: Dict[str, Any], successfully_saved: set, failed_list: List[Dict[str, Any]],original_idx: int = 0
 ) -> None:
     url = chapter_info['url']
     logger.info(f"        {pass_description} - Chương {chapter_display_idx_log}: Đang tải '{chapter_info['title']}' ({url})")
@@ -164,7 +164,7 @@ async def async_download_and_save_chapter(
                 'chapter_data': chapter_info,
                 'filename': chapter_filename_full_path,
                 'filename_only': chapter_filename_only,
-                'original_idx': None
+                'original_idx': original_idx
             })
     else:
         logger.warning(f"          Không lấy được nội dung '{chapter_info['title']}'")
@@ -199,27 +199,29 @@ async def process_all_chapters_for_story(
     if not chapters:
         return 0
     successful, failed = set(), []
-    # Lấy các chương đã crawl từ state
     already_crawled = set(crawl_state.get('processed_chapter_urls_for_current_story', []))
     target = len(chapters)
 
     # Lượt 1
     tasks = []
     for idx, ch in enumerate(chapters[:target]):
-        # >>> Bỏ qua chương đã crawl rồi
         if ch['url'] in already_crawled:
             continue
         fname_only = f"{idx+1:04d}_{sanitize_filename(ch['title']) or 'untitled'}.txt"
         full_path = os.path.join(story_folder_path, fname_only)
-        tasks.append(asyncio.create_task(
-            async_download_and_save_chapter(ch, story_data_item, current_discovery_genre_data,
-                full_path, fname_only, "Lượt 1", f"{idx+1}/{target}", crawl_state, successful, failed
+        tasks.append(
+            asyncio.create_task(
+                async_download_and_save_chapter(
+                    ch, story_data_item, current_discovery_genre_data,
+                    full_path, fname_only, "Lượt 1", f"{idx+1}/{target}",
+                    crawl_state, successful, failed, original_idx=idx
+                )
             )
-        ))
+        )
         await smart_delay()
     await asyncio.gather(*tasks)
 
-    # Các lượt thử lại
+    # Retry
     for rp in range(RETRY_FAILED_CHAPTERS_PASSES):
         if not failed:
             break
@@ -228,17 +230,29 @@ async def process_all_chapters_for_story(
         tasks = []
         for item in curr:
             ch = item['chapter_data']
-            idx = item.get('original_idx', 0)
-            # >>> Nếu url chương này cũng đã thành công ở lượt trước (có thể do retry thành công ở lần trước) thì bỏ qua
+            # Xử lý fallback index thông minh nếu thiếu original_idx
+            idx = item.get('original_idx')
+            if idx is None:
+                # Thử lấy từ filename nếu có định dạng "0001_...txt"
+                try:
+                    name = item.get('filename_only', '')
+                    idx = int(name.split('_')[0]) - 1 if name and '_' in name else 0
+                except Exception:
+                    idx = 0
+                logger.warning(f"Chưa có original_idx cho chương '{ch.get('title')}', fallback idx={idx}")
             if ch['url'] in crawl_state.get('processed_chapter_urls_for_current_story', []):
                 continue
             fname_only = f"{idx+1:04d}_{sanitize_filename(ch['title']) or 'untitled'}.txt"
             full_path = os.path.join(story_folder_path, fname_only)
-            tasks.append(asyncio.create_task(
-                async_download_and_save_chapter(ch, story_data_item, current_discovery_genre_data,
-                    full_path, fname_only, f"Lượt thử lại {rp+1}", str(idx+1), crawl_state, successful, failed
+            tasks.append(
+                asyncio.create_task(
+                    async_download_and_save_chapter(
+                        ch, story_data_item, current_discovery_genre_data,
+                        full_path, fname_only, f"Lượt thử lại {rp+1}", str(idx+1),
+                        crawl_state, successful, failed, original_idx=idx
+                    )
                 )
-            ))
+            )
         await smart_delay()
         await asyncio.gather(*tasks)
 
@@ -246,6 +260,7 @@ async def process_all_chapters_for_story(
         for fitem in failed:
             logger.error(f"Truyện: {story_data_item['title']} - Chương lỗi: {fitem['chapter_data']['title']}")
     return len(successful)
+
 
 async def process_story_item(
     session: aiohttp.ClientSession,
