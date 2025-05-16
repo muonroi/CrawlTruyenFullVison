@@ -1,7 +1,9 @@
 {
     "cSpell.words": [
         "cloudscraper",
-        "Referer"
+        "muonroi",
+        "Referer",
+        "useragent"
     ],
     "python.analysis.extraPaths": [
         "./analyze"

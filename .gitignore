@@ -1,0 +1,47 @@
+
+# Bỏ qua thư mục chứa dữ liệu truyện đã crawl
+/truyen_data/
+
+# Các mục khác bạn có thể đã có hoặc muốn thêm:
+# Môi trường ảo Python
+/.venv/
+/__pycache__/
+*.py[cod]
+*$py.class
+
+# File trạng thái crawl và log
+/crawler.log
+/_ultimately_failed_chapters_log.txt
+/crawler.log
+/_ultimately_failed_chapters_log.txt
+
+# Thư mục cấu hình của IDE (ví dụ: VS Code)
+/.vscode/
+
+# Các file hệ điều hành
+.DS_Store
+Thumbs.db
+crawler.log
+.vs/slnx.sqlite
+.vs/ProjectSettings.json
+.vs/PythonSettings.json
+.vs/VSWorkspaceState.json
+.vs/CrawlTruyenFullVison/CopilotIndices/17.14.535.60214/CodeChunks.db
+.vs/CrawlTruyenFullVison/CopilotIndices/17.14.535.60214/SemanticSymbols.db
+.vs/CrawlTruyenFullVison/FileContentIndex/bd563636-317d-4f2c-adf2-ae231621b53c.vsidx
+.vs/CrawlTruyenFullVison/v17/.wsuo
+.vs/CrawlTruyenFullVison/v17/DocumentLayout.backup.json
+.vs/CrawlTruyenFullVison/v17/DocumentLayout.json
+.vs/CrawlTruyenFullVison/v17/workspaceFileList.bin
+.vscode/settings.json
+__pycache__/scraper.cpython-313.pyc
+analyze/__pycache__/parsers.cpython-313.pyc
+.vs/CrawlTruyenFullVison/CopilotIndices/17.14.535.60214/CodeChunks.db-shm
+.vs/CrawlTruyenFullVison/CopilotIndices/17.14.535.60214/CodeChunks.db-wal
+.vs/CrawlTruyenFullVison/CopilotIndices/17.14.535.60214/SemanticSymbols.db-shm
+.vs/CrawlTruyenFullVison/CopilotIndices/17.14.535.60214/SemanticSymbols.db-wal
+.vs/CrawlTruyenFullVison/FileContentIndex/68f5920d-400a-4b19-ae6b-ea1efb518af5.vsidx
+.vs/CrawlTruyenFullVison/FileContentIndex/163d5adb-a79d-4bd7-a85e-320ecb67b124.vsidx
+.vscode/settings.json
+.vs/CrawlTruyenFullVison/FileContentIndex/387d7fc7-bef8-4e81-83a5-5241039e0ebe.vsidx
+.vscode/settings.json

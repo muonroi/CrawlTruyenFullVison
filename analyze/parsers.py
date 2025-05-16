@@ -5,34 +5,148 @@ from bs4 import BeautifulSoup, Comment
 from urllib.parse import urljoin, urlparse
 
 # Đảm bảo các import này là chính xác dựa trên cấu trúc file của bạn
-from utils.utils import logger, sanitize_filename # Sửa: Sử dụng logger từ utils.utils
+from utils.utils import logger, sanitize_filename
 from scraper import make_request
-from config.config import ( # Sửa: Import từ config.config
+from config.config import (
     BASE_URL,
-    MAX_STORIES_PER_GENRE_PAGE, # Được sử dụng trong get_all_stories_from_genre
-    MAX_CHAPTER_PAGES_TO_CRAWL  # Được sử dụng trong get_chapters_from_story
+    MAX_STORIES_PER_GENRE_PAGE,
+    MAX_CHAPTER_PAGES_TO_CRAWL
 )
 
+# --- GET STORY DETAILS (NEW FUNCTION) ---
+def get_story_details(story_url: str, story_title_for_log: str) -> Dict[str, Any]:
+    """
+    Truy cập trang chi tiết của một truyện để lấy mô tả đầy đủ,
+    trạng thái, nguồn và danh sách thể loại chi tiết.
+    """
+    logger.info(f"Truyện '{story_title_for_log}': Đang lấy thông tin chi tiết từ {story_url}")
+    details = {
+        "description": None,
+        "status": None, # Trạng thái (Đang ra, Hoàn thành)
+        "source": None, # Nguồn truyện
+        "detailed_genres": [], # Danh sách thể loại chi tiết từ trang truyện
+        "rating_value": None,
+        "rating_count": None
+    }
+
+    response = make_request(story_url)
+    if not response or not response.text:
+        logger.error(f"Truyện '{story_title_for_log}': Không nhận được phản hồi hoặc nội dung rỗng từ trang chi tiết {story_url}")
+        return details # Trả về dict rỗng hoặc với giá trị None
+
+    soup = BeautifulSoup(response.text, "html.parser")
+
+    # 1. Lấy mô tả chi tiết
+    desc_text_div = soup.find("div", class_="desc-text", itemprop="description")
+    if desc_text_div:
+        # Loại bỏ các thẻ không cần thiết bên trong description nếu có (ví dụ: "Xem thêm")
+        showmore_link = desc_text_div.find("div", class_="showmore")
+        if showmore_link:
+            showmore_link.decompose()
+        
+        # Xử lý <br> thành newline
+        for br_tag in desc_text_div.find_all("br"):
+            br_tag.replace_with("\n")
+        
+        # Lấy text, cố gắng giữ lại định dạng đoạn văn
+        full_description = desc_text_div.get_text(separator="\n", strip=True)
+        # Dọn dẹp các dòng trống thừa nếu get_text tạo ra nhiều
+        cleaned_lines = [line.strip() for line in full_description.split('\n') if line.strip()]
+        details["description"] = "\n".join(cleaned_lines)
+        logger.debug(f"  Truyện '{story_title_for_log}': Description found (length: {len(details['description']) if details['description'] else 0}).")
+    else:
+        # Fallback: thử lấy từ meta description nếu không tìm thấy desc-text
+        meta_desc_tag = soup.find("meta", attrs={"name": "description"})
+        if meta_desc_tag and meta_desc_tag.get("content"):
+            details["description"] = meta_desc_tag.get("content").strip()
+            logger.debug(f"  Truyện '{story_title_for_log}': Detailed description not found, using meta description.")
+        else:
+            logger.warning(f"  Truyện '{story_title_for_log}': Không tìm thấy mô tả (cả chi tiết và meta).")
+
+    # 2. Lấy thông tin từ div class="info" (Tác giả, Thể loại, Nguồn, Trạng thái)
+    info_divs_holder = soup.select_one("div.col-info-desc > div.info-holder > div.info") # Selector chính xác hơn
+    if not info_divs_holder: # Fallback nếu selector trên không hoạt động
+        info_divs_holder = soup.find("div", class_="info")
+
+    if info_divs_holder:
+        info_items = info_divs_holder.find_all("div") # Mỗi mục thông tin thường nằm trong 1 div con
+        for item_div in info_items:
+            h3_tag = item_div.find("h3")
+            if h3_tag:
+                label = h3_tag.get_text(strip=True).lower()
+                # Giá trị có thể là text ngay sau h3 hoặc trong thẻ a/span
+                value_tag = h3_tag.next_sibling
+                value_text = ""
+
+                while value_tag:
+                    if hasattr(value_tag, 'name') and value_tag.name == 'a': # Nếu là thẻ <a> (ví dụ: cho tác giả, thể loại)
+                        value_text += value_tag.get_text(strip=True) + ", "
+                    elif hasattr(value_tag, 'name') and value_tag.name == 'span': # Nếu là thẻ <span> (ví dụ: cho nguồn, trạng thái)
+                        value_text += value_tag.get_text(strip=True) + ", "
+                    elif isinstance(value_tag, str) and value_tag.strip(): # Nếu là text node
+                        value_text += value_tag.strip() + ", "
+                    
+                    if hasattr(value_tag, 'name') and value_tag.name == 'div': # Dừng nếu gặp div tiếp theo
+                        break
+                    value_tag = value_tag.next_sibling
+                
+                value_text = value_text.strip().rstrip(',') # Xóa dấu phẩy thừa cuối cùng và khoảng trắng
+
+                if "tác giả:" in label:
+                    # details["author_from_page"] = value_text # Đã có author từ trang danh sách
+                    pass
+                elif "thể loại:" in label:
+                    # Tách các thể loại nếu có nhiều
+                    genre_links = item_div.find_all("a", itemprop="genre")
+                    if genre_links:
+                        details["detailed_genres"] = [gl.get_text(strip=True) for gl in genre_links]
+                    elif value_text: # Fallback nếu không có itemprop
+                        details["detailed_genres"] = [g.strip() for g in value_text.split(',')]
+                    logger.debug(f"  Truyện '{story_title_for_log}': Detailed genres: {details['detailed_genres']}")
+                elif "nguồn:" in label:
+                    details["source"] = value_text
+                    logger.debug(f"  Truyện '{story_title_for_log}': Source: {details['source']}")
+                elif "trạng thái:" in label:
+                    status_span = item_div.find("span") # Trạng thái thường trong span
+                    if status_span:
+                        details["status"] = status_span.get_text(strip=True)
+                    else:
+                        details["status"] = value_text # Fallback
+                    logger.debug(f"  Truyện '{story_title_for_log}': Status: {details['status']}")
+
+    # 3. Lấy thông tin đánh giá (rating)
+    rate_holder_div = soup.find("div", class_="rate-holder")
+    if rate_holder_div and rate_holder_div.get("data-score"):
+        details["rating_value"] = rate_holder_div.get("data-score")
+    
+    rating_count_span = soup.select_one("div.small[itemprop='aggregateRating'] span[itemprop='ratingCount']")
+    if rating_count_span:
+        details["rating_count"] = rating_count_span.get_text(strip=True)
+    
+    logger.debug(f"  Truyện '{story_title_for_log}': Rating: {details['rating_value']}/10 from {details['rating_count']} votes.")
+
+    return details
+
 # --- GET ALL GENRES ---
-def get_all_genres(homepage_url: str) -> List[Dict[str, str]]: # Sửa: Thêm type hint
+def get_all_genres(homepage_url: str) -> List[Dict[str, str]]:
     """
     Lấy danh sách tất cả các thể loại và URL tương ứng từ trang chủ.
     """
-    logger.info(f"Đang lấy danh sách thể loại từ: {homepage_url}") # Sửa: print -> logger.info
+    logger.info(f"Đang lấy danh sách thể loại từ: {homepage_url}")
     response = make_request(homepage_url)
-    if not response or not response.text: # Sửa: Kiểm tra thêm response.text
+    if not response or not response.text:
         logger.error(f"Không nhận được phản hồi hoặc nội dung rỗng từ {homepage_url}")
         return []
 
     soup = BeautifulSoup(response.text, "html.parser")
-    genres: List[Dict[str, str]] = [] # Sửa: Type hint
+    genres: List[Dict[str, str]] = []
 
     nav_menu = soup.find("ul", class_="control nav navbar-nav")
     if not nav_menu:
-        logger.debug("Không tìm thấy menu chính 'ul.control.nav.navbar-nav'. Thử fallback...") # Sửa: print -> logger.debug
+        logger.debug("Không tìm thấy menu chính 'ul.control.nav.navbar-nav'. Thử fallback...")
         nav_menu = soup.find("div", class_="navbar-collapse")
         if not nav_menu:
-            logger.warning("Không tìm thấy container menu nào khả thi để lấy thể loại.") # Sửa: print -> logger.warning
+            logger.warning("Không tìm thấy container menu nào khả thi để lấy thể loại.")
             return []
 
     genre_dropdown_container = None
@@ -58,7 +172,7 @@ def get_all_genres(homepage_url: str) -> List[Dict[str, str]]: # Sửa: Thêm ty
             potential_links = menu_candidate.find_all("a", href=re.compile(r"/the-loai/"))
             if potential_links:
                 genre_dropdown_container = menu_candidate
-                logger.debug(f"Tìm thấy container thể loại tiềm năng qua class: {menu_candidate.get('class')}") # Sửa: print -> logger.debug
+                logger.debug(f"Tìm thấy container thể loại tiềm năng qua class: {menu_candidate.get('class')}")
                 break
 
     if genre_dropdown_container:
@@ -67,27 +181,25 @@ def get_all_genres(homepage_url: str) -> List[Dict[str, str]]: # Sửa: Thêm ty
             genre_name = link.get_text(strip=True)
             genre_url_relative = link.get("href")
             if (genre_name and genre_url_relative and
-                ("/the-loai/" in genre_url_relative or "/genres/" in genre_url_relative)): # Logic cũ để kiểm tra link thể loại
+                ("/the-loai/" in genre_url_relative or "/genres/" in genre_url_relative)):
                 genre_url_absolute = urljoin(homepage_url, genre_url_relative)
                 genres.append({"name": genre_name, "url": genre_url_absolute})
     else:
-        logger.warning("Không tìm thấy dropdown thể loại sau nhiều lần thử.") # Sửa: print -> logger.warning
+        logger.warning("Không tìm thấy dropdown thể loại sau nhiều lần thử.")
 
-    unique_genres: List[Dict[str,str]] = [] # Sửa: Type hint
-    seen_urls: set[str] = set() # Sửa: Type hint
+    unique_genres: List[Dict[str,str]] = []
+    seen_urls: set[str] = set()
     for genre in genres:
         if genre["url"] not in seen_urls:
             unique_genres.append(genre)
             seen_urls.add(genre["url"])
             logger.debug(f"Thêm thể loại: {genre['name']} ({genre['url']})")
 
-    logger.info(f"Tìm thấy {len(unique_genres)} thể loại.") # Sửa: print -> logger.info
+    logger.info(f"Tìm thấy {len(unique_genres)} thể loại.")
     return unique_genres
 
 
 # --- GET STORIES FROM GENRE PAGE ---
-# (Hàm này bạn đã cung cấp trong câu hỏi trước và đã có logger, type hint)
-# Đảm bảo hàm này giữ nguyên hoặc được cập nhật nếu cần
 def get_stories_from_genre_page(genre_page_url: str) -> Tuple[List[Dict[str, Any]], Optional[str]]:
     logger.info(f"Đang lấy truyện từ trang thể loại: {genre_page_url}")
     response = make_request(genre_page_url)
@@ -138,7 +250,7 @@ def get_stories_from_genre_page(genre_page_url: str) -> Tuple[List[Dict[str, Any
     for item in story_items_source:
         story_title = None
         story_url_absolute = None
-        author_name = "N/A" # Khởi tạo giá trị mặc định
+        author_name = "N/A"
         image_url = None
 
         title_tag = item.find("h3", class_="truyen-title")
@@ -189,7 +301,7 @@ def get_stories_from_genre_page(genre_page_url: str) -> Tuple[List[Dict[str, Any
 
     if pagination:
         active_li_or_span = pagination.find(["li", "span"], class_=re.compile(r"active|current"))
-        next_item_tag = None # Đổi tên biến để tránh nhầm lẫn
+        next_item_tag = None
         if active_li_or_span:
             possible_next_siblings = active_li_or_span.find_next_siblings(["li", "a"])
             for sibling in possible_next_siblings:
@@ -202,18 +314,16 @@ def get_stories_from_genre_page(genre_page_url: str) -> Tuple[List[Dict[str, Any
         else:
             next_link_texts = ["Next", "Sau", "Trang kế", "Tiếp", "»", ">"]
             for text_pattern in next_link_texts:
-                # Tìm kiếm kỹ hơn cho nút "Next"
                 _next_item_candidate = pagination.find("a", string=re.compile(f"\\s*{re.escape(text_pattern)}\\s*", re.IGNORECASE))
                 if not _next_item_candidate:
                      _next_item_candidate = pagination.find("a", title=re.compile(f"\\s*{re.escape(text_pattern)}\\s*", re.IGNORECASE))
                 if not _next_item_candidate:
                      _next_item_candidate = pagination.find("a", attrs={"aria-label": re.compile(f"\\s*{re.escape(text_pattern)}\\s*", re.IGNORECASE)})
-
                 if _next_item_candidate:
                     next_item_tag = _next_item_candidate
                     break
         
-        if next_item_tag: # Sử dụng next_item_tag đã tìm được
+        if next_item_tag:
             next_page_relative_url = next_item_tag.get("href")
             if next_page_relative_url and next_page_relative_url != "#" and not next_page_relative_url.startswith("javascript:"):
                 parsed_current_url = urlparse(genre_page_url)
@@ -248,8 +358,6 @@ def get_stories_from_genre_page(genre_page_url: str) -> Tuple[List[Dict[str, Any
     return unique_stories_on_page, next_page_url
 
 # --- GET ALL STORIES FROM GENRE ---
-# (Hàm này bạn đã cung cấp trong câu hỏi trước và đã có logger, type hint)
-# Đảm bảo hàm này giữ nguyên hoặc được cập nhật nếu cần
 def get_all_stories_from_genre(genre_name: str, genre_url: str,
                                max_pages_to_crawl: Optional[int] = MAX_STORIES_PER_GENRE_PAGE
                                ) -> List[Dict[str, Any]]:
@@ -267,12 +375,14 @@ def get_all_stories_from_genre(genre_name: str, genre_url: str,
         visited_page_urls.add(current_page_url)
 
         page_count += 1
+        # SỬA LỖI TypeError: '<=' not supported between instances of 'int' and 'NoneType'
+        # Kiểm tra max_pages_to_crawl trước khi so sánh
         if max_pages_to_crawl is not None and page_count > max_pages_to_crawl:
             logger.info(f"Đã đạt giới hạn {max_pages_to_crawl} trang cho thể loại {genre_name} ({genre_url}).")
             break
 
         logger.info(f"Đang xử lý trang {page_count} của thể loại '{genre_name}': {current_page_url}")
-        stories_on_page, next_page_url_candidate = get_stories_from_genre_page(current_page_url) # Gọi hàm đã sửa ở trên
+        stories_on_page, next_page_url_candidate = get_stories_from_genre_page(current_page_url)
 
         if not stories_on_page and page_count > 1:
             logger.info(f"Không có truyện nào trên trang {current_page_url} (trang {page_count} của thể loại '{genre_name}').")
@@ -315,7 +425,7 @@ def get_all_stories_from_genre(genre_name: str, genre_url: str,
 
 
 # --- GET CHAPTER NUMBER (HELPER) ---
-def get_chapter_number(chapter_item: Dict[str, str]) -> float: # Sửa: Thêm type hint
+def get_chapter_number(chapter_item: Dict[str, str]) -> float:
     title = chapter_item.get("title", "")
     url = chapter_item.get("url", "")
 
@@ -323,15 +433,15 @@ def get_chapter_number(chapter_item: Dict[str, str]) -> float: # Sửa: Thêm ty
         r"(?:Chương|Ch\.|Quyển\s*\d+\s*-\s*Chương|Chapter|Chương\s*Thứ)\s*(\d+)",
         title, re.IGNORECASE
     )
-    if match_title: return float(match_title.group(1)) # Sửa: int -> float
+    if match_title: return float(match_title.group(1))
 
     match_title_plain_num = re.match(r"(\d+)\s*[:.-]", title)
-    if match_title_plain_num: return float(match_title_plain_num.group(1)) # Sửa: int -> float
+    if match_title_plain_num: return float(match_title_plain_num.group(1))
 
     match_url = re.search(r"(?:chuong|chap|chapter|quyen)[-/](\d+)", url, re.IGNORECASE)
-    if match_url: return float(match_url.group(1)) # Sửa: int -> float
+    if match_url: return float(match_url.group(1))
 
-    if title.isdigit(): return float(title) # Sửa: int -> float
+    if title.isdigit(): return float(title)
     
     all_numbers_in_title = re.findall(r'\d+', title)
     if all_numbers_in_title:
@@ -339,25 +449,24 @@ def get_chapter_number(chapter_item: Dict[str, str]) -> float: # Sửa: Thêm ty
             return float(all_numbers_in_title[-1])
         except ValueError:
             pass
-    # logger.debug(f"Không thể trích xuất số chương từ: Tiêu đề='{title}', URL='{url}'. Sẽ xếp cuối.") # Bỏ log này vì quá nhiều
     return float("inf")
 
 
 # --- GET CHAPTERS FROM STORY ---
 def get_chapters_from_story(story_url: str,
-                            story_title: str, # <<< THAM SỐ QUAN TRỌNG ĐÃ THÊM
-                            max_pages: int = MAX_CHAPTER_PAGES_TO_CRAWL # Sửa: Đổi tên tham số cho nhất quán
+                            story_title: str,
+                            max_pages: Optional[int] = MAX_CHAPTER_PAGES_TO_CRAWL # Sửa: Cho phép None
                            ) -> List[Dict[str, str]]:
-    logger.info(f"Truyện '{story_title}': Đang lấy danh sách chương từ URL: {story_url}") # Sửa: print -> logger.info và dùng story_title
-    all_chapters: List[Dict[str, str]] = [] # Sửa: Type hint
+    logger.info(f"Truyện '{story_title}': Đang lấy danh sách chương từ URL: {story_url}")
+    all_chapters: List[Dict[str, str]] = []
 
     initial_response = make_request(story_url)
-    if not initial_response or not initial_response.text: # Sửa: Kiểm tra thêm response.text
+    if not initial_response or not initial_response.text:
         logger.error(f"Truyện '{story_title}': Không nhận được phản hồi hoặc nội dung rỗng từ trang truyện chính {story_url}")
         return []
     initial_soup = BeautifulSoup(initial_response.text, "html.parser")
 
-    current_chapter_list_page_url: Optional[str] = story_url # Sửa: Type hint
+    current_chapter_list_page_url: Optional[str] = story_url
 
     list_chapter_selectors = [
         "a.list-chapter", "a.btn-show-all-chapters", "a.btn-list-chapter",
@@ -378,28 +487,29 @@ def get_chapters_from_story(story_url: str,
         candidate_url = urljoin(story_url, list_chapter_link_tag["href"])
         if urlparse(candidate_url).path != urlparse(story_url).path:
             current_chapter_list_page_url = candidate_url
-            logger.info(f"Truyện '{story_title}': Tìm thấy link đến trang danh sách chương riêng: {current_chapter_list_page_url}") # Sửa: print -> logger.info
+            logger.info(f"Truyện '{story_title}': Tìm thấy link đến trang danh sách chương riêng: {current_chapter_list_page_url}")
         else:
-            logger.debug(f"Truyện '{story_title}': Link 'Danh sách chương' ({candidate_url}) có vẻ vẫn là trang truyện.") # Sửa: print -> logger.debug
+            logger.debug(f"Truyện '{story_title}': Link 'Danh sách chương' ({candidate_url}) có vẻ vẫn là trang truyện.")
     else:
-        logger.debug(f"Truyện '{story_title}': Không tìm thấy link 'Danh sách chương' riêng biệt, sẽ lấy chương từ trang truyện chính.") # Sửa: print -> logger.debug
+        logger.debug(f"Truyện '{story_title}': Không tìm thấy link 'Danh sách chương' riêng biệt, sẽ lấy chương từ trang truyện chính.")
 
     page_num = 1
-    processed_chapter_urls: set[str] = set() # Sửa: Type hint
-    visited_chapter_list_pages: set[str] = set() # Sửa: Type hint
+    processed_chapter_urls: set[str] = set()
+    visited_chapter_list_pages: set[str] = set()
 
     while (current_chapter_list_page_url and
            current_chapter_list_page_url not in visited_chapter_list_pages and
-           page_num <= max_pages): # Sửa: dùng max_pages
+           # SỬA LỖI TypeError: '<=' not supported between instances of 'int' and 'NoneType'
+           (max_pages is None or page_num <= max_pages)): # Điều kiện mới
 
         if current_chapter_list_page_url in visited_chapter_list_pages:
-            logger.warning(f"Truyện '{story_title}': Trang danh sách chương {current_chapter_list_page_url} đã được xử lý. Dừng.") # Sửa: print -> logger.warning
+            logger.warning(f"Truyện '{story_title}': Trang danh sách chương {current_chapter_list_page_url} đã được xử lý. Dừng.")
             break
         visited_chapter_list_pages.add(current_chapter_list_page_url)
 
-        logger.info(f"Truyện '{story_title}': Đang lấy chương từ trang DS chương: {current_chapter_list_page_url} (Trang DS thứ {page_num})") # Sửa: print -> logger.info
+        logger.info(f"Truyện '{story_title}': Đang lấy chương từ trang DS chương: {current_chapter_list_page_url} (Trang DS thứ {page_num})")
         response_chapters = make_request(current_chapter_list_page_url)
-        if not response_chapters or not response_chapters.text: # Sửa: Kiểm tra thêm text
+        if not response_chapters or not response_chapters.text:
             logger.warning(f"Truyện '{story_title}': Không có phản hồi/nội dung từ {current_chapter_list_page_url}")
             break
         soup_chapters = BeautifulSoup(response_chapters.text, "html.parser")
@@ -410,21 +520,21 @@ def get_chapters_from_story(story_url: str,
         
         if not chapter_list_container:
             if page_num == 1 and urlparse(current_chapter_list_page_url).path == urlparse(story_url).path:
-                logger.debug(f"Truyện '{story_title}': Không tìm thấy container chương cụ thể trên trang truyện chính, thử tìm link chương trên toàn trang.") # Sửa: print -> logger.debug
-                chapter_list_container = soup_chapters # Tìm trên toàn trang
+                logger.debug(f"Truyện '{story_title}': Không tìm thấy container chương cụ thể trên trang truyện chính, thử tìm link chương trên toàn trang.")
+                chapter_list_container = soup_chapters
             else:
-                logger.warning(f"Truyện '{story_title}': Không tìm thấy container chứa danh sách chương trên: {current_chapter_list_page_url}") # Sửa: print -> logger.warning
+                logger.warning(f"Truyện '{story_title}': Không tìm thấy container chứa danh sách chương trên: {current_chapter_list_page_url}")
                 break
 
         chapter_links = chapter_list_container.find_all("a", href=re.compile(r"(chuong|chap|chapter|quyen)[-/]\d+", re.IGNORECASE))
         if not chapter_links and page_num == 1:
-            logger.warning(f"Truyện '{story_title}': Không tìm thấy link chương nào khớp mẫu trên trang {current_chapter_list_page_url}.") # Sửa: print -> logger.warning
+            logger.warning(f"Truyện '{story_title}': Không tìm thấy link chương nào khớp mẫu trên trang {current_chapter_list_page_url}.")
 
         found_new_chapters_on_this_page = False
-        temp_chapters_on_page: List[Dict[str, str]] = [] # Sửa: Type hint
+        temp_chapters_on_page: List[Dict[str, str]] = []
         for link in chapter_links:
             chapter_href = link.get("href")
-            chapter_title_text = link.get_text(strip=True) or link.get("title", "").strip() or f"Chương không tên {len(all_chapters) + len(temp_chapters_on_page) + 1}" # Sửa: Thêm fallback
+            chapter_title_text = link.get_text(strip=True) or link.get("title", "").strip() or f"Chương không tên {len(all_chapters) + len(temp_chapters_on_page) + 1}"
 
             if chapter_href and chapter_title_text:
                 chapter_full_url = urljoin(current_chapter_list_page_url, chapter_href)
@@ -436,19 +546,18 @@ def get_chapters_from_story(story_url: str,
         
         all_chapters.extend(temp_chapters_on_page)
         if not found_new_chapters_on_this_page and chapter_links and page_num > 1 :
-            logger.debug(f"Truyện '{story_title}': Không tìm thấy chương mới trên trang {current_chapter_list_page_url} (các chương đã được xử lý trước đó).") # Sửa: print -> logger.debug
-        elif not chapter_links and page_num > 1: # Sửa: elif thay vì if riêng
-            logger.debug(f"Truyện '{story_title}': Không tìm thấy link chương nào trên trang phân trang DS chương: {current_chapter_list_page_url}") # Sửa: print -> logger.debug
+            logger.debug(f"Truyện '{story_title}': Không tìm thấy chương mới trên trang {current_chapter_list_page_url} (các chương đã được xử lý trước đó).")
+        elif not chapter_links and page_num > 1:
+            logger.debug(f"Truyện '{story_title}': Không tìm thấy link chương nào trên trang phân trang DS chương: {current_chapter_list_page_url}")
 
-        # Pagination for chapter list
         pagination_chapters = soup_chapters.find("ul", class_="pagination")
         if not pagination_chapters:
             pagination_chapters = soup_chapters.find("div", class_=re.compile(r"pagination|wp-pagenavi|page-nav"))
 
-        next_page_chapter_url_candidate: Optional[str] = None # Sửa: Type hint
+        next_page_chapter_url_candidate: Optional[str] = None
         if pagination_chapters:
             active_li_or_span = pagination_chapters.find(["li", "span"], class_=re.compile(r"active|current"))
-            next_item_tag_chap = None # Sửa: Đổi tên biến
+            next_item_tag_chap = None
             if active_li_or_span:
                 possible_next_siblings = active_li_or_span.find_next_siblings(["li", "a"])
                 for sibling in possible_next_siblings:
@@ -472,31 +581,31 @@ def get_chapters_from_story(story_url: str,
             page_num += 1
         else:
             if page_num == 1 and not all_chapters:
-                logger.warning(f"Truyện '{story_title}': Không tìm thấy chương nào trên trang truyện chính ({story_url}) và không có phân trang chương.") # Sửa: print -> logger.warning
+                logger.warning(f"Truyện '{story_title}': Không tìm thấy chương nào trên trang truyện chính ({story_url}) và không có phân trang chương.")
             else:
-                logger.info(f"Truyện '{story_title}': Không tìm thấy trang danh sách chương tiếp theo từ {current_chapter_list_page_url or story_url}.") # Sửa: print -> logger.info
+                logger.info(f"Truyện '{story_title}': Không tìm thấy trang danh sách chương tiếp theo từ {current_chapter_list_page_url or story_url}.")
             break
 
-    all_chapters.sort(key=get_chapter_number) # Hàm get_chapter_number đã sửa thành trả về float
+    all_chapters.sort(key=get_chapter_number)
 
-    final_unique_chapters: List[Dict[str, str]] = [] # Sửa: Type hint
-    seen_final_chapter_urls: set[str] = set() # Sửa: Type hint
+    final_unique_chapters: List[Dict[str, str]] = []
+    seen_final_chapter_urls: set[str] = set()
     for ch in all_chapters:
         if ch["url"] not in seen_final_chapter_urls:
             final_unique_chapters.append(ch)
             seen_final_chapter_urls.add(ch["url"])
 
-    logger.info(f"Truyện '{story_title}': Tìm thấy tổng cộng {len(final_unique_chapters)} chương (sau khi lọc trùng và sắp xếp).") # Sửa: print -> logger.info
+    logger.info(f"Truyện '{story_title}': Tìm thấy tổng cộng {len(final_unique_chapters)} chương (sau khi lọc trùng và sắp xếp).")
     return final_unique_chapters
 
 
 # --- GET STORY CHAPTER CONTENT ---
 def get_story_chapter_content(chapter_url: str,
-                              chapter_title: str, # <<< THAM SỐ QUAN TRỌNG ĐÃ THÊM
+                              chapter_title: str,
                              ) -> Optional[str]:
-    logger.info(f"Đang tải nội dung chương '{chapter_title}': {chapter_url}") # Sửa: print -> logger.info và dùng chapter_title
+    logger.info(f"Đang tải nội dung chương '{chapter_title}': {chapter_url}")
     response = make_request(chapter_url)
-    if not response or not response.text: # Sửa: Kiểm tra thêm response.text
+    if not response or not response.text:
         logger.error(f"Chương '{chapter_title}': Không nhận được phản hồi hoặc nội dung rỗng từ {chapter_url}")
         return None
 
@@ -511,8 +620,7 @@ def get_story_chapter_content(chapter_url: str,
         for br_tag in chapter_content_div.find_all("br"):
             br_tag.replace_with("\n")
         
-        # Loại bỏ comment HTML bên trong nội dung chương
-        for comment_html in chapter_content_div.find_all(string=lambda text_node: isinstance(text_node, Comment)): # Sửa: Đổi tên biến
+        for comment_html in chapter_content_div.find_all(string=lambda text_node: isinstance(text_node, Comment)):
             comment_html.extract()
 
         selectors_to_remove = [
@@ -524,9 +632,7 @@ def get_story_chapter_content(chapter_url: str,
             "div.fb-comments", "div#comments", "div.comment-form", "div.author-info",
             "div.meta-data", 'div[style*="display:none"]', "button", "input", "select",
             "textarea", "iframe", ".code-block", ".wp-block-code", ".sharedaddy", ".share-buttons",
-            # Thêm các selector cụ thể hơn nếu cần
-            "div.truyen-title", # Tiêu đề truyện có thể lặp lại trong nội dung chương
-            "h1.chapter-title", "h2.chapter-title", "h3.chapter-title", # Tiêu đề chương
+            "div.truyen-title", "h1.chapter-title", "h2.chapter-title", "h3.chapter-title",
         ]
         for selector in selectors_to_remove:
             try:
@@ -534,7 +640,7 @@ def get_story_chapter_content(chapter_url: str,
                     if unwanted_element != chapter_content_div:
                         unwanted_element.decompose()
             except Exception as e_select:
-                logger.debug(f"  Lỗi khi thử loại bỏ bằng selector '{selector}' cho chương '{chapter_title}': {e_select}") # Sửa: print -> logger.debug
+                logger.debug(f"  Lỗi khi thử loại bỏ bằng selector '{selector}' cho chương '{chapter_title}': {e_select}")
 
         for s_tag in chapter_content_div.find_all(["script", "style", "noscript", "link"]):
             s_tag.decompose()
@@ -549,14 +655,13 @@ def get_story_chapter_content(chapter_url: str,
         cleaned_lines = []
         consecutive_empty_lines = 0
         patterns_to_remove_strict = [
-            r"^(Nguồn|Edit|Người Edit|Biên tập|Dịch|Chuyển ngữ|BTV|Tác giả|Tên truyện|Chương)\s*[:：].*$", # Mở rộng thêm
-            r"Bạn đang đọc truyện tại .*?(truyenfull|sstruyen|webtruyen|nettruyen|tangthuvien|wattpad|goctruyen|metruyenchu|bachngocsach|dtruyen|vlognovel|santruyen|thichdoctruyen|truyenyy| vipfic)\.(com|vn|net|org|info|cc)", # Thêm domain
+            r"^(Nguồn|Edit|Người Edit|Biên tập|Dịch|Chuyển ngữ|BTV|Tác giả|Tên truyện|Chương)\s*[:：].*$",
+            r"Bạn đang đọc truyện tại .*?(truyenfull|sstruyen|webtruyen|nettruyen|tangthuvien|wattpad|goctruyen|metruyenchu|bachngocsach|dtruyen|vlognovel|santruyen|thichdoctruyen|truyenyy| vipfic)\.(com|vn|net|org|info|cc)",
             r"đọc truyện online miễn phí", r"truyện chữ online", r"^\s*Mời bạn đọc thêm truyện.*?$",
             r"\((?:Còn tiếp|Còn nữa|Hết chương|Kết thúc chương \d+)\)",
             r"---+\s*oOo\s*---+", r"=========", r"^\*\s*\*\s*\*\s*$",
             r"Tìm kiếm với từ khóa:", r"đọc truyện hay", r"Website:",
-            # Loại bỏ tên chương/truyện nếu nó xuất hiện đơn lẻ trên 1 dòng
-            r"^\s*(Chương|Quyển)\s*\d+\s*[:：.]?\s*.*$", # Bao quát hơn
+            r"^\s*(Chương|Quyển)\s*\d+\s*[:：.]?\s*.*$",
             r"^\s*Hết\s*chương\s*\d*\s*$",
             r"Mời các bạn xem và đọc tại .*?\.", r"Truy cập .*? để đọc nhiều truyện hay",
             r"Thảo luận truyện tại .*?", r"Like fanpage .*? để cập nhật nhanh nhất",
@@ -564,16 +669,16 @@ def get_story_chapter_content(chapter_url: str,
             r"Mọi người bình chọn tốt cho mình nhé", r"Chúc các bạn đọc truyện vui vẻ",
             r"Nếu bạn thấy hay, hãy chia sẻ cho mọi người", r"Xin cảm ơn!", r"Thank you!",
             r"load(?:\s*chapter)?\s*error", r"Server \d+ - SL \d+", r"Đọc Full Tại",
-            r"Tổng hợp bởi", r"\(づ｡◕‿‿◕｡\)づ", # Giảm bớt để tránh false positive
+            r"Tổng hợp bởi", r"\(づ｡◕‿‿◕｡\)づ",
             r"Nếu thấy hay vui lòng nhấn like và theo dõi", r"Xem thêm nhiều truyện hot tại",
-            r" Truyện được cung cấp bởi .*?", # Thêm
-            r"Đọc truyện online hay nhất tại .*?" # Thêm
+            r" Truyện được cung cấp bởi .*?",
+            r"Đọc truyện online hay nhất tại .*?"
         ]
 
         for line in lines:
             stripped_line = line.strip()
             is_unwanted = False
-            if len(stripped_line) < 150: # Tăng ngưỡng một chút
+            if len(stripped_line) < 150:
                 for pattern in patterns_to_remove_strict:
                     if re.search(pattern, stripped_line, re.IGNORECASE):
                         is_unwanted = True
@@ -595,31 +700,28 @@ def get_story_chapter_content(chapter_url: str,
         final_text = re.sub(r"([._\-\*\=\#\~\s])\1{5,}", r"\1\1\1", final_text)
         final_text = re.sub(r"\n\s*\n\s*\n+", "\n\n", final_text)
 
-        if len(final_text.split()) < 20 and len(final_text) > 5: # Ngưỡng tối thiểu ký tự
+        if len(final_text.split()) < 20 and len(final_text) > 5:
             logger.warning(
                 f"  Chương '{chapter_title}': Nội dung ({chapter_url}) rất ngắn ({len(final_text.split())} từ) sau khi làm sạch."
             )
-            # logger.debug(f"  Nội dung gốc (đã lọc selector) cho '{chapter_title}': {chapter_content_div.get_text(separator='\\n', strip=True)[:300]}...")
-            # logger.debug(f"  Nội dung sau lọc cho '{chapter_title}': {final_text[:300]}...")
-        elif not final_text and response.text: # Rỗng sau khi lọc nhưng response có data
+        elif not final_text and response.text:
              logger.warning(f"  Chương '{chapter_title}': Nội dung ({chapter_url}) trống sau khi làm sạch. HTML gốc có thể không chứa text truyện hoặc bị lọc hết.")
 
-
-        return final_text if final_text else None # Sửa: Trả về None nếu final_text rỗng
+        return final_text if final_text else None
     else:
-        logger.error(f"Chương '{chapter_title}': Không tìm thấy div nội dung chương (ví dụ: #chapter-c) tại URL: {chapter_url}") # Sửa: print -> logger.error
+        logger.error(f"Chương '{chapter_title}': Không tìm thấy div nội dung chương (ví dụ: #chapter-c) tại URL: {chapter_url}")
         body_content = soup.body
         if body_content:
             for s_tag in body_content.find_all(["script", "style", "noscript", "header", "footer", "nav", "aside"]):
                 s_tag.decompose()
-            for comment_html_body in body_content.find_all(string=lambda text_node: isinstance(text_node, Comment)): # Sửa: Đổi tên biến
+            for comment_html_body in body_content.find_all(string=lambda text_node: isinstance(text_node, Comment)):
                 comment_html_body.extract()
 
             body_text = body_content.get_text(separator="\n", strip=True)
             body_text = re.sub(r"\n\s*\n+", "\n\n", body_text)
             if len(body_text.split()) > 50:
-                logger.info(f"  Chương '{chapter_title}': Lấy nội dung từ body do không tìm thấy container chương cụ thể. Độ dài: {len(body_text.split())} từ.") # Sửa: print -> logger.info
+                logger.info(f"  Chương '{chapter_title}': Lấy nội dung từ body do không tìm thấy container chương cụ thể. Độ dài: {len(body_text.split())} từ.")
                 return body_text
             else:
-                logger.debug(f"  Chương '{chapter_title}': Nội dung từ body quá ngắn hoặc không phù hợp.") # Sửa: print -> logger.debug
+                logger.debug(f"  Chương '{chapter_title}': Nội dung từ body quá ngắn hoặc không phù hợp.")
         return None
