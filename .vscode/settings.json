@@ -1,0 +1,9 @@
+{
+    "cSpell.words": [
+        "cloudscraper",
+        "Referer"
+    ],
+    "python.analysis.extraPaths": [
+        "./analyze"
+    ]
+}
