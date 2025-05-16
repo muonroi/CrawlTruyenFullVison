@@ -2,6 +2,7 @@
 import random
 import aiofiles
 from typing import List, Optional
+from config.config import USE_PROXY
 from utils.logger import logger
 
 loaded_proxies: List[str] = []
@@ -52,13 +53,27 @@ def get_round_robin_proxy_url(username: str = None, password: str = None) -> Opt
     return f"http://{proxy}"
 
 def get_proxy_url(username: str = None, password: str = None) -> Optional[str]: # type: ignore
-    # Lựa chọn strategy, mặc định random
+    if not USE_PROXY:
+        return None
+    
     if proxy_mode == "round_robin":
         return get_round_robin_proxy_url(username, password)
     return get_random_proxy_url(username, password)
 
 def remove_bad_proxy(bad_proxy_url):
     global loaded_proxies
-    if bad_proxy_url in loaded_proxies:
-        loaded_proxies.remove(bad_proxy_url)
-        logger.warning(f"Đã loại proxy lỗi: {bad_proxy_url} (bị 403 hoặc timeout)")
+    # Chuẩn hóa về ip:port để remove chính xác
+    import re
+    match = re.search(r'(?:(?:http|https)://)?(?:[^@]+@)?(?P<ip>[\w\.\-:]+)', bad_proxy_url)
+    if not match:
+        logger.warning(f"Không tách được IP:PORT từ {bad_proxy_url}")
+        return
+    ip_port = match.group("ip")
+    removed = False
+    for proxy in loaded_proxies[:]:
+        if ip_port in proxy:
+            loaded_proxies.remove(proxy)
+            logger.warning(f"Đã loại proxy lỗi: {proxy} (từ {bad_proxy_url})")
+            removed = True
+    if not removed:
+        logger.warning(f"Không tìm thấy proxy {bad_proxy_url} để remove.")
