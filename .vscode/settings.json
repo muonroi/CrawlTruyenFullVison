@@ -1,8 +1,14 @@
 {
     "cSpell.words": [
+        "apng",
         "cloudscraper",
+        "fitem",
+        "KHTML",
+        "levelname",
+        "loggable",
         "muonroi",
         "Referer",
+        "resi",
         "useragent"
     ],
     "python.analysis.extraPaths": [

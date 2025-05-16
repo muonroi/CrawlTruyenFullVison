@@ -1,52 +1,51 @@
-# utils.py
 import os
 import re
 import json
+import time
 import logging
+import asyncio
+import aiofiles
+from typing import Any, Dict, List, Optional
 from logging.handlers import RotatingFileHandler
 from config.config import STATE_FILE
-# --- Thiết lập Logging ---
+
+# --- Thiết lập Logging (giữ nguyên) ---
 LOG_FILE_PATH = "crawler.log"
-# Tạo logger
 logger = logging.getLogger("TruyenFullCrawler")
-logger.setLevel(logging.DEBUG) # Ghi lại tất cả các level từ DEBUG trở lên
-
-# Tạo console handler và đặt level
+logger.setLevel(logging.DEBUG)
 ch = logging.StreamHandler()
-ch.setLevel(logging.INFO) # Chỉ hiển thị INFO trở lên trên console
-
-# Tạo file handler và đặt level
-# RotatingFileHandler sẽ tạo file mới khi file log đạt kích thước nhất định
+ch.setLevel(logging.INFO)
 fh = RotatingFileHandler(LOG_FILE_PATH, maxBytes=5*1024*1024, backupCount=3, encoding='utf-8')
-fh.setLevel(logging.DEBUG) # Ghi DEBUG trở lên vào file
-
-# Tạo formatter
+fh.setLevel(logging.DEBUG)
 formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
-
-# Thêm formatter vào handlers
 ch.setFormatter(formatter)
 fh.setFormatter(formatter)
-
-# Thêm handlers vào logger
 logger.addHandler(ch)
 logger.addHandler(fh)
 
-def load_crawl_state() -> dict:
-    if os.path.exists(STATE_FILE):
+async def load_crawl_state() -> Dict[str, Any]:
+    loop = asyncio.get_event_loop()
+    exists = await loop.run_in_executor(None, os.path.exists, STATE_FILE)
+    if exists:
         try:
-            with open(STATE_FILE, 'r', encoding='utf-8') as f:
-                state = json.load(f)
-                logger.info(f"Đã tải trạng thái crawl từ {STATE_FILE}: {state}")
-                return state
+            async with aiofiles.open(STATE_FILE, 'r', encoding='utf-8') as f:
+                data = await f.read()
+            state = json.loads(data)
+            logger.info(f"Đã tải trạng thái crawl từ {STATE_FILE}: {state}")
+            return state
         except Exception as e:
             logger.error(f"Lỗi khi tải trạng thái crawl từ {STATE_FILE}: {e}. Bắt đầu crawl mới.")
     return {}
 
-def clear_specific_state_keys(state: dict, keys_to_remove: list):
-    """
-    Xóa các key cụ thể khỏi dictionary trạng thái và lưu lại trạng thái.
-    Hàm này thay đổi trực tiếp dict 'state' được truyền vào.
-    """
+async def save_crawl_state(state: Dict[str, Any]) -> None:
+    try:
+        async with aiofiles.open(STATE_FILE, 'w', encoding='utf-8') as f:
+            await f.write(json.dumps(state, ensure_ascii=False, indent=4))
+        logger.info(f"Đã lưu trạng thái crawl vào {STATE_FILE}")
+    except Exception as e:
+        logger.error(f"Lỗi khi lưu trạng thái crawl vào {STATE_FILE}: {e}")
+
+async def clear_specific_state_keys(state: Dict[str, Any], keys_to_remove: List[str]) -> None:
     updated = False
     for key in keys_to_remove:
         if key in state:
@@ -54,107 +53,154 @@ def clear_specific_state_keys(state: dict, keys_to_remove: list):
             updated = True
             logger.debug(f"Đã xóa key '{key}' khỏi trạng thái crawl.")
     if updated:
-        save_crawl_state(state) # Lưu lại state sau khi đã xóa các key
+        await save_crawl_state(state)
 
-def save_crawl_state(state: dict):
-    try:
-        with open(STATE_FILE, 'w', encoding='utf-8') as f:
-            json.dump(state, f, ensure_ascii=False, indent=4)
-        logger.info(f"Đã lưu trạng thái crawl vào {STATE_FILE}")
-    except Exception as e:
-        logger.error(f"Lỗi khi lưu trạng thái crawl vào {STATE_FILE}: {e}")
-
-def clear_crawl_state_component(state: dict, component_key: str):
-    """Xóa một phần của state, ví dụ khi một truyện/thể loại hoàn thành"""
+async def clear_crawl_state_component(state: Dict[str, Any], component_key: str) -> None:
     if component_key in state:
         del state[component_key]
-        # Có thể cần xóa thêm các key phụ thuộc, ví dụ khi xóa genre thì xóa luôn story và chapter
         if component_key == "current_genre_url":
             state.pop("current_story_url", None)
             state.pop("current_story_index_in_genre", None)
             state.pop("processed_chapter_urls_for_current_story", None)
         elif component_key == "current_story_url":
             state.pop("processed_chapter_urls_for_current_story", None)
-    save_crawl_state(state)
+    await save_crawl_state(state)
 
-def clear_all_crawl_state():
-    if os.path.exists(STATE_FILE):
+async def clear_all_crawl_state() -> None:
+    loop = asyncio.get_event_loop()
+    exists = await loop.run_in_executor(None, os.path.exists, STATE_FILE)
+    if exists:
         try:
-            os.remove(STATE_FILE)
+            await loop.run_in_executor(None, os.remove, STATE_FILE)
             logger.info(f"Đã xóa file trạng thái crawl: {STATE_FILE}")
         except Exception as e:
             logger.error(f"Lỗi khi xóa file trạng thái crawl: {e}")
 
-
-def sanitize_filename(name: str) -> str:
-    """
-    Làm sạch tên file/thư mục để tránh các ký tự không hợp lệ.
-    """
-    if not name:
-        return "untitled"
-    name = str(name)
-    #Loại bỏ các ký tự đặc biệt nguy hiểm cho tên file/folder
-    name = re.sub(r'[\\/*?:"<>|]', "", name)
-    # Thay thế các ký tự xuống dòng và khoảng trắng không mong muốn
-    name = name.replace("\n", "").replace("\r", "")
-    name = name.replace(" ", "_") # Thay khoảng trắng bằng gạch dưới
-    # Loại bỏ các ký tự đặc biệt ở đầu hoặc cuối tên (., _, -)
-    name = name.strip("._- ")
-    # Nếu sau khi làm sạch tên rỗng, trả về "untitled"
-    if not name:
-        name = "untitled"
-    return name[:100] # Giới hạn độ dài tên file/thư mục
-
-
-def ensure_directory_exists(dir_path: str) -> bool:
-    """
-    Đảm bảo một thư mục tồn tại, tạo mới nếu chưa có.
-    Trả về True nếu thư mục tồn tại hoặc được tạo thành công, False nếu ngược lại.
-    """
-    if not os.path.exists(dir_path):
+async def ensure_directory_exists(dir_path: str) -> bool:
+    loop = asyncio.get_event_loop()
+    exists = await loop.run_in_executor(None, os.path.exists, dir_path)
+    if not exists:
         try:
-            os.makedirs(dir_path, exist_ok=True)
+            await loop.run_in_executor(None, os.makedirs, dir_path, True)
             logger.info(f"Đã tạo thư mục: {dir_path}")
             return True
-        except OSError as e:
+        except Exception as e:
             logger.error(f"LỖI khi tạo thư mục {dir_path}: {e}")
             return False
     return True
 
-
-def create_proxy_template_if_not_exists(proxies_file_path: str, proxies_folder_path: str) -> bool:
-    """
-    Tạo thư mục proxies và file proxies.txt mẫu nếu chúng chưa tồn tại.
-    """
-    if not ensure_directory_exists(proxies_folder_path):
-        return False # Không thể tạo thư mục proxies
-
-    if not os.path.exists(proxies_file_path):
+async def create_proxy_template_if_not_exists(proxies_file_path: str, proxies_folder_path: str) -> bool:
+    if not await ensure_directory_exists(proxies_folder_path):
+        return False
+    loop = asyncio.get_event_loop()
+    exists = await loop.run_in_executor(None, os.path.exists, proxies_file_path)
+    if not exists:
         try:
-            with open(proxies_file_path, "w", encoding="utf-8") as f:
-                f.write("# Thêm proxy của bạn ở đây, mỗi proxy một dòng.\n")
-                f.write("# Ví dụ: http://host:port\n")
-                f.write("# Ví dụ: http://user:pass@host:port\n")
-                f.write("# Ví dụ (định dạng IP:PORT, sẽ dùng GLOBAL credentials từ config): 123.45.67.89:1080\n")
+            async with aiofiles.open(proxies_file_path, 'w', encoding='utf-8') as f:
+                await f.write("""# Thêm proxy của bạn ở đây, mỗi proxy một dòng.
+# Ví dụ: http://host:port
+# Ví dụ: http://user:pass@host:port
+# Ví dụ (IP:PORT sẽ dùng GLOBAL credentials): 123.45.67.89:1080
+""")
             logger.info(f"Đã tạo file proxies mẫu: {proxies_file_path}")
-            logger.info(f"Vui lòng thêm proxy vào {proxies_file_path} để sử dụng.")
             return True
-        except IOError as e:
+        except Exception as e:
             logger.error(f"LỖI khi tạo file proxies mẫu {proxies_file_path}: {e}")
             return False
     return True
 
-def sanitize_filename(name):
+# ----------------------------------------------------------------------------
+# Hàm xử lý metadata truyện (Async)
+# ----------------------------------------------------------------------------
+
+async def save_story_metadata_file(
+    story_base_data: Dict[str, Any],
+    current_discovery_genre_data: Optional[Dict[str, Any]],
+    story_folder_path: str,
+    fetched_story_details: Optional[Dict[str, Any]],
+    existing_metadata: Optional[Dict[str, Any]] = None
+) -> Dict[str, Any]:
     """
-    Làm sạch tên file/thư mục để tránh các ký tự không hợp lệ.
+    Bất đồng bộ: Lưu hoặc cập nhật file metadata.json cho truyện.
+    Trả về dict metadata đã lưu.
     """
+    await ensure_directory_exists(story_folder_path)
+    metadata_file = os.path.join(story_folder_path, "metadata.json")
+    metadata_to_save = existing_metadata.copy() if existing_metadata else {}
+
+    # Cập nhật fields cơ bản
+    metadata_to_save["title"] = story_base_data.get("title", metadata_to_save.get("title"))
+    metadata_to_save["url"] = story_base_data.get("url", metadata_to_save.get("url"))
+    metadata_to_save.setdefault("author", story_base_data.get("author"))
+    metadata_to_save.setdefault("image_url", story_base_data.get("image_url"))
+    metadata_to_save["crawled_by"] = "muonroi"
+
+    # Cập nhật categories
+    current_cats = metadata_to_save.get("categories", [])
+    seen_urls = {cat.get("url") for cat in current_cats if cat.get("url")}
+    if current_discovery_genre_data and current_discovery_genre_data.get("url") not in seen_urls:
+        current_cats.append({"name": current_discovery_genre_data.get("name"), "url": current_discovery_genre_data.get("url")})
+    metadata_to_save["categories"] = sorted(current_cats, key=lambda x: (x.get("name") or "").lower())
+
+    # Cập nhật chi tiết
+    if fetched_story_details:
+        for key in ["description","status","source","rating_value","rating_count","total_chapters_on_site"]:
+            if fetched_story_details.get(key) is not None:
+                metadata_to_save[key] = fetched_story_details.get(key)
+            else:
+                metadata_to_save.setdefault(key, None)
+
+    now_str = time.strftime("%Y-%m-%d %H:%M:%S")
+    metadata_to_save["metadata_updated_at"] = now_str
+    if "crawled_at" not in metadata_to_save:
+        metadata_to_save["crawled_at"] = now_str
+
+    try:
+        async with aiofiles.open(metadata_file, 'w', encoding='utf-8') as f:
+            await f.write(json.dumps(metadata_to_save, ensure_ascii=False, indent=4))
+        logger.info(f"Đã lưu/cập nhật metadata cho truyện vào: {metadata_file}")
+        return metadata_to_save
+    except Exception as e:
+        logger.error(f"LỖI khi lưu metadata '{metadata_file}': {e}")
+        return metadata_to_save
+
+# Đồng bộ: hàm này chỉ làm sạch tên file
+
+def sanitize_filename(name: str) -> str:
     if not name:
         return "untitled"
-    name = str(name)
-    name = re.sub(r'[\\/*?:"<>|]', "", name)
-    name = name.replace("\n", "").replace("\r", "")
-    name = name.replace(" ", "_")
-    name = name.strip("._- ")
-    if not name:
-        name = "untitled"
-    return name[:100]
+    val = str(name)
+    val = re.sub(r'[\\/*?:"<>|]', "", val)
+    val = val.replace("\n", "").replace("\r", "").replace(" ", "_")
+    val = val.strip("._- ")
+    return val[:100] or "untitled"
+
+def is_story_complete(story_folder_path: str, total_chapters_on_site: int) -> bool:
+    """Kiểm tra số file .txt đã crawl có đủ không."""
+    files = [f for f in os.listdir(story_folder_path) if f.endswith('.txt')]
+    return len(files) >= total_chapters_on_site
+
+def count_txt_files(story_folder_path):
+    return len([f for f in os.listdir(story_folder_path) if f.endswith('.txt')])
+
+def add_missing_story(story_title, story_url, total_chapters, crawled_chapters, filename="missing_chapters.json"):
+    """Thêm truyện thiếu chương vào file json."""
+    path = os.path.join(os.getcwd(), filename)
+    # Đọc danh sách cũ
+    if os.path.exists(path):
+        with open(path, "r", encoding="utf-8") as f:
+            data = json.load(f)
+    else:
+        data = []
+    # Check đã tồn tại chưa
+    for item in data:
+        if item.get("url") == story_url:
+            return  # Không thêm trùng
+    data.append({
+        "title": story_title,
+        "url": story_url,
+        "total_chapters": total_chapters,
+        "crawled_chapters": crawled_chapters
+    })
+    with open(path, "w", encoding="utf-8") as f:
+        json.dump(data, f, ensure_ascii=False, indent=2)
