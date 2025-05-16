@@ -1,25 +1,25 @@
 import asyncio
 import glob
 import aiohttp
-import aiofiles
 import os
 from urllib.parse import urlparse
 from typing import Dict, Any, List, Tuple
 
+from utils.logger import logger
+
 from utils.utils import (
-    add_missing_story, count_txt_files, logger, sanitize_filename, ensure_directory_exists,
+    add_missing_story, async_save_chapter_with_hash_check, backup_crawl_state, count_txt_files, log_error_chapter, queue_failed_chapter, sanitize_filename, ensure_directory_exists,
     create_proxy_template_if_not_exists, load_crawl_state,
     save_crawl_state,
-    clear_specific_state_keys, save_story_metadata_file
+    clear_specific_state_keys, save_story_metadata_file, smart_delay
 )
 from config.config import (
     BASE_URL, DATA_FOLDER, PROXIES_FILE, PROXIES_FOLDER,
     MAX_GENRES_TO_CRAWL, MAX_STORIES_PER_GENRE_PAGE,
     MAX_STORIES_TOTAL_PER_GENRE, MAX_CHAPTERS_PER_STORY,
-    MAX_CHAPTER_PAGES_TO_CRAWL, RETRY_FAILED_CHAPTERS_PASSES,
-    REQUEST_DELAY
+    MAX_CHAPTER_PAGES_TO_CRAWL, RETRY_FAILED_CHAPTERS_PASSES
 )
-from config.proxy import load_proxies, loaded_proxies
+from config.proxy_provider import load_proxies, loaded_proxies
 from scraper import initialize_scraper
 from analyze.parsers import (
     get_all_genres, get_all_stories_from_genre,
@@ -61,12 +61,11 @@ async def crawl_missing_chapters_for_story(
     for idx, ch, fname_only in missing_chapters:
         full_path = os.path.join(story_folder_path, fname_only)
         tasks.append(asyncio.create_task(
-            async_download_and_save_chapter(
-                session, ch, story_data_item, current_discovery_genre_data,
+            async_download_and_save_chapter(ch, story_data_item, current_discovery_genre_data,
                 full_path, fname_only, "Crawl bù missing", f"{idx+1}/{len(chapters)}", crawl_state, successful, failed
             )
         ))
-        await asyncio.sleep(REQUEST_DELAY/2)
+        await smart_delay()
     await asyncio.gather(*tasks)
     if failed:
         logger.warning(f"Vẫn còn {len(failed)} chương bù không crawl được.")
@@ -75,7 +74,7 @@ async def crawl_missing_chapters_for_story(
 async def initialize_and_log_setup_with_state() -> Tuple[str, Dict[str, Any]]:
     await ensure_directory_exists(DATA_FOLDER)
     await create_proxy_template_if_not_exists(PROXIES_FILE, PROXIES_FOLDER)
-    await load_proxies()
+    await load_proxies(PROXIES_FILE)
     await initialize_scraper()
     homepage_url = BASE_URL.rstrip('/') + '/'
     crawl_state = await load_crawl_state()
@@ -107,7 +106,6 @@ async def initialize_and_log_setup_with_state() -> Tuple[str, Dict[str, Any]]:
     return homepage_url, crawl_state
 
 async def async_download_and_save_chapter(
-    session: aiohttp.ClientSession,
     chapter_info: Dict[str, Any], story_data_item: Dict[str, Any],
     current_discovery_genre_data: Dict[str, Any],
     chapter_filename_full_path: str, chapter_filename_only: str,
@@ -121,29 +119,76 @@ async def async_download_and_save_chapter(
 
     if content:
         try:
-            async with aiofiles.open(chapter_filename_full_path, 'w', encoding='utf-8') as f:
-                await f.write(f"Nguồn: {url}\n\nTruyện: {story_data_item['title']}\n")
-                await f.write(f"Thể loại: {current_discovery_genre_data['name']}\nChương: {chapter_info['title']}\n\n")
-                await f.write(content) # type: ignore
-            logger.info(f"          Đã lưu ({pass_description}): {chapter_filename_only}")
-            successfully_saved.add(chapter_filename_full_path)
-            processed = crawl_state.get('processed_chapter_urls_for_current_story', [])
-            if url not in processed:
-                processed.append(url)
-                crawl_state['processed_chapter_urls_for_current_story'] = processed
-                await save_crawl_state(crawl_state)
+            # Gộp nội dung chuẩn file .txt
+            chapter_content = (
+                f"Nguồn: {url}\n\nTruyện: {story_data_item['title']}\n"
+                f"Thể loại: {current_discovery_genre_data['name']}\n"
+                f"Chương: {chapter_info['title']}\n\n"
+                f"{content}"
+            )
+
+            # Sử dụng hàm hash check
+            save_result = await async_save_chapter_with_hash_check(chapter_filename_full_path, chapter_content)
+            if save_result == "new":
+                logger.info(f"          Đã lưu ({pass_description}): {chapter_filename_only}")
+            elif save_result == "unchanged":
+                logger.debug(f"          Chương '{chapter_filename_only}' đã tồn tại, không thay đổi nội dung.")
+            elif save_result == "updated":
+                logger.info(f"          Chương '{chapter_filename_only}' đã được cập nhật do nội dung thay đổi.")
+
+            if save_result in ("new", "updated", "unchanged"):
+                successfully_saved.add(chapter_filename_full_path)
+                processed = crawl_state.get('processed_chapter_urls_for_current_story', [])
+                if url not in processed:
+                    processed.append(url)
+                    crawl_state['processed_chapter_urls_for_current_story'] = processed
+                    await save_crawl_state(crawl_state)
         except Exception as e:
             logger.error(f"          Lỗi lưu '{chapter_filename_only}': {e}")
-            failed_list.append({'chapter_data': chapter_info,
-                                'filename': chapter_filename_full_path,
-                                'filename_only': chapter_filename_only,
-                                'original_idx': None})
+            log_error_chapter(
+                story_title=story_data_item['title'],
+                chapter_title=chapter_info['title'],
+                chapter_url=chapter_info['url'],
+                error_msg=str(e)
+            )
+            # --- Queue retry chương lỗi ---
+            queue_failed_chapter({
+                "chapter_url": chapter_info['url'],
+                "chapter_title": chapter_info['title'],
+                "story_title": story_data_item['title'],
+                "story_url": story_data_item['url'],
+                "filename": chapter_filename_full_path,
+                "reason": f"Lỗi lưu: {e}"
+            })
+            failed_list.append({
+                'chapter_data': chapter_info,
+                'filename': chapter_filename_full_path,
+                'filename_only': chapter_filename_only,
+                'original_idx': None
+            })
     else:
         logger.warning(f"          Không lấy được nội dung '{chapter_info['title']}'")
-        failed_list.append({'chapter_data': chapter_info,
-                            'filename': chapter_filename_full_path,
-                            'filename_only': chapter_filename_only,
-                            'original_idx': None})
+        log_error_chapter(
+            story_title=story_data_item['title'],
+            chapter_title=chapter_info['title'],
+            chapter_url=chapter_info['url'],
+            error_msg="Không lấy được nội dung"
+        )
+        # --- Queue retry chương lỗi ---
+        queue_failed_chapter({
+            "chapter_url": chapter_info['url'],
+            "chapter_title": chapter_info['title'],
+            "story_title": story_data_item['title'],
+            "story_url": story_data_item['url'],
+            "filename": chapter_filename_full_path,
+            "reason": "Không lấy được nội dung"
+        })
+        failed_list.append({
+            'chapter_data': chapter_info,
+            'filename': chapter_filename_full_path,
+            'filename_only': chapter_filename_only,
+            'original_idx': None
+        })
 
 async def process_all_chapters_for_story(
     session: aiohttp.ClientSession,
@@ -167,12 +212,11 @@ async def process_all_chapters_for_story(
         fname_only = f"{idx+1:04d}_{sanitize_filename(ch['title']) or 'untitled'}.txt"
         full_path = os.path.join(story_folder_path, fname_only)
         tasks.append(asyncio.create_task(
-            async_download_and_save_chapter(
-                session, ch, story_data_item, current_discovery_genre_data,
+            async_download_and_save_chapter(ch, story_data_item, current_discovery_genre_data,
                 full_path, fname_only, "Lượt 1", f"{idx+1}/{target}", crawl_state, successful, failed
             )
         ))
-        await asyncio.sleep(REQUEST_DELAY/2)
+        await smart_delay()
     await asyncio.gather(*tasks)
 
     # Các lượt thử lại
@@ -191,12 +235,11 @@ async def process_all_chapters_for_story(
             fname_only = f"{idx+1:04d}_{sanitize_filename(ch['title']) or 'untitled'}.txt"
             full_path = os.path.join(story_folder_path, fname_only)
             tasks.append(asyncio.create_task(
-                async_download_and_save_chapter(
-                    session, ch, story_data_item, current_discovery_genre_data,
+                async_download_and_save_chapter(ch, story_data_item, current_discovery_genre_data,
                     full_path, fname_only, f"Lượt thử lại {rp+1}", str(idx+1), crawl_state, successful, failed
                 )
             ))
-        await asyncio.sleep(REQUEST_DELAY)
+        await smart_delay()
         await asyncio.gather(*tasks)
 
     if failed:
@@ -241,6 +284,10 @@ async def process_story_item(
     story_url = story_data_item['url']
     if total_chapters_on_site:
         crawled_chapters = count_txt_files(story_global_folder_path)
+
+        if crawled_chapters < 0.1 * total_chapters_on_site:
+            logger.error(f"[ALERT] Parse chương có thể lỗi HTML hoặc bị chặn: {story_title} ({crawled_chapters}/{total_chapters_on_site})")
+
         if crawled_chapters < total_chapters_on_site:
             logger.warning(f"Truyện '{story_title}' chỉ crawl được {crawled_chapters}/{total_chapters_on_site} chương! Ghi lại để crawl bù.")
             add_missing_story(story_title, story_url, total_chapters_on_site, crawled_chapters)
@@ -256,6 +303,7 @@ async def process_story_item(
         completed = set(crawl_state.get('globally_completed_story_urls', []))
         completed.add(story_data_item['url'])
         crawl_state['globally_completed_story_urls'] = sorted(completed)
+    backup_crawl_state()
     await save_crawl_state(crawl_state)
     await clear_specific_state_keys(crawl_state, ['processed_chapter_urls_for_current_story'])
     return is_complete

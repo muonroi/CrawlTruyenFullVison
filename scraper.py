@@ -2,8 +2,11 @@ import asyncio
 import cloudscraper
 from typing import Optional, Dict
 import cloudscraper
+from config.proxy_provider import get_proxy_url, remove_bad_proxy
 from utils.utils import logger
 from config.config import (
+    GLOBAL_PROXY_PASSWORD,
+    GLOBAL_PROXY_USERNAME,
     get_random_headers)
 
 scraper: Optional[cloudscraper.CloudScraper] = None
@@ -30,22 +33,27 @@ async def initialize_scraper(override_headers: Optional[Dict[str, str]] = None) 
         logger.error(f"Lỗi khi khởi tạo Cloudscraper: {e}")
         scraper = None
 
-def make_request(url, headers_override=None, proxies=None, timeout=30):
-    # Nếu scraper là biến global đã khởi tạo, dùng luôn
+def make_request(url, headers_override=None, timeout=30):
     global scraper
     if scraper is None:
         scraper = cloudscraper.create_scraper()
-    # headers
-    headers = scraper.headers.copy()#type: ignore
+    headers = scraper.headers.copy() # type: ignore
     if headers_override:
         headers.update(headers_override)
-    # proxy
-    if proxies is None:
-        proxies = {}
+
+    # Lấy proxy random
+    proxy_url = get_proxy_url(GLOBAL_PROXY_USERNAME, GLOBAL_PROXY_PASSWORD)
+    proxies = {}
+    if proxy_url:
+        proxies = {
+            "http": proxy_url,
+            "https": proxy_url
+        }
     try:
         resp = scraper.get(url, headers=headers, proxies=proxies, timeout=timeout)
         resp.raise_for_status()
         return resp
     except Exception as ex:
         logger.error(f"make_request lỗi: {ex}")
+        remove_bad_proxy(proxy_url)
         return None

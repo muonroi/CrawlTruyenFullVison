@@ -1,13 +1,16 @@
+import hashlib
 import os
+import random
 import re
 import json
+import shutil
 import time
 import logging
 import asyncio
 import aiofiles
 from typing import Any, Dict, List, Optional
 from logging.handlers import RotatingFileHandler
-from config.config import STATE_FILE
+from config.config import ERROR_CHAPTERS_FILE, REQUEST_DELAY, STATE_FILE
 
 # --- Thiết lập Logging (giữ nguyên) ---
 LOG_FILE_PATH = "crawler.log"
@@ -39,8 +42,8 @@ async def load_crawl_state() -> Dict[str, Any]:
 
 async def save_crawl_state(state: Dict[str, Any]) -> None:
     try:
-        async with aiofiles.open(STATE_FILE, 'w', encoding='utf-8') as f:
-            await f.write(json.dumps(state, ensure_ascii=False, indent=4))
+        content = json.dumps(state, ensure_ascii=False, indent=4)
+        await atomic_write(STATE_FILE, content)
         logger.info(f"Đã lưu trạng thái crawl vào {STATE_FILE}")
     except Exception as e:
         logger.error(f"Lỗi khi lưu trạng thái crawl vào {STATE_FILE}: {e}")
@@ -204,3 +207,79 @@ def add_missing_story(story_title, story_url, total_chapters, crawled_chapters, 
     })
     with open(path, "w", encoding="utf-8") as f:
         json.dump(data, f, ensure_ascii=False, indent=2)
+
+async def async_save_chapter_with_hash_check(filename, content: str):
+    """
+    Lưu file chương, kiểm tra hash để tránh ghi lại nếu nội dung không đổi.
+    Trả về: "new" (chưa tồn tại, đã ghi), "unchanged" (tồn tại, giống hệt), "updated" (tồn tại, đã cập nhật).
+    """
+    hash_val = hashlib.sha256(content.encode('utf-8')).hexdigest()
+    file_exists = os.path.exists(filename)
+    if file_exists:
+        async with aiofiles.open(filename, 'r', encoding='utf-8') as f:
+            old_content = await f.read()
+        old_hash = hashlib.sha256(old_content.encode('utf-8')).hexdigest()
+        if old_hash == hash_val:
+            logger.debug(f"Chương '{filename}' đã tồn tại với nội dung giống hệt, bỏ qua ghi lại.")
+            return "unchanged"
+        else:
+            async with aiofiles.open(filename, 'w', encoding='utf-8') as f:
+                await f.write(content)
+            logger.info(f"Chương '{filename}' đã được cập nhật do nội dung thay đổi.")
+            return "updated"
+    else:
+        async with aiofiles.open(filename, 'w', encoding='utf-8') as f:
+            await f.write(content)
+        logger.info(f"Chương '{filename}' mới đã được lưu.")
+        return "new"
+    
+async def smart_delay(base=REQUEST_DELAY):
+    delay = random.uniform(base*0.7, base*1.3)
+    await asyncio.sleep(delay)
+
+def log_error_chapter(story_title, chapter_title, chapter_url,
+    error_msg="Không lấy được nội dung"):
+    import json
+    data = {
+        "story": story_title,
+        "chapter": chapter_title,
+        "url": chapter_url,
+        "error_msg": error_msg
+    }
+    if os.path.exists(ERROR_CHAPTERS_FILE):
+        with open(ERROR_CHAPTERS_FILE, 'r', encoding='utf-8') as f:
+            arr = json.load(f)
+    else:
+        arr = []
+    arr.append(data)
+    with open(ERROR_CHAPTERS_FILE, 'w', encoding='utf-8') as f:
+        json.dump(arr, f, ensure_ascii=False, indent=2)
+
+def backup_crawl_state(state_file='crawl_state.json'):
+    ts = time.strftime("%Y%m%d_%H%M%S")
+    backup_file = f"{state_file}.bak_{ts}"
+    shutil.copy(state_file, backup_file)
+    logger.info(f"Đã backup state: {backup_file}")
+
+def queue_failed_chapter(chapter_data, filename='chapter_retry_queue.json'):
+    """Ghi chương lỗi vào queue JSON để retry."""
+    path = os.path.join(os.getcwd(), filename)
+    # Đọc danh sách cũ
+    if os.path.exists(path):
+        with open(path, "r", encoding="utf-8") as f:
+            data = json.load(f)
+    else:
+        data = []
+    # Check đã tồn tại (dựa vào url hoặc filename)
+    for item in data:
+        if item.get("url") == chapter_data.get("url"):
+            return
+    data.append(chapter_data)
+    with open(path, "w", encoding="utf-8") as f:
+        json.dump(data, f, ensure_ascii=False, indent=2)
+
+async def atomic_write(filename, content):
+    tmpfile = filename + ".tmp"
+    async with aiofiles.open(tmpfile, 'w', encoding='utf-8') as f:
+        await f.write(content)
+    os.replace(tmpfile, filename) 
