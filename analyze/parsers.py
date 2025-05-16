@@ -8,8 +8,8 @@ from utils.utils import logger, sanitize_filename
 from scraper import make_request
 from config.config import (
     BASE_URL,
-    MAX_STORIES_PER_GENRE_PAGE, # Mặc dù không dùng trực tiếp trong file này, có thể để lại nếu các hàm khác cần
-    MAX_CHAPTER_PAGES_TO_CRAWL # Mặc dù không dùng trực tiếp trong file này
+    MAX_STORIES_PER_GENRE_PAGE, 
+    MAX_CHAPTER_PAGES_TO_CRAWL
 )
 
 # --- GET STORY DETAILS (UPDATED) ---
@@ -23,10 +23,10 @@ def get_story_details(story_url: str, story_title_for_log: str) -> Dict[str, Any
         "description": None,
         "status": None,
         "source": None,
-        "detailed_genres": [], # Sẽ là list of dicts: [{"name": "...", "url": "..."}, ...]
+        "detailed_genres": [], 
         "rating_value": None,
         "rating_count": None,
-        "total_chapters_on_site": None # THÊM KEY NÀY
+        "total_chapters_on_site": None 
     }
 
     response = make_request(story_url)
@@ -59,16 +59,14 @@ def get_story_details(story_url: str, story_title_for_log: str) -> Dict[str, Any
     # 2. Lấy thông tin từ div class="info"
     info_divs_holder = soup.select_one("div.col-info-desc > div.info-holder > div.info")
     if not info_divs_holder:
-        info_divs_holder = soup.find("div", class_="info") # Fallback
+        info_divs_holder = soup.find("div", class_="info") 
 
     if info_divs_holder:
-        info_items = info_divs_holder.find_all("div", recursive=False) # Chỉ lấy các div con trực tiếp
+        info_items = info_divs_holder.find_all("div", recursive=False) 
         for item_div in info_items:
             h3_tag = item_div.find("h3")
             if h3_tag:
                 label = h3_tag.get_text(strip=True).lower()
-                
-                # Logic trích xuất giá trị sau h3 (cần cẩn thận hơn)
                 current_node = h3_tag.next_sibling
                 value_text_parts = []
                 genre_tags_from_info = []
@@ -78,17 +76,14 @@ def get_story_details(story_url: str, story_title_for_log: str) -> Dict[str, Any
                         genre_name = current_node.get_text(strip=True)
                         genre_href = current_node.get('href')
                         if genre_name and genre_href:
-                             # Đảm bảo URL là tuyệt đối
                             abs_genre_url = urljoin(story_url, genre_href)
                             genre_tags_from_info.append({"name": genre_name, "url": abs_genre_url})
-                        elif genre_name: # Nếu chỉ có tên
+                        elif genre_name: 
                             value_text_parts.append(genre_name)
                     elif hasattr(current_node, 'name') and current_node.name == 'span':
                         value_text_parts.append(current_node.get_text(strip=True))
                     elif isinstance(current_node, str) and current_node.strip():
                         value_text_parts.append(current_node.strip())
-                    
-                    # Dừng nếu gặp thẻ h3 tiếp theo (của mục info khác) hoặc hết sibling
                     if hasattr(current_node.next_sibling, 'name') and current_node.next_sibling.name == 'h3':
                         break
                     current_node = current_node.next_sibling
@@ -96,77 +91,92 @@ def get_story_details(story_url: str, story_title_for_log: str) -> Dict[str, Any
                 value_text = ", ".join(filter(None, value_text_parts)).strip().rstrip(',')
 
                 if "tác giả:" in label:
-                    # details["author_from_page"] = value_text # Đã có author, không cần ghi đè trừ khi muốn
-                    pass
+                    pass 
                 elif "thể loại:" in label:
                     if genre_tags_from_info:
                         details["detailed_genres"] = genre_tags_from_info
-                    elif value_text: # Fallback nếu không có thẻ a với itemprop
+                    elif value_text: 
                         details["detailed_genres"] = [{"name": g.strip(), "url": None} for g in value_text.split(',')]
-                    logger.debug(f"  Truyện '{story_title_for_log}': Detailed genres: {details['detailed_genres']}")
+                    logger.debug(f"  Truyện '{story_title_for_log}': Detailed genres (from info div): {details['detailed_genres']}")
                 elif "nguồn:" in label:
                     details["source"] = value_text
                     logger.debug(f"  Truyện '{story_title_for_log}': Source: {details['source']}")
                 elif "trạng thái:" in label:
-                    # Trạng thái thường nằm trong thẻ span ngay sau h3 hoặc là text
-                    status_span = item_div.find("span", class_=re.compile(r"text-primary|text-success|text-danger")) # Thường có class màu
+                    status_span = item_div.find("span", class_=re.compile(r"text-primary|text-success|text-danger")) 
                     if status_span:
                         details["status"] = status_span.get_text(strip=True)
-                    elif value_text: # Fallback
+                    elif value_text: 
                          details["status"] = value_text
                     logger.debug(f"  Truyện '{story_title_for_log}': Status: {details['status']}")
                 
-                # BỔ SUNG LOGIC LẤY TỔNG SỐ CHƯƠNG
-                # Giả sử nó cũng nằm trong một div con của info_divs_holder
-                # Ví dụ: <h3>Số chương:</h3> 1234
-                # Hoặc <h3>Số chương:</h3> <span>1234</span>
-                # Hoặc nó có thể là một phần của thông tin "Trạng thái", ví dụ: "Hoàn thành (1234 chương)"
-                # Cần điều chỉnh dựa trên cấu trúc HTML thực tế
-                elif "số chương:" in label or "chương:" in label: # Thử các label phổ biến
-                    num_match = re.search(r"(\d+)", value_text) # Tìm số trong value_text
+                # Lấy tổng số chương từ div.info nếu có label "Số chương:"
+                elif "số chương:" in label:
+                    num_match = re.search(r"(\d+)", value_text) 
                     if num_match:
                         try:
                             details["total_chapters_on_site"] = int(num_match.group(1))
-                            logger.debug(f"  Truyện '{story_title_for_log}': Total chapters on site (from info div): {details['total_chapters_on_site']}")
+                            logger.debug(f"  Truyện '{story_title_for_log}': Total chapters on site (from info div - 'Số chương:'): {details['total_chapters_on_site']}")
                         except ValueError:
                             logger.warning(f"  Truyện '{story_title_for_log}': Không thể chuyển đổi số chương '{num_match.group(1)}' từ info div.")
                     else:
                         logger.debug(f"  Truyện '{story_title_for_log}': Không tìm thấy số chương trong text '{value_text}' cho label '{label}'.")
 
-    # Fallback hoặc cách lấy tổng số chương khác nếu không có trong div.info
-    # Ví dụ: một số trang có thể có một thẻ input ẩn chứa tổng số trang của danh sách chương
-    if details["total_chapters_on_site"] is None:
-        total_page_input = soup.find("input", id="total-page") # Thường là tổng số trang pagination của list chương
-        last_chapter_link = None
-        # Cố gắng tìm link chương cuối cùng từ pagination của danh sách chương (nếu có)
-        # Hoặc từ danh sách chương hiển thị trên trang truyện (nếu có)
-        list_chapter_div = soup.find("div", id="list-chapter")
-        if list_chapter_div:
-            all_chapter_links_on_page = list_chapter_div.find_all("a", href=re.compile(r"chuong-\d+/?$"))
-            if all_chapter_links_on_page:
-                # Sắp xếp các link chương (nếu cần) hoặc lấy link cuối cùng nếu trang sắp xếp ngược
-                # Đây là một cách phỏng đoán, không phải lúc nào cũng chính xác
-                # Cần logic sắp xếp chương dựa trên số chương trong href hoặc title
-                # Tạm thời lấy số lớn nhất từ các link chương tìm được làm ước lượng
-                max_chap_num = 0
-                for link_ch in all_chapter_links_on_page:
-                    title_text = link_ch.get_text(strip=True)
-                    href_text = link_ch.get("href", "")
-                    num_match = re.search(r"(?:chuong-|chuong\s*)(\d+)", title_text, re.IGNORECASE) or \
-                                re.search(r"(?:chuong-|/|chuong\s)(\d+)/?$", href_text, re.IGNORECASE)
-                    if num_match:
+    # 3. Lấy tổng số chương từ phần "Các chương mới nhất" (ƯU TIÊN HƠN HOẶC FALLBACK)
+    # Dựa trên ví dụ HTML bạn cung cấp: <ul class="l-chapters"> <li> <a> Chương X: ... </a></li> ... </ul>
+    latest_chapters_section = soup.find("ul", class_="l-chapters")
+    if not latest_chapters_section: # Fallback cho cấu trúc khác như trong trang chi tiết truyện
+        # Ví dụ: <div id="list-chapter"> <div class="row"> <div class="col-xs-12 col-sm-6 col-md-6"> <ul class="list-chapter"> <li><a>...</a></li>
+        list_chapter_container = soup.find("div", id="list-chapter")
+        if list_chapter_container:
+            # Tìm ul.list-chapter đầu tiên bên trong, vì có thể có 2 cột
+            ul_list_chapter = list_chapter_container.find("ul", class_="list-chapter")
+            if ul_list_chapter:
+                latest_chapters_section = ul_list_chapter
+
+
+    if latest_chapters_section:
+        first_chapter_li = latest_chapters_section.find("li") # Lấy <li> đầu tiên
+        if first_chapter_li:
+            first_chapter_item_link = first_chapter_li.find("a")
+            if first_chapter_item_link:
+                chapter_text_content = first_chapter_item_link.get_text(strip=True)
+                chapter_title_attr = first_chapter_item_link.get("title", "")
+                
+                # Thử trích xuất số từ text content trước, rồi đến title attribute
+                # Regex tìm "Chương X", "X:", hoặc chỉ một số X đứng đầu nếu có dấu hai chấm theo sau
+                num_match = re.search(r"Chương\s*(\d+)|^\s*(\d+)\s*:", chapter_text_content)
+                if not num_match:
+                    num_match = re.search(r"Chương\s*(\d+)|^\s*(\d+)\s*:", chapter_title_attr)
+
+                if num_match:
+                    chapter_num_str = num_match.group(1) or num_match.group(2) # group(1) cho "Chương X", group(2) cho "X:"
+                    if chapter_num_str:
                         try:
-                            chap_num = int(num_match.group(1))
-                            if chap_num > max_chap_num:
-                                max_chap_num = chap_num
+                            latest_chapter_number = int(chapter_num_str)
+                            # Logic cập nhật:
+                            # Nếu total_chapters_on_site chưa có, hoặc số mới này lớn hơn, thì cập nhật.
+                            # Điều này hữu ích cho truyện đang ra, vì số chương mới nhất là tổng số hiện tại.
+                            # Đối với truyện hoàn thành, thông tin "Số chương:" trong div.info (nếu có) có thể chính xác hơn.
+                            # Tuy nhiên, nếu "Số chương:" không có, thì số chương mới nhất là nguồn tốt nhất.
+                            if details["total_chapters_on_site"] is None or \
+                               (details.get("status", "").lower() not in ["hoàn thành", "full", "completed"] and latest_chapter_number > details["total_chapters_on_site"]) or \
+                               (details.get("status", "").lower() in ["hoàn thành", "full", "completed"] and latest_chapter_number > (details["total_chapters_on_site"] or 0) ): # Cập nhật nếu số mới nhất lớn hơn, ngay cả khi đã hoàn thành
+                                details["total_chapters_on_site"] = latest_chapter_number
+                                logger.info(f"  Truyện '{story_title_for_log}': Cập nhật total_chapters_on_site từ 'chương mới nhất': {latest_chapter_number}")
+                            else:
+                                logger.debug(f"  Truyện '{story_title_for_log}': Số chương mới nhất ({latest_chapter_number}) không được dùng để cập nhật total_chapters_on_site ({details['total_chapters_on_site']}).")
                         except ValueError:
-                            continue
-                if max_chap_num > 0:
-                    details["total_chapters_on_site"] = max_chap_num
-                    logger.debug(f"  Truyện '{story_title_for_log}': Ước lượng total chapters từ link chương trên trang: {max_chap_num}")
+                            logger.warning(f"  Truyện '{story_title_for_log}': Không thể chuyển đổi số chương '{chapter_num_str}' từ 'chương mới nhất'.")
+                else:
+                    logger.debug(f"  Truyện '{story_title_for_log}': Không trích xuất được số chương từ link chương mới nhất: text='{chapter_text_content}', title='{chapter_title_attr}'.")
+            else:
+                logger.debug(f"  Truyện '{story_title_for_log}': Không tìm thấy link (a) trong li đầu tiên của 'chương mới nhất'.")
+        else:
+            logger.debug(f"  Truyện '{story_title_for_log}': Không tìm thấy mục (li) nào trong 'chương mới nhất'.")
+    else:
+        logger.debug(f"  Truyện '{story_title_for_log}': Không tìm thấy section 'Các chương mới nhất' (ul.l-chapters hoặc ul.list-chapter).")
 
-
-    # 3. Lấy thông tin đánh giá (rating)
+    # 4. Lấy thông tin đánh giá (rating)
     rate_holder_div = soup.find("div", class_="rate-holder")
     if rate_holder_div and rate_holder_div.get("data-score"):
         details["rating_value"] = rate_holder_div.get("data-score")
@@ -178,10 +188,13 @@ def get_story_details(story_url: str, story_title_for_log: str) -> Dict[str, Any
     if details["rating_value"] or details["rating_count"]:
         logger.debug(f"  Truyện '{story_title_for_log}': Rating: {details['rating_value']}/10 from {details['rating_count']} votes.")
 
+    if details["total_chapters_on_site"] is None:
+        logger.warning(f"  Truyện '{story_title_for_log}': Không thể xác định tổng số chương sau tất cả các phương pháp.")
+
     return details
 
 # --- GET ALL GENRES ---
-# ... (Hàm này giữ nguyên như bạn đã cung cấp) ...
+# ... (Hàm này giữ nguyên) ...
 def get_all_genres(homepage_url: str) -> List[Dict[str, str]]:
     logger.info(f"Đang lấy danh sách thể loại từ: {homepage_url}")
     response = make_request(homepage_url)
@@ -243,7 +256,7 @@ def get_all_genres(homepage_url: str) -> List[Dict[str, str]]:
     return unique_genres
 
 # --- GET STORIES FROM GENRE PAGE ---
-# ... (Hàm này giữ nguyên như bạn đã cung cấp) ...
+# ... (Hàm này giữ nguyên) ...
 def get_stories_from_genre_page(genre_page_url: str) -> Tuple[List[Dict[str, Any]], Optional[str]]:
     logger.info(f"Đang lấy truyện từ trang thể loại: {genre_page_url}")
     response = make_request(genre_page_url)
@@ -386,7 +399,7 @@ def get_stories_from_genre_page(genre_page_url: str) -> Tuple[List[Dict[str, Any
     return unique_stories_on_page, next_page_url
 
 # --- GET ALL STORIES FROM GENRE ---
-# ... (Hàm này giữ nguyên như bạn đã cung cấp) ...
+# ... (Hàm này giữ nguyên) ...
 def get_all_stories_from_genre(genre_name: str, genre_url: str,
                                max_pages_to_crawl: Optional[int] = MAX_STORIES_PER_GENRE_PAGE
                                ) -> List[Dict[str, Any]]:
@@ -702,4 +715,3 @@ def get_story_chapter_content(chapter_url: str,
             else:
                 logger.debug(f"  Chương '{chapter_title}': Nội dung từ body quá ngắn hoặc không phù hợp.")
         return None
-
