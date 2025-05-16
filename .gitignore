@@ -4,7 +4,7 @@
 
 # Các mục khác bạn có thể đã có hoặc muốn thêm:
 # Môi trường ảo Python
-/.venv/
+
 /__pycache__/
 *.py[cod]
 *$py.class
