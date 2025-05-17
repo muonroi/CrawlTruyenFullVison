@@ -11,6 +11,7 @@ load_dotenv()
 BASE_URL = os.getenv("BASE_URL", "https://truyenfull.vision")
 REQUEST_DELAY = float(os.getenv("REQUEST_DELAY", "5"))  # Giây delay giữa các request
 DATA_FOLDER = os.getenv("DATA_FOLDER", "truyen_data")
+COMPLETED_FOLDER = os.getenv("COMPLETED_FOLDER", "completed_stories")
 BACKUP_FOLDER = os.getenv("BACKUP_FOLDER", "backup_truyen_data")
 
 # -------------- [Proxy & User-Agent] --------------

@@ -5,7 +5,7 @@ from typing import Any, Dict, List
 
 import aiofiles
 
-from config.config import STATE_FILE
+from config.config import COMPLETED_FOLDER, DATA_FOLDER, STATE_FILE
 from utils import logger
 from utils.io_utils import atomic_write
 from utils.logger import logger
@@ -65,3 +65,10 @@ async def clear_all_crawl_state() -> None:
             logger.info(f"Đã xóa file trạng thái crawl: {STATE_FILE}")
         except Exception as e:
             logger.error(f"Lỗi khi xóa file trạng thái crawl: {e}")
+
+def is_genre_completed(genre_name):
+    src_genre_folder = os.path.join(DATA_FOLDER, genre_name)
+    completed_genre_folder = os.path.join(COMPLETED_FOLDER, genre_name)
+    src_count = len(os.listdir(src_genre_folder)) if os.path.exists(src_genre_folder) else 0
+    completed_count = len(os.listdir(completed_genre_folder)) if os.path.exists(completed_genre_folder) else 0
+    return src_count == 0 and completed_count > 0
