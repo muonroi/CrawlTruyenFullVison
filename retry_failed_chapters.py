@@ -7,7 +7,7 @@ from config.config import PROXIES_FILE, PROXIES_FOLDER
 from config.proxy_provider import load_proxies
 from scraper import initialize_scraper
 from utils.chapter_utils import async_save_chapter_with_hash_check
-from utils.io_utils import create_proxy_template_if_not_exists
+from utils.io_utils import atomic_write_json, create_proxy_template_if_not_exists
 
 async def retry_queue(filename='chapter_retry_queue.json', interval=900):  # 900 giây = 15 phút
     await create_proxy_template_if_not_exists(PROXIES_FILE, PROXIES_FOLDER)
@@ -43,7 +43,7 @@ async def retry_queue(filename='chapter_retry_queue.json', interval=900):  # 900
             print(f"Retry chương: {chapter_title} ({url}) ... của truyện: {story_title}")
             content = await get_story_chapter_content(url, chapter_title)
             if content:
-                save_result = await async_save_chapter_with_hash_check(filename_path, content)
+                save_result = async_save_chapter_with_hash_check(filename_path, content)
                 print(f"-> Result: {save_result}")
                 to_remove.append(item)
             else:
@@ -52,8 +52,7 @@ async def retry_queue(filename='chapter_retry_queue.json', interval=900):  # 900
         # Xoá chương đã thành công khỏi queue
         if to_remove:
             queue = [item for item in queue if item not in to_remove]
-            with open(filename, 'w', encoding='utf-8') as f:
-                json.dump(queue, f, ensure_ascii=False, indent=2)
+            atomic_write_json(queue, filename)
             print(f"[{now}] [RetryQueue] Đã xoá {len(to_remove)} chương khỏi queue.")
 
         print(f"[{now}] [RetryQueue] Đợi {interval//60} phút trước khi kiểm tra lại queue.")
