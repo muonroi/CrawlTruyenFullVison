@@ -27,3 +27,4 @@ crawler.log
 .vscode/*
 __pycache__/*
 *.pyc
+log/*
