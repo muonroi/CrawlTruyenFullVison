@@ -43,38 +43,50 @@ def get_saved_chapters_files(story_folder_path: str) -> set:
     return set(os.path.basename(f) for f in files)
 
 async def crawl_missing_chapters_for_story(
-    session: aiohttp.ClientSession,
-    chapters: List[Dict[str, Any]],
-    story_data_item: Dict[str, Any],
-    current_discovery_genre_data: Dict[str, Any],
-    story_folder_path: str,
-    crawl_state: Dict[str, Any]
-) -> int:
-    """Quét lại các chương thiếu và crawl bù"""
+    session, chapters, story_data_item, current_discovery_genre_data, story_folder_path, crawl_state,
+    num_batches=10
+):
     saved_files = get_saved_chapters_files(story_folder_path)
     missing_chapters = []
     for idx, ch in enumerate(chapters):
         fname_only = f"{idx+1:04d}_{sanitize_filename(ch['title']) or 'untitled'}.txt"
         if fname_only not in saved_files:
             missing_chapters.append((idx, ch, fname_only))
+
     if not missing_chapters:
         logger.info(f"Tất cả chương đã đủ, không có chương missing trong '{story_data_item['title']}'")
         return 0
-    logger.info(f"Có {len(missing_chapters)} chương thiếu, sẽ crawl bù cho truyện '{story_data_item['title']}'...")
-    tasks = []
-    successful, failed = set(), []
-    for idx, ch, fname_only in missing_chapters:
-        full_path = os.path.join(story_folder_path, fname_only)
-        tasks.append(asyncio.create_task(
-            async_download_and_save_chapter(ch, story_data_item, current_discovery_genre_data,
-                full_path, fname_only, "Crawl bù missing", f"{idx+1}/{len(chapters)}", crawl_state, successful, failed
-            )
-        ))
-        await smart_delay()
-    await asyncio.gather(*tasks)
+
+    num_batches = min(num_batches, max(1, len(missing_chapters)))
+    logger.info(f"Có {len(missing_chapters)} chương thiếu, chia thành {num_batches} batch để crawl song song cho truyện '{story_data_item['title']}'...")
+
+    # --- Chia batch ---
+    batches = split_batches(missing_chapters, num_batches)
+    async def crawl_batch(batch):
+        successful, failed = set(), []
+        tasks = []
+        for idx, ch, fname_only in batch:
+            full_path = os.path.join(story_folder_path, fname_only)
+            tasks.append(asyncio.create_task(
+                async_download_and_save_chapter(
+                    ch, story_data_item, current_discovery_genre_data, full_path, fname_only, "Crawl bù missing", f"{idx+1}/{len(chapters)}", crawl_state, successful, failed
+                )
+            ))
+            await smart_delay()
+        await asyncio.gather(*tasks)
+        return successful, failed
+
+    batch_tasks = [crawl_batch(batch) for batch in batches if batch]
+    results = await asyncio.gather(*batch_tasks)
+    successful = set()
+    failed = []
+    for suc, fail in results:
+        successful.update(suc)
+        failed.extend(fail)
     if failed:
         logger.warning(f"Vẫn còn {len(failed)} chương bù không crawl được.")
     return len(successful)
+
 
 async def initialize_and_log_setup_with_state() -> Tuple[str, Dict[str, Any]]:
     await ensure_directory_exists(DATA_FOLDER)
