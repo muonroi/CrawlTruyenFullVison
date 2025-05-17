@@ -43,7 +43,7 @@ RETRY_FAILED_CHAPTERS_PASSES = int(os.getenv("RETRY_FAILED_CHAPTERS_PASSES", 2))
 TIMEOUT_REQUEST = int(os.getenv("TIMEOUT_REQUEST", 30))
 RETRY_ATTEMPTS = int(os.getenv("RETRY_ATTEMPTS", 3))
 DELAY_ON_RETRY = float(os.getenv("DELAY_ON_RETRY", 2.5))
-
+BATCH_SEMAPHORE_LIMIT = 5
 # -------------- [Files & State] --------------
 STATE_FILE = os.getenv("STATE_FILE", "crawl_state.json")
 ERROR_CHAPTERS_FILE = os.getenv("ERROR_CHAPTERS_FILE", "error_chapters.json")
