@@ -97,10 +97,11 @@ async def async_download_and_save_chapter(
 
     if content:
         try:
+            category_name = get_category_name(story_data_item, current_discovery_genre_data)
             # Gộp nội dung chuẩn file .txt
             chapter_content = (
                 f"Nguồn: {url}\n\nTruyện: {story_data_item['title']}\n"
-                f"Thể loại: {current_discovery_genre_data['name']}\n"
+                f"Thể loại: {category_name}\n"
                 f"Chương: {chapter_info['title']}\n\n"
                 f"{content}"
             )
@@ -187,3 +188,9 @@ async def process_chapter_batch(
         await smart_delay()
     return successful, failed
 
+
+def get_category_name(story_data_item, current_discovery_genre_data):
+    if 'categories' in story_data_item and isinstance(story_data_item['categories'], list):
+        if story_data_item['categories']:
+            return story_data_item['categories'][0].get('name', '')
+    return current_discovery_genre_data.get('name', '')

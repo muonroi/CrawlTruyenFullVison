@@ -42,9 +42,12 @@ async def check_and_crawl_missing_all_stories():
                 story_url, metadata['title'],
                 total_chapters_on_site=total_chapters
             )
-            if not chapters or len(chapters) < total_chapters:
-                print(f"[WARNING] Lấy được {len(chapters)} chương (metadata {total_chapters}). Có thể web đổi cấu trúc/phân trang?")
-            # Crawl missing
+            print("DEBUG type(metadata):", type(metadata))
+            print("DEBUG metadata:", metadata)
+            print("DEBUG chapters type:", type(chapters))
+            if chapters and isinstance(chapters, list):
+                print("DEBUG first chapter:", chapters[0], type(chapters[0]))
+            print("DEBUG story_folder:", story_folder)
             await crawl_missing_chapters_for_story(
                 session,
                 chapters,
