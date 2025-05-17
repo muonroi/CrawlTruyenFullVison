@@ -14,7 +14,7 @@ from utils.batch_utils import smart_delay, split_batches
 from utils.chapter_utils import async_download_and_save_chapter, process_chapter_batch
 from utils.io_utils import create_proxy_template_if_not_exists, ensure_directory_exists
 from utils.logger import logger
-from config.config import GENRE_ASYNC_LIMIT, GENRE_BATCH_SIZE, LOADED_PROXIES
+from config.config import BATCH_SEMAPHORE_LIMIT, GENRE_ASYNC_LIMIT, GENRE_BATCH_SIZE, LOADED_PROXIES
 
 from config.config import (
     BASE_URL, DATA_FOLDER, NUM_CHAPTER_BATCHES, PROXIES_FILE, PROXIES_FOLDER,
@@ -64,28 +64,39 @@ async def crawl_missing_chapters_for_story(
 
     async def crawl_batch(batch, batch_idx):
         successful, failed = set(), []
+        sem = asyncio.Semaphore(BATCH_SEMAPHORE_LIMIT)
         tasks = []
         for idx, ch, fname_only in batch:
             full_path = os.path.join(story_folder_path, fname_only)
             logger.info(f"[Batch {batch_idx}] Đang crawl chương {idx+1}: {ch['title']}")
-            tasks.append(
-                asyncio.create_task(
-                    async_download_and_save_chapter(
-                        ch, story_data_item, current_discovery_genre_data, full_path, fname_only, "Crawl bù missing", f"{idx+1}/{len(chapters)}", crawl_state, successful, failed
-                    )
-                )
-            )
-            # await smart_delay()  # nếu cần, có thể bỏ dòng này khi crawl bù
-        await asyncio.gather(*tasks)
+            async def wrapped():
+                async with sem:
+                    try:
+                        await asyncio.wait_for(
+                            async_download_and_save_chapter(
+                                ch, story_data_item, current_discovery_genre_data, full_path, fname_only, 
+                                "Crawl bù missing", f"{idx+1}/{len(chapters)}", crawl_state, successful, failed
+                            ),
+                            timeout=90
+                        )
+                    except Exception as ex:
+                        logger.error(f"[Batch {batch_idx}] Lỗi khi crawl chương {idx+1}: {ch['title']} - {ex}")
+                        failed.append(fname_only)
+            tasks.append(asyncio.create_task(wrapped()))
+        await asyncio.gather(*tasks, return_exceptions=True)
         return successful, failed
 
     batch_tasks = [crawl_batch(batch, i+1) for i, batch in enumerate(batches) if batch]
-    results = await asyncio.gather(*batch_tasks)
+    results = await asyncio.gather(*batch_tasks, return_exceptions=True)
     successful = set()
     failed = []
-    for suc, fail in results:
-        successful.update(suc)
-        failed.extend(fail)
+    for res in results:
+        if isinstance(res, tuple):
+            suc, fail = res
+            successful.update(suc)
+            failed.extend(fail)
+        elif isinstance(res, Exception):
+            logger.error(f"Lỗi khi thực thi batch: {res}")
     if failed:
         logger.warning(f"Vẫn còn {len(failed)} chương bù không crawl được.")
     return len(successful)
