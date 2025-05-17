@@ -10,7 +10,6 @@ from utils.io_utils import filter_lines_by_patterns, load_patterns
 BLACKLIST_PATTERNS = load_patterns(PATTERN_FILE)
 
 def extract_chapter_content(html: str, patterns: List[re.Pattern]=BLACKLIST_PATTERNS) -> str:
-    from bs4 import BeautifulSoup
     soup = BeautifulSoup(html, "html.parser")
     chapter_div = soup.find("div", id="chapter-c")
     if not chapter_div:
@@ -20,11 +19,8 @@ def extract_chapter_content(html: str, patterns: List[re.Pattern]=BLACKLIST_PATT
         return ""
     clean_chapter_content(chapter_div)
 
-    lines = []
-    for p in chapter_div.find_all("p"): #type: ignore
-        line = p.get_text("", strip=True) 
-        if line:
-            lines.append(line)
+    text = chapter_div.get_text(separator="\n")
+    lines = [line.strip() for line in text.splitlines() if line.strip()]
 
     cleaned_lines = filter_lines_by_patterns(lines, patterns)
     content = clean_header("\n".join(cleaned_lines)).strip()
@@ -34,6 +30,7 @@ def extract_chapter_content(html: str, patterns: List[re.Pattern]=BLACKLIST_PATT
             f.write(html)
         return ""
     return content
+
 
 
 
