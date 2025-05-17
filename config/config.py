@@ -338,7 +338,7 @@ REQUEST_DELAY = 5  # Giây, độ trễ giữa các request
 DATA_FOLDER = "truyen_data"
 BACKUP_FOLDER = 'backup_truyen_data'
 PROXIES_FOLDER = "proxies"
-PROXIES_FILE = os.path.join(PROXIES_FOLDER, "proxies_https.txt")
+PROXIES_FILE = os.path.join(PROXIES_FOLDER, "proxies_http.txt")
 ERROR_CHAPTERS_FILE = 'error_chapters.json'
 LOCK = asyncio.Lock()
 # --- Thông tin đăng nhập Proxy (từ env) ---
