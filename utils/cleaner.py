@@ -1,5 +1,6 @@
 from bs4 import BeautifulSoup, Comment
 
+from utils.logger import logger
 from utils.io_utils import filter_lines_by_patterns
 
 # Step 1: Clean HTML tags
@@ -17,6 +18,9 @@ def extract_chapter_content(html: str, patterns) -> str:
     soup = BeautifulSoup(html, "html.parser")
     chapter_div = soup.find("div", id="chapter-c")
     if not chapter_div:
+        with open('debug_empty_chapter.html', 'w', encoding='utf-8') as f:
+            f.write(html)
+        logger.warning(f"Nội dung chương trống, đã lưu response vào debug_empty_chapter.html")
         return ""
     clean_chapter_content(chapter_div)
     text = chapter_div.get_text(separator="\n")
