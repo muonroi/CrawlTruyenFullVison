@@ -1,77 +1,15 @@
-# Thể loại
-tiên hiệp
-kiếm hiệp
-ngôn tình
-đam mỹ
-võng du
-khoa huyễn
-huyền huyễn
-hệ thống
-dị giới
-dị năng
-quân sự
-lịch sử
-xuyên không
-xuyên nhanh
-trọng sinh
-trinh thám
-thám hiểm
-linh dị
-ngược
-sủng
-cung đấu
-nữ cường
-gia đấu
-đông phương
-đô thị
-bách hợp
-hài hước
-điền văn
-cổ đại
-mạt thế
-truyện teen
-phương tây
-nữ phụ
-light novel
-việt nam
-đoản văn
-review sách
-khác
+# Header, giới thiệu, meta
+^nguồn: .*
+^truyện: .*
+^thể loại: .*
+^chương: .*
 
-# Phân loại chương
-dưới \d+ chương
-\d+\s*-\s*\d+ chương
-trên \d+ chương
-
-# Màu nền, font
-xám nhạt
-xanh nhạt
-vàng nhạt
-màu sepia
-xanh đậm
-vàng đậm
-vàng ố
-màu trắng
-màu tối
-palatino linotype
-bookerly
-minion
-segoe ui
-roboto
-roboto condensed
-patrick hand
-noticia text
-times new roman
-verdana
-tahoma
-arial
+# Ký tự ngắn rác, line phân cách
+^[-–—=~\s]{2,}$
 
 # Menu, liên quan
-trước
-sau
-nguồn
-hiện menu
 menu
+hiện menu
 doc truyen
 danh sách
 bình luận
@@ -91,10 +29,7 @@ hỗ trợ mọi thiết bị
 truyện mới cập nhật
 truyện hot
 truyện full
+truyện hot
 
-# Ký tự ngắn rác
-^[-–—=~\s]{2,}$
-^nguồn: .*
-^truyện: .*
-^thể loại: .*
-^chương: .*
+# Dòng rác khác (nếu có)
+bình luận
