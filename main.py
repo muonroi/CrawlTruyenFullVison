@@ -317,7 +317,7 @@ async def process_genre_item(
 
 async def run_crawler():
     await load_proxies(PROXIES_FILE)
-    crawl_state = await initialize_and_log_setup_with_state()
+    homepage_url, crawl_state = await initialize_and_log_setup_with_state()
     adapter = get_adapter("truyenfull")
     genres = await adapter.get_genres()
     async with aiohttp.ClientSession() as session:
