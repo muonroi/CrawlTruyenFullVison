@@ -1,26 +1,27 @@
 # proxy_provider.py
 import random
+import sys
 import aiofiles
 from typing import List, Optional
 from config.config import USE_PROXY
-from utils.io_utils import atomic_write
 from utils.logger import logger
+from config.config import loaded_proxies
 
-loaded_proxies: List[str] = []
+
 proxy_mode = "random"
 current_proxy_index: int = 0
 bad_proxy_counts = {}
 
 async def load_proxies(filename: str) -> List[str]:
-    global loaded_proxies
-    loaded_proxies = []
     try:
         async with aiofiles.open(filename, "r") as f:
             lines = await f.readlines()
         raw_entries = [line.strip() for line in lines if line.strip() and not line.startswith("#")]
-        loaded_proxies = raw_entries
+        loaded_proxies.clear()
+        loaded_proxies.extend(raw_entries)
     except Exception as e:
         print(f"Proxy load error: {e}")
+    print("ID of loaded_proxies in load:", id(sys.modules["config.proxy_provider"].loaded_proxies))
     return loaded_proxies
 
 def mark_bad_proxy(proxy: str):
@@ -64,9 +65,6 @@ def get_proxy_url(username: str = None, password: str = None) -> Optional[str]: 
 def remove_bad_proxy(bad_proxy_url):
     if not bad_proxy_url:
         return
-    
-    global loaded_proxies
-    # Chuẩn hóa về ip:port để remove chính xác
     import re
     match = re.search(r'(?:(?:http|https)://)?(?:[^@]+@)?(?P<ip>[\w\.\-:]+)', bad_proxy_url)
     if not match:

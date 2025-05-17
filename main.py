@@ -11,7 +11,7 @@ from utils.batch_utils import smart_delay, split_batches
 from utils.chapter_utils import async_download_and_save_chapter, process_chapter_batch
 from utils.io_utils import create_proxy_template_if_not_exists, ensure_directory_exists
 from utils.logger import logger
-
+from config.config import loaded_proxies
 
 from config.config import (
     BASE_URL, DATA_FOLDER, NUM_CHAPTER_BATCHES, PROXIES_FILE, PROXIES_FOLDER,
@@ -19,7 +19,7 @@ from config.config import (
     MAX_STORIES_TOTAL_PER_GENRE, MAX_CHAPTERS_PER_STORY,
     MAX_CHAPTER_PAGES_TO_CRAWL, RETRY_FAILED_CHAPTERS_PASSES
 )
-from config.proxy_provider import load_proxies, loaded_proxies
+from config.proxy_provider import  load_proxies
 from scraper import initialize_scraper
 from analyze.parsers import (
     get_all_genres, get_all_stories_from_genre,
@@ -75,7 +75,6 @@ async def crawl_missing_chapters_for_story(
 async def initialize_and_log_setup_with_state() -> Tuple[str, Dict[str, Any]]:
     await ensure_directory_exists(DATA_FOLDER)
     await create_proxy_template_if_not_exists(PROXIES_FILE, PROXIES_FOLDER)
-    await load_proxies(PROXIES_FILE)
     await initialize_scraper()
     homepage_url = BASE_URL.rstrip('/') + '/'
     crawl_state = await load_crawl_state()
@@ -313,6 +312,7 @@ async def process_genre_item(
     ])
 
 async def run_crawler():
+    await load_proxies(PROXIES_FILE)
     homepage_url, crawl_state = await initialize_and_log_setup_with_state()
     genres = await get_all_genres(homepage_url)
     async with aiohttp.ClientSession() as session:

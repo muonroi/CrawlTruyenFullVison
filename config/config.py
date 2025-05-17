@@ -3,6 +3,7 @@ import asyncio
 import os
 import random
 import re
+from typing import List
 from fake_useragent import UserAgent
 
 _STATIC_USER_AGENTS = [
@@ -343,7 +344,7 @@ LOCK = asyncio.Lock()
 # --- Thông tin đăng nhập Proxy (từ env) ---
 GLOBAL_PROXY_USERNAME = os.getenv("PROXY_USER", "muonroi-zone-resi")
 GLOBAL_PROXY_PASSWORD = os.getenv("PROXY_PASS", "0967442142")
-
+loaded_proxies = []
 _UA_OBJ = None
 _DISABLE_FAKE_UA = False
 
