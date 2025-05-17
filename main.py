@@ -1,5 +1,7 @@
 import asyncio
 import glob
+import json
+import time
 import aiohttp
 import os
 from urllib.parse import urlparse
@@ -179,14 +181,41 @@ async def process_story_item(
     story_global_folder_path: str, crawl_state: Dict[str, Any]
 ) -> bool:
     logger.info(f"\n  --- Xử lý truyện: {story_data_item['title']} ---")
-    # Fetch details async
-    details = await get_story_details(story_data_item['url'], story_data_item['title'])
-    # Save metadata
-    await save_story_metadata_file(
-        story_data_item, current_discovery_genre_data,
-        story_global_folder_path, details,
-        None
-    )
+
+    metadata_file = os.path.join(story_global_folder_path, "metadata.json")
+    fields_need_check = ["description", "status", "source", "rating_value", "rating_count", "total_chapters_on_site"]
+    metadata = None
+    need_update = False
+
+    if os.path.exists(metadata_file):
+        with open(metadata_file, "r", encoding="utf-8") as f:
+            metadata = json.load(f)
+        for field in fields_need_check:
+            if metadata.get(field) is None:
+                need_update = True
+                break
+    else:
+        need_update = True
+
+    # Chỉ gọi lại get_story_details nếu metadata chưa đủ hoặc chưa có file
+    if need_update:
+        details = await get_story_details(story_data_item['url'], story_data_item['title'])
+        await save_story_metadata_file(
+            story_data_item, current_discovery_genre_data,
+            story_global_folder_path, details,
+            metadata
+        )
+        if metadata:
+            # merge các field detail vào metadata và ghi lại cho chắc chắn
+            for field in fields_need_check:
+                if details.get(field) is not None:
+                    metadata[field] = details[field]
+            metadata['metadata_updated_at'] = time.strftime("%Y-%m-%d %H:%M:%S")
+            with open(metadata_file, "w", encoding="utf-8") as f:
+                json.dump(metadata, f, ensure_ascii=False, indent=4)
+    else:
+        # Nếu metadata đã đủ, dùng lại (không gọi lại get_story_details)
+        details = metadata
 
     crawl_state['current_story_url'] = story_data_item['url']
     if crawl_state.get('previous_story_url_in_state_for_chapters') != story_data_item['url']:
@@ -196,7 +225,8 @@ async def process_story_item(
 
     # Chapters async
     chapters = await get_chapters_from_story(
-        story_data_item['url'], story_data_item['title'], MAX_CHAPTER_PAGES_TO_CRAWL
+        story_data_item['url'], story_data_item['title'], MAX_CHAPTER_PAGES_TO_CRAWL,
+        total_chapters_on_site=details.get('total_chapters_on_site')#type: ignore
     )
     await ensure_directory_exists(story_global_folder_path)
     count = await process_all_chapters_for_story(
@@ -205,7 +235,7 @@ async def process_story_item(
     )
 
     # === KIỂM TRA VÀ GHI LẠI TRUYỆN THIẾU CHƯƠNG ===
-    total_chapters_on_site = details.get('total_chapters_on_site')
+    total_chapters_on_site = details.get('total_chapters_on_site')#type: ignore
     story_title = story_data_item['title']
     story_url = story_data_item['url']
     if total_chapters_on_site:
@@ -222,8 +252,8 @@ async def process_story_item(
 
     # Check completion
     is_complete = False
-    status = details.get('status')
-    total = details.get('total_chapters_on_site')
+    status = details.get('status') #type: ignore
+    total = details.get('total_chapters_on_site')  #type: ignore
     if status and total and count >= total:
         is_complete = True
         completed = set(crawl_state.get('globally_completed_story_urls', []))

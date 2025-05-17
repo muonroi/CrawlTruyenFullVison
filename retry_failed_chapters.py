@@ -1,29 +1,31 @@
 import json
 import asyncio
 import os
+from datetime import datetime
 from analyze.parsers import get_story_chapter_content
 from utils.chapter_utils import async_save_chapter_with_hash_check
 
-async def retry_queue(filename='chapter_retry_queue.json', interval=30):
-    print(f"[RetryQueue] Bắt đầu quan sát file {filename}, mỗi {interval}s...")
+async def retry_queue(filename='chapter_retry_queue.json', interval=900):  # 900 giây = 15 phút
+    print(f"[RetryQueue] Bắt đầu quan sát file {filename}, mỗi {interval//60} phút...")
     while True:
+        now = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
         if not os.path.exists(filename):
-            print(f"[RetryQueue] Không tìm thấy file queue: {filename}. Đợi {interval}s rồi kiểm tra lại...")
+            print(f"[{now}] [RetryQueue] Không tìm thấy file queue: {filename}. Đợi {interval//60} phút rồi kiểm tra lại...")
             await asyncio.sleep(interval)
             continue
         try:
             with open(filename, 'r', encoding='utf-8') as f:
                 queue = json.load(f)
         except Exception as e:
-            print(f"[RetryQueue] Lỗi đọc file {filename}: {e}. Đợi {interval}s...")
+            print(f"[{now}] [RetryQueue] Lỗi đọc file {filename}: {e}. Đợi {interval//60} phút...")
             await asyncio.sleep(interval)
             continue
         if not queue:
-            print(f"[RetryQueue] Queue rỗng, đợi {interval}s rồi kiểm tra lại...")
+            print(f"[{now}] [RetryQueue] Queue rỗng, đợi {interval//60} phút rồi kiểm tra lại...")
             await asyncio.sleep(interval)
             continue
 
-        print(f"[RetryQueue] Bắt đầu retry {len(queue)} chương lỗi...")
+        print(f"[{now}] [RetryQueue] Bắt đầu retry {len(queue)} chương lỗi...")
         to_remove = []
         for item in queue:
             url = item['chapter_url']
@@ -36,7 +38,6 @@ async def retry_queue(filename='chapter_retry_queue.json', interval=30):
             if content:
                 save_result = await async_save_chapter_with_hash_check(filename_path, content)
                 print(f"-> Result: {save_result}")
-                # Nếu thành công, đánh dấu để xoá khỏi queue
                 to_remove.append(item)
             else:
                 print("-> Vẫn lỗi")
@@ -46,9 +47,9 @@ async def retry_queue(filename='chapter_retry_queue.json', interval=30):
             queue = [item for item in queue if item not in to_remove]
             with open(filename, 'w', encoding='utf-8') as f:
                 json.dump(queue, f, ensure_ascii=False, indent=2)
-            print(f"[RetryQueue] Đã xoá {len(to_remove)} chương khỏi queue.")
+            print(f"[{now}] [RetryQueue] Đã xoá {len(to_remove)} chương khỏi queue.")
 
-        print(f"[RetryQueue] Đợi {interval}s trước khi kiểm tra lại queue.")
+        print(f"[{now}] [RetryQueue] Đợi {interval//60} phút trước khi kiểm tra lại queue.")
         await asyncio.sleep(interval)
 
 if __name__ == "__main__":
