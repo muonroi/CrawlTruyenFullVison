@@ -2,9 +2,11 @@ import asyncio
 import json
 import os
 import re
+import shutil
 import tempfile
 import aiofiles
 
+from config.config import COMPLETED_FOLDER
 from utils.logger import logger
 
 
@@ -75,3 +77,12 @@ def filter_lines_by_patterns(lines, patterns):
             continue
         result.append(l)
     return result
+
+def move_story_to_completed(story_folder, genre_name):
+    dest_genre_folder = os.path.join(COMPLETED_FOLDER, genre_name)
+    os.makedirs(dest_genre_folder, exist_ok=True)
+    # Move truyện vào folder completed/genre_name/
+    dest_folder = os.path.join(dest_genre_folder, os.path.basename(story_folder))
+    if not os.path.exists(dest_folder):
+        shutil.move(story_folder, dest_folder)
+        print(f"[INFO] Đã chuyển truyện sang {dest_genre_folder}")

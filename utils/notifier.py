@@ -12,3 +12,7 @@ async def send_telegram_notify(message: str):
     async with aiohttp.ClientSession() as session:
         async with session.post(url, data=payload) as resp:
             return await resp.json()
+        
+async def notify_genre_completed(genre_name):
+    message = f"Tất cả truyện của thể loại '{genre_name}' đã crawl xong!"
+    await send_telegram_notify(message)
