@@ -3,16 +3,10 @@ import asyncio
 import os
 from datetime import datetime
 from analyze.parsers import get_story_chapter_content
-from config.config import PROXIES_FILE, PROXIES_FOLDER
-from config.proxy_provider import load_proxies
-from scraper import initialize_scraper
 from utils.chapter_utils import async_save_chapter_with_hash_check
-from utils.io_utils import atomic_write_json, create_proxy_template_if_not_exists
+from utils.io_utils import atomic_write_json
 
 async def retry_queue(filename='chapter_retry_queue.json', interval=900):  # 900 giây = 15 phút
-    await create_proxy_template_if_not_exists(PROXIES_FILE, PROXIES_FOLDER)
-    await load_proxies(PROXIES_FILE)
-    await initialize_scraper()  
     print(f"[RetryQueue] Bắt đầu quan sát file {filename}, mỗi {interval//60} phút...")
     while True:
         now = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
