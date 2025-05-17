@@ -11,7 +11,9 @@ from utils.io_utils import atomic_write_json, create_proxy_template_if_not_exist
 from utils.notifier import send_telegram_notify
 MAX_RETRY_FAILS = 5
 retry_fail_count = 0
+
 async def retry_queue(filename='chapter_retry_queue.json', interval=900):  # 900 giây = 15 phút
+    retry_fail_count = 0
     await create_proxy_template_if_not_exists(PROXIES_FILE, PROXIES_FOLDER)
     await load_proxies(PROXIES_FILE)
     await initialize_scraper()  
@@ -52,7 +54,8 @@ async def retry_queue(filename='chapter_retry_queue.json', interval=900):  # 900
             else:
                 retry_fail_count += 1
                 if retry_fail_count >= MAX_RETRY_FAILS:
-                    asyncio.create_task(send_telegram_notify(f"[Crawl Notify] Retry quá nhiều lần nhưng toàn bộ đều lỗi (proxy/blocked)! Queue: {filename}"))
+                    asyncio.create_task(send_telegram_notify(
+                        f"[Crawl Notify] Retry quá nhiều lần nhưng toàn bộ đều lỗi (proxy/blocked)! Queue: {filename}"))
                     retry_fail_count = 0
 
         # Xoá chương đã thành công khỏi queue
@@ -63,6 +66,7 @@ async def retry_queue(filename='chapter_retry_queue.json', interval=900):  # 900
 
         print(f"[{now}] [RetryQueue] Đợi {interval//60} phút trước khi kiểm tra lại queue.")
         await asyncio.sleep(interval)
+
 
 if __name__ == "__main__":
     asyncio.run(retry_queue())
