@@ -6,12 +6,13 @@ import aiohttp
 import os
 from urllib.parse import urlparse
 from typing import Dict, Any, List, Tuple
-
+from adapters.base_site_adapter import BaseSiteAdapter
+from adapters.factory import get_adapter
 from utils.batch_utils import smart_delay, split_batches
 from utils.chapter_utils import async_download_and_save_chapter, process_chapter_batch
 from utils.io_utils import create_proxy_template_if_not_exists, ensure_directory_exists
 from utils.logger import logger
-from config.config import loaded_proxies
+from config.config import GENRE_ASYNC_LIMIT, GENRE_BATCH_SIZE, loaded_proxies
 
 from config.config import (
     BASE_URL, DATA_FOLDER, NUM_CHAPTER_BATCHES, PROXIES_FILE, PROXIES_FOLDER,
@@ -21,15 +22,16 @@ from config.config import (
 )
 from config.proxy_provider import  load_proxies
 from scraper import initialize_scraper
-from analyze.parsers import (
-    get_all_genres, get_all_stories_from_genre,
-    get_chapters_from_story,
-    get_story_details
-)
 from utils.meta_utils import add_missing_story, backup_crawl_state, count_txt_files, sanitize_filename, save_story_metadata_file
 from utils.state_utils import clear_specific_state_keys, load_crawl_state, save_crawl_state
 
 
+GENRE_SEM = asyncio.Semaphore(GENRE_ASYNC_LIMIT)
+
+
+async def process_genre_with_limit(session, genre, crawl_state, adapter):
+    async with GENRE_SEM:
+        await process_genre_item(session, genre, crawl_state, adapter)
 
 def get_saved_chapters_files(story_folder_path: str) -> set:
     """Trả về set tên file đã lưu trong folder truyện."""
@@ -177,7 +179,8 @@ async def process_all_chapters_for_story(
 async def process_story_item(
     session: aiohttp.ClientSession,
     story_data_item: Dict[str, Any], current_discovery_genre_data: Dict[str, Any],
-    story_global_folder_path: str, crawl_state: Dict[str, Any]
+    story_global_folder_path: str, crawl_state: Dict[str, Any],
+    adapter: BaseSiteAdapter
 ) -> bool:
     logger.info(f"\n  --- Xử lý truyện: {story_data_item['title']} ---")
 
@@ -198,7 +201,7 @@ async def process_story_item(
 
     # Chỉ gọi lại get_story_details nếu metadata chưa đủ hoặc chưa có file
     if need_update:
-        details = await get_story_details(story_data_item['url'], story_data_item['title'])
+        details = await adapter.get_story_details(story_data_item['url'], story_data_item['title'])
         await save_story_metadata_file(
             story_data_item, current_discovery_genre_data,
             story_global_folder_path, details,
@@ -223,9 +226,9 @@ async def process_story_item(
     await save_crawl_state(crawl_state)
 
     # Chapters async
-    chapters = await get_chapters_from_story(
-        story_data_item['url'], story_data_item['title'], MAX_CHAPTER_PAGES_TO_CRAWL,
-        total_chapters_on_site=details.get('total_chapters_on_site')#type: ignore
+    chapters = await adapter.get_chapter_list(
+        story_data_item['url'], story_data_item['title'],
+        MAX_CHAPTER_PAGES_TO_CRAWL, details.get('total_chapters_on_site') # type: ignore
     )
     await ensure_directory_exists(story_global_folder_path)
     count = await process_all_chapters_for_story(
@@ -265,7 +268,7 @@ async def process_story_item(
 
 async def process_genre_item(
     session: aiohttp.ClientSession,
-    genre_data: Dict[str, Any], crawl_state: Dict[str, Any]
+    genre_data: Dict[str, Any], crawl_state: Dict[str, Any], adapter: BaseSiteAdapter
 ) -> None:
     logger.info(f"\n--- Xử lý thể loại: {genre_data['name']} ---")
     crawl_state['current_genre_url'] = genre_data['url']
@@ -274,9 +277,8 @@ async def process_genre_item(
     crawl_state['previous_genre_url_in_state_for_stories'] = genre_data['url']
     await save_crawl_state(crawl_state)
 
-    stories = await get_all_stories_from_genre(
-        genre_data['name'], genre_data['url'], MAX_STORIES_PER_GENRE_PAGE
-    )
+    stories = await adapter.get_all_stories_from_genre(genre_data['name'], genre_data['url'], MAX_STORIES_PER_GENRE_PAGE)
+
     completed_global = set(crawl_state.get('globally_completed_story_urls', []))
     start_idx = crawl_state.get('current_story_index_in_genre', 0)
 
@@ -291,7 +293,7 @@ async def process_genre_item(
 
         if story['url'] in completed_global:
             # update metadata only
-            details = await get_story_details(story['url'], story['title'])
+            details = await adapter.get_story_details(story['url'], story['title'])
             await save_story_metadata_file(story, genre_data, folder, details, None)
             crawl_state['current_story_index_in_genre'] = idx + 1
             await save_crawl_state(crawl_state)
@@ -299,7 +301,7 @@ async def process_genre_item(
 
         crawl_state['current_story_index_in_genre'] = idx
         await save_crawl_state(crawl_state)
-        done = await process_story_item(session, story, genre_data, folder, crawl_state)
+        done = await process_story_item(session, story, genre_data, folder, crawl_state, adapter)
         if done:
             completed_global.add(story['url'])
         crawl_state['globally_completed_story_urls'] = sorted(completed_global)
@@ -314,17 +316,20 @@ async def process_genre_item(
 async def run_crawler():
     await load_proxies(PROXIES_FILE)
     homepage_url, crawl_state = await initialize_and_log_setup_with_state()
-    genres = await get_all_genres(homepage_url)
+    adapter = get_adapter("truyenfull")
+    genres = await adapter.get_genres()
     async with aiohttp.ClientSession() as session:
-        for idx, genre in enumerate(genres):
-            if idx < crawl_state.get('current_genre_index', 0):
-                continue
-            if MAX_GENRES_TO_CRAWL and idx >= MAX_GENRES_TO_CRAWL:
-                break
-            crawl_state['current_genre_index'] = idx
-            await save_crawl_state(crawl_state)
-            await process_genre_item(session, genre, crawl_state)
+        batches = split_batches(genres, GENRE_BATCH_SIZE)
+        for batch_idx, genre_batch in enumerate(batches):
+            tasks = []
+            for genre in genre_batch:
+                tasks.append(process_genre_with_limit(session, genre, crawl_state, adapter))
+            logger.info(f"=== Đang crawl batch thể loại {batch_idx+1}/{len(batches)} ({len(genre_batch)} genres song song) ===")
+            await asyncio.gather(*tasks)
+            # Sau khi xong batch, có thể sleep 1 chút nếu muốn an toàn hơn:
+            await asyncio.sleep(3)
     logger.info("=== HOÀN TẤT TOÀN BỘ QUÁ TRÌNH CRAWL ===")
+
 
 if __name__ == '__main__':
     asyncio.run(run_crawler())
