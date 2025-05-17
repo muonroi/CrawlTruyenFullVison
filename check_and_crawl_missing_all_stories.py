@@ -6,11 +6,19 @@ import datetime
 from config.config import DATA_FOLDER, PROXIES_FILE, PROXIES_FOLDER
 from config.proxy_provider import load_proxies
 from scraper import initialize_scraper, make_request
+from utils.async_utils import SEM
 from utils.io_utils import create_proxy_template_if_not_exists
 from utils.meta_utils import count_txt_files
 from analyze.parsers import get_chapters_from_story, get_story_details
 from main import crawl_missing_chapters_for_story
 from utils.state_utils import load_crawl_state
+
+async def crawl_missing_with_limit(*args, **kwargs):
+    print(f"[START] Crawl missing for {args[2]['title']} ...")
+    async with SEM:
+        result = await crawl_missing_chapters_for_story(*args, **kwargs)
+    print(f"[DONE] Crawl missing for {args[2]['title']} ...")
+    return result
 
 async def check_and_crawl_missing_all_stories():
     await create_proxy_template_if_not_exists(PROXIES_FILE, PROXIES_FOLDER)
@@ -18,7 +26,7 @@ async def check_and_crawl_missing_all_stories():
     await initialize_scraper()  
     story_folders = [os.path.join(DATA_FOLDER, f) for f in os.listdir(DATA_FOLDER) if os.path.isdir(os.path.join(DATA_FOLDER, f))]
     crawl_state = await load_crawl_state()
-
+    tasks = []
     for story_folder in story_folders:
         metadata_path = os.path.join(story_folder, "metadata.json")
         if not os.path.exists(metadata_path):
@@ -49,7 +57,7 @@ async def check_and_crawl_missing_all_stories():
             print(f"[OK] '{metadata['title']}' đủ chương ({crawled_files}/{total_chapters})")
             continue
 
-        # Lấy lại danh sách chương thực tế trên web (cũng đi qua proxy qua make_request bên trong get_chapters_from_story)
+        # Lấy lại danh sách chương thực tế trên web
         story_url = metadata.get("url")
         if not story_url:
             print(f"[SKIP] '{story_folder}' không có url truyện.")
@@ -57,7 +65,6 @@ async def check_and_crawl_missing_all_stories():
 
         print(f"[MISSING] '{metadata['title']}' thiếu chương ({crawled_files}/{total_chapters}) -> Đang kiểm tra/crawl bù...")
 
-        # get_chapters_from_story đã sử dụng make_request có proxy
         chapters = await get_chapters_from_story(
             story_url, metadata['title'],
             total_chapters_on_site=total_chapters
@@ -65,18 +72,15 @@ async def check_and_crawl_missing_all_stories():
         if chapters and isinstance(chapters, list):
             print("DEBUG first chapter:", chapters[0], type(chapters[0]))
 
-        # Dùng category chuẩn nhất: truyền dict đầu tiên trong categories hoặc dict rỗng
         current_category = metadata['categories'][0] if metadata.get('categories') and isinstance(metadata['categories'], list) and metadata['categories'] else {}
 
-        # crawl_missing_chapters_for_story cũng sẽ sử dụng proxy bên trong khi gọi get_story_chapter_content (nếu proxy đã được khởi tạo)
-        await crawl_missing_chapters_for_story(
-            None,  # Nếu không dùng aiohttp session, truyền None. Nếu hàm cần session thật, bạn có thể wrap lại với aiohttp # type: ignore
-            chapters,
-            metadata,
-            current_category,
-            story_folder,
-            crawl_state
+        # **CHỈ append vào tasks, KHÔNG await trực tiếp!**
+        tasks.append(
+            crawl_missing_with_limit(None, chapters, metadata, current_category, story_folder, crawl_state)
         )
+    # **Chạy song song các task**
+    await asyncio.gather(*tasks)
+
 
 async def loop_every_1h():
     while True:

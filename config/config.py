@@ -347,7 +347,8 @@ GLOBAL_PROXY_PASSWORD = os.getenv("PROXY_PASS", "0967442142")
 loaded_proxies = []
 _UA_OBJ = None
 _DISABLE_FAKE_UA = False
-
+GENRE_ASYNC_LIMIT = 3
+GENRE_BATCH_SIZE = 3
 PATTERN_FILE = "config/blacklist_patterns.txt"
 
 HEADER_PATTERNS = [

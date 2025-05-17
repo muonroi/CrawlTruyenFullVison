@@ -8,10 +8,12 @@
         "levelname",
         "loggable",
         "muonroi",
+        "nettruyen",
         "Referer",
         "resi",
         "setctime",
         "tldextract",
+        "truyenfull",
         "urllib",
         "useragent"
     ],
