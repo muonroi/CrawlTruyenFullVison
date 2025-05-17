@@ -3,6 +3,7 @@ from typing import List
 from bs4 import BeautifulSoup
 
 from config.config import  HEADER_RE, PATTERN_FILE
+from utils.logger import logger
 from utils.cleaner import clean_chapter_content
 from utils.io_utils import filter_lines_by_patterns, load_patterns
 
@@ -13,6 +14,9 @@ def extract_chapter_content(html: str, patterns: List[re.Pattern]=BLACKLIST_PATT
     soup = BeautifulSoup(html, "html.parser")
     chapter_div = soup.find("div", id="chapter-c")
     if not chapter_div:
+        with open('debug_empty_chapter.html', 'w', encoding='utf-8') as f:
+            f.write(html)
+        logger.warning(f"Nội dung chương trống, đã lưu response vào debug_empty_chapter.html")
         return ""
     clean_chapter_content(chapter_div)
 
