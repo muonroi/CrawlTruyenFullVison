@@ -60,23 +60,26 @@ async def crawl_missing_chapters_for_story(
     num_batches = min(num_batches, max(1, len(missing_chapters)))
     logger.info(f"Có {len(missing_chapters)} chương thiếu, chia thành {num_batches} batch để crawl song song cho truyện '{story_data_item['title']}'...")
 
-    # --- Chia batch ---
     batches = split_batches(missing_chapters, num_batches)
-    async def crawl_batch(batch):
+
+    async def crawl_batch(batch, batch_idx):
         successful, failed = set(), []
         tasks = []
         for idx, ch, fname_only in batch:
             full_path = os.path.join(story_folder_path, fname_only)
-            tasks.append(asyncio.create_task(
-                async_download_and_save_chapter(
-                    ch, story_data_item, current_discovery_genre_data, full_path, fname_only, "Crawl bù missing", f"{idx+1}/{len(chapters)}", crawl_state, successful, failed
+            logger.info(f"[Batch {batch_idx}] Đang crawl chương {idx+1}: {ch['title']}")
+            tasks.append(
+                asyncio.create_task(
+                    async_download_and_save_chapter(
+                        ch, story_data_item, current_discovery_genre_data, full_path, fname_only, "Crawl bù missing", f"{idx+1}/{len(chapters)}", crawl_state, successful, failed
+                    )
                 )
-            ))
-            await smart_delay()
+            )
+            # await smart_delay()  # nếu cần, có thể bỏ dòng này khi crawl bù
         await asyncio.gather(*tasks)
         return successful, failed
 
-    batch_tasks = [crawl_batch(batch) for batch in batches if batch]
+    batch_tasks = [crawl_batch(batch, i+1) for i, batch in enumerate(batches) if batch]
     results = await asyncio.gather(*batch_tasks)
     successful = set()
     failed = []
@@ -86,6 +89,7 @@ async def crawl_missing_chapters_for_story(
     if failed:
         logger.warning(f"Vẫn còn {len(failed)} chương bù không crawl được.")
     return len(successful)
+
 
 
 async def initialize_and_log_setup_with_state() -> Tuple[str, Dict[str, Any]]:
