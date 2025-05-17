@@ -66,7 +66,7 @@ async def crawl_missing_chapters_for_story(
         successful, failed = set(), []
         sem = asyncio.Semaphore(BATCH_SEMAPHORE_LIMIT)
         tasks = []
-        for idx, ch, fname_only in batch:
+        for i, (idx, ch, fname_only) in enumerate(batch):
             full_path = os.path.join(story_folder_path, fname_only)
             logger.info(f"[Batch {batch_idx}] Đang crawl chương {idx+1}: {ch['title']}")
             async def wrapped():
@@ -74,14 +74,20 @@ async def crawl_missing_chapters_for_story(
                     try:
                         await asyncio.wait_for(
                             async_download_and_save_chapter(
-                                ch, story_data_item, current_discovery_genre_data, full_path, fname_only, 
-                                "Crawl bù missing", f"{idx+1}/{len(chapters)}", crawl_state, successful, failed
+                                ch, story_data_item, current_discovery_genre_data,
+                                full_path, fname_only, "Crawl bù missing",
+                                f"{idx+1}/{len(chapters)}", crawl_state, successful, failed, idx
                             ),
-                            timeout=90
+                            timeout=120  # Timeout mỗi chương
                         )
                     except Exception as ex:
                         logger.error(f"[Batch {batch_idx}] Lỗi khi crawl chương {idx+1}: {ch['title']} - {ex}")
-                        failed.append(fname_only)
+                        failed.append({
+                            'chapter_data': ch,
+                            'filename': full_path,
+                            'filename_only': fname_only,
+                            'original_idx': idx
+                        })
             tasks.append(asyncio.create_task(wrapped()))
         await asyncio.gather(*tasks, return_exceptions=True)
         return successful, failed
