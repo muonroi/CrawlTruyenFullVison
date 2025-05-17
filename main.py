@@ -14,7 +14,7 @@ from utils.batch_utils import smart_delay, split_batches
 from utils.chapter_utils import async_download_and_save_chapter, process_chapter_batch
 from utils.io_utils import create_proxy_template_if_not_exists, ensure_directory_exists
 from utils.logger import logger
-from config.config import BATCH_SEMAPHORE_LIMIT, GENRE_ASYNC_LIMIT, GENRE_BATCH_SIZE, LOADED_PROXIES
+from config.config import GENRE_ASYNC_LIMIT, GENRE_BATCH_SIZE, LOADED_PROXIES
 
 from config.config import (
     BASE_URL, DATA_FOLDER, NUM_CHAPTER_BATCHES, PROXIES_FILE, PROXIES_FOLDER,
@@ -29,7 +29,7 @@ from utils.state_utils import clear_specific_state_keys, load_crawl_state, save_
 
 
 GENRE_SEM = asyncio.Semaphore(GENRE_ASYNC_LIMIT)
-
+BATCH_SEMAPHORE_LIMIT = 5
 
 async def process_genre_with_limit(session, genre, crawl_state, adapter):
     async with GENRE_SEM:
@@ -69,7 +69,8 @@ async def crawl_missing_chapters_for_story(
         for i, (idx, ch, fname_only) in enumerate(batch):
             full_path = os.path.join(story_folder_path, fname_only)
             logger.info(f"[Batch {batch_idx}] Đang crawl chương {idx+1}: {ch['title']}")
-            async def wrapped():
+
+            async def wrapped(ch=ch, idx=idx, fname_only=fname_only, full_path=full_path):
                 async with sem:
                     try:
                         await asyncio.wait_for(
@@ -106,8 +107,6 @@ async def crawl_missing_chapters_for_story(
     if failed:
         logger.warning(f"Vẫn còn {len(failed)} chương bù không crawl được.")
     return len(successful)
-
-
 
 async def initialize_and_log_setup_with_state() -> Tuple[str, Dict[str, Any]]:
     await ensure_directory_exists(DATA_FOLDER)
