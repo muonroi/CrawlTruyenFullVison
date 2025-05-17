@@ -2,7 +2,7 @@ import json
 import asyncio
 import os
 from analyze.parsers import get_story_chapter_content
-from utils.utils import async_save_chapter_with_hash_check
+from utils.chapter_utils import async_save_chapter_with_hash_check
 
 async def retry_queue(filename='chapter_retry_queue.json', interval=30):
     print(f"[RetryQueue] Bắt đầu quan sát file {filename}, mỗi {interval}s...")

@@ -2,6 +2,7 @@
 import asyncio
 import os
 import random
+import re
 from fake_useragent import UserAgent
 
 _STATIC_USER_AGENTS = [
@@ -317,23 +318,24 @@ _STATIC_USER_AGENTS = [
 ]
 
 # --- LIMITS & OPTIONS ---
-MAX_GENRES_TO_CRAWL = None
-MAX_STORIES_PER_GENRE_PAGE = None
-MAX_STORIES_TOTAL_PER_GENRE = None
-MAX_CHAPTERS_PER_STORY = None
-MAX_CHAPTER_PAGES_TO_CRAWL = None
-RETRY_FAILED_CHAPTERS_PASSES = 4
+MAX_GENRES_TO_CRAWL = 1
+MAX_STORIES_PER_GENRE_PAGE = 1
+MAX_STORIES_TOTAL_PER_GENRE = 1
+MAX_CHAPTERS_PER_STORY = 1
+MAX_CHAPTER_PAGES_TO_CRAWL = 1
+RETRY_FAILED_CHAPTERS_PASSES = 2
 USE_PROXY = False 
 TIMEOUT_REQUEST = 30
 RETRY_ATTEMPTS = 3
-DELAY_ON_RETRY = 5
-NUM_CHAPTER_BATCHES = 5
+DELAY_ON_RETRY = 2.5
+NUM_CHAPTER_BATCHES = 10
 STATE_FILE = "crawl_state.json"
-
+ASYNC_SEMAPHORE_LIMIT = 5
 # --- Cấu hình cơ bản ---
 BASE_URL = "https://truyenfull.vision"
 REQUEST_DELAY = 5  # Giây, độ trễ giữa các request
 DATA_FOLDER = "truyen_data"
+BACKUP_FOLDER = 'backup_truyen_data'
 PROXIES_FOLDER = "proxies"
 PROXIES_FILE = os.path.join(PROXIES_FOLDER, "proxies.txt")
 ERROR_CHAPTERS_FILE = 'error_chapters.json'
@@ -344,6 +346,9 @@ GLOBAL_PROXY_PASSWORD = os.getenv("PROXY_PASS", "0967442142")
 
 _UA_OBJ = None
 _DISABLE_FAKE_UA = True
+
+PATTERN_FILE = "config/blacklist_patterns.txt"
+
 
 def _init_user_agent():
     try:

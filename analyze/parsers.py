@@ -4,12 +4,13 @@ from typing import List, Tuple, Optional, Dict, Any
 from bs4 import BeautifulSoup, Comment
 from urllib.parse import urljoin, urlparse
 
+from utils.chapter_utils import clean_header
+from utils.html_parser import extract_chapter_content
 from utils.logger import logger
 from scraper import make_request
 from config.config import (
     MAX_STORIES_PER_GENRE_PAGE,
 )
-
 async def get_story_details(story_url: str, story_title_for_log: str) -> Dict[str, Any]:
     logger.info(f"Truyện '{story_title_for_log}': Đang lấy thông tin chi tiết từ {story_url}")
     details = {
@@ -298,6 +299,10 @@ async def get_story_chapter_content(
     if not response or not getattr(response, 'text', None):
         logger.error(f"Chương '{chapter_title}': Không nhận được phản hồi từ {chapter_url}")
         return None
-    soup = BeautifulSoup(response.text, "html.parser")
-    text = soup.get_text(separator="\n", strip=True)
-    return text if text else None
+    html = response.text
+    content = extract_chapter_content(html)
+    content = clean_header(content)
+    if not content:
+        logger.warning(f"Nội dung chương '{chapter_title}' trống sau khi clean header.")
+        return None
+    return content or None

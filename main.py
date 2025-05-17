@@ -5,14 +5,12 @@ import os
 from urllib.parse import urlparse
 from typing import Dict, Any, List, Tuple
 
+from utils.batch_utils import smart_delay, split_batches
+from utils.chapter_utils import async_download_and_save_chapter, process_chapter_batch
+from utils.io_utils import create_proxy_template_if_not_exists, ensure_directory_exists
 from utils.logger import logger
 
-from utils.utils import (
-    add_missing_story, async_download_and_save_chapter, async_save_chapter_with_hash_check, backup_crawl_state, count_txt_files, log_error_chapter, process_chapter_batch, sanitize_filename, ensure_directory_exists,
-    create_proxy_template_if_not_exists, load_crawl_state,
-    save_crawl_state,
-    clear_specific_state_keys, save_story_metadata_file, smart_delay, split_batches
-)
+
 from config.config import (
     BASE_URL, DATA_FOLDER, NUM_CHAPTER_BATCHES, PROXIES_FILE, PROXIES_FOLDER,
     MAX_GENRES_TO_CRAWL, MAX_STORIES_PER_GENRE_PAGE,
@@ -26,6 +24,8 @@ from analyze.parsers import (
     get_chapters_from_story,
     get_story_details
 )
+from utils.meta_utils import add_missing_story, backup_crawl_state, count_txt_files, sanitize_filename, save_story_metadata_file
+from utils.state_utils import clear_specific_state_keys, load_crawl_state, save_crawl_state
 
 
 
@@ -147,7 +147,13 @@ async def process_all_chapters_for_story(
         retry_tasks = []
         for item in curr:
             ch = item['chapter_data']
-            idx = item.get('original_idx', 0)
+            idx = item.get('original_idx')
+            if idx is None:
+                try:
+                    name = item.get('filename_only', '')
+                    idx = int(name.split('_')[0]) - 1 if name and '_' in name else 0
+                except Exception:
+                    idx = 0
             fname_only = f"{idx+1:04d}_{sanitize_filename(ch['title']) or 'untitled'}.txt"
             full_path = os.path.join(story_folder_path, fname_only)
             retry_tasks.append(asyncio.create_task(
