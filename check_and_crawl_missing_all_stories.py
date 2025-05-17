@@ -3,15 +3,19 @@ import asyncio
 import json
 import datetime
 
-from config.config import DATA_FOLDER
+from config.config import DATA_FOLDER, PROXIES_FILE, PROXIES_FOLDER
+from config.proxy_provider import load_proxies
 from scraper import initialize_scraper, make_request
+from utils.io_utils import create_proxy_template_if_not_exists
 from utils.meta_utils import count_txt_files
 from analyze.parsers import get_chapters_from_story, get_story_details
 from main import crawl_missing_chapters_for_story
 from utils.state_utils import load_crawl_state
 
 async def check_and_crawl_missing_all_stories():
-    await initialize_scraper()  # Đảm bảo cloudscraper (proxy) đã sẵn sàng
+    await create_proxy_template_if_not_exists(PROXIES_FILE, PROXIES_FOLDER)
+    await load_proxies(PROXIES_FILE)
+    await initialize_scraper()  
     story_folders = [os.path.join(DATA_FOLDER, f) for f in os.listdir(DATA_FOLDER) if os.path.isdir(os.path.join(DATA_FOLDER, f))]
     crawl_state = await load_crawl_state()
 
