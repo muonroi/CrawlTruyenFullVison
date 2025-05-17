@@ -17,19 +17,30 @@ def extract_chapter_content(html: str, patterns: List[re.Pattern]=BLACKLIST_PATT
             f.write(html)
         logger.warning(f"Nội dung chương trống, đã lưu response vào debug_empty_chapter.html")
         return ""
+    
+    # Đừng xóa thẳng tay nếu chưa chắc clean
     clean_chapter_content(chapter_div)
 
+    # Log text sau clean_chapter_content
     text = chapter_div.get_text(separator="\n")
+    logger.debug(f"[extract_chapter_content] TEXT RAW:\n{text}")
+
     lines = [line.strip() for line in text.splitlines() if line.strip()]
+    logger.debug(f"[extract_chapter_content] LINES: {lines}")
 
     cleaned_lines = filter_lines_by_patterns(lines, patterns)
+    logger.debug(f"[extract_chapter_content] CLEANED LINES: {cleaned_lines}")
+
     content = clean_header("\n".join(cleaned_lines)).strip()
+    logger.debug(f"[extract_chapter_content] FINAL CONTENT: {content}")
+
     if not content:
         logger.warning("Nội dung chương trống sau khi lọc, đã lưu response vào debug_empty_chapter.html")
         with open('debug_empty_chapter.html', 'w', encoding='utf-8') as f:
             f.write(html)
         return ""
     return content
+
 
 
 
