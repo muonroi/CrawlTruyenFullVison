@@ -6,7 +6,7 @@ from typing import Any, Dict, Optional
 
 import aiofiles
 from utils.logger import logger
-from utils.io_utils import ensure_backup_folder, ensure_directory_exists
+from utils.io_utils import atomic_write, ensure_backup_folder, ensure_directory_exists
 
 
 async def save_story_metadata_file(
@@ -52,8 +52,7 @@ async def save_story_metadata_file(
         metadata_to_save["crawled_at"] = now_str
 
     try:
-        async with aiofiles.open(metadata_file, 'w', encoding='utf-8') as f:
-            await f.write(json.dumps(metadata_to_save, ensure_ascii=False, indent=4))
+        await atomic_write(metadata_file, json.dumps(metadata_to_save, ensure_ascii=False, indent=4))
         logger.info(f"Đã lưu/cập nhật metadata cho truyện vào: {metadata_file}")
         return metadata_to_save
     except Exception as e:

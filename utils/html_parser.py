@@ -16,6 +16,28 @@ def extract_chapter_content(html: str, patterns: List[re.Pattern]=BLACKLIST_PATT
     clean_chapter_content(chapter_div)
     text = chapter_div.get_text(separator="\n")
     lines = [line.strip() for line in text.splitlines()]
-    # Lọc metadata/header ký tự thừa
     cleaned_lines = filter_lines_by_patterns(lines, patterns)
-    return "\n".join(cleaned_lines).strip()
+    content = clean_header("\n".join(cleaned_lines)).strip()
+    return content
+
+HEADER_PATTERNS = [
+    r"^nguồn:",
+    r"^truyện:",
+    r"^thể loại:",
+    r"^chương:",
+]
+HEADER_RE = re.compile("|".join(HEADER_PATTERNS), re.IGNORECASE)
+
+def clean_header(text: str):
+    lines = text.splitlines()
+    out = []
+    skipping = True
+    for line in lines:
+        l = line.strip()
+        if not l:
+            continue
+        if skipping and HEADER_RE.match(l):
+            continue
+        skipping = False
+        out.append(line)
+    return "\n".join(out).strip()

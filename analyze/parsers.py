@@ -4,7 +4,6 @@ from typing import List, Tuple, Optional, Dict, Any
 from bs4 import BeautifulSoup, Comment
 from urllib.parse import urljoin, urlparse
 
-from utils.chapter_utils import clean_header
 from utils.html_parser import extract_chapter_content
 from utils.logger import logger
 from scraper import make_request
@@ -301,8 +300,8 @@ async def get_story_chapter_content(
         return None
     html = response.text
     content = extract_chapter_content(html)
-    content = clean_header(content)
     if not content:
         logger.warning(f"Nội dung chương '{chapter_title}' trống sau khi clean header.")
         return None
     return content or None
+
