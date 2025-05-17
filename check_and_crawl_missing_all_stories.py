@@ -4,9 +4,10 @@ import json
 import datetime
 import shutil
 from typing import cast
-from config.config import COMPLETED_FOLDER, DATA_FOLDER, PROXIES_FILE, PROXIES_FOLDER
+from config.config import COMPLETED_FOLDER, DATA_FOLDER, LOADED_PROXIES, PROXIES_FILE, PROXIES_FOLDER
 from config.proxy_provider import load_proxies
-from scraper import initialize_scraper, make_request
+from scraper import initialize_scraper
+from utils.logger import logger
 from utils.async_utils import SEM
 from utils.io_utils import create_proxy_template_if_not_exists
 from utils.meta_utils import count_txt_files
@@ -15,14 +16,14 @@ from main import crawl_missing_chapters_for_story
 from utils.notifier import send_telegram_notify
 from utils.state_utils import load_crawl_state
 
+
 async def crawl_missing_with_limit(*args, **kwargs):
     print(f"[START] Crawl missing for {args[2]['title']} ...")
     async with SEM:
         result = await crawl_missing_chapters_for_story(*args, **kwargs)
     print(f"[DONE] Crawl missing for {args[2]['title']} ...")
     return result
-import os
-import shutil
+
 
 async def check_genre_complete_and_notify(genre_name, genre_url):
     # 1. Lấy danh sách truyện trên web
@@ -42,6 +43,20 @@ async def check_genre_complete_and_notify(genre_name, genre_url):
     missing = [story for story in stories_on_web if story["title"] not in completed_titles]
     if not missing:
         await send_telegram_notify(f"🎉 Đã crawl xong **TẤT CẢ** truyện của thể loại [{genre_name}] trên web!")
+
+def get_auto_batch_count(fixed=None, default=10, min_batch=1, max_batch=20, num_items=None):
+    """
+    Nếu fixed có giá trị thì luôn dùng số batch này.
+    Nếu truyền num_items thì batch tối đa cũng không vượt quá số item (ví dụ số chương missing).
+    """
+    if fixed is not None:
+        return fixed
+    usable = max(1, len(LOADED_PROXIES))
+    batch = min(default, max(min_batch, usable // 2))
+    if num_items:
+        batch = min(batch, num_items)
+    return min(batch, max_batch)
+
 
 
 async def check_and_crawl_missing_all_stories():
@@ -106,8 +121,10 @@ async def check_and_crawl_missing_all_stories():
                 metadata.get("url"), metadata['title'], total_chapters_on_site=total_chapters
             )
             current_category = metadata['categories'][0] if metadata.get('categories') and isinstance(metadata['categories'], list) and metadata['categories'] else {}
+            num_batches = get_auto_batch_count()
+            logger.info(f"Auto chọn {num_batches} batch cho truyện {metadata['title']} (proxy usable: {len(LOADED_PROXIES)})")
             tasks.append(
-                crawl_missing_with_limit(None, chapters, metadata, current_category, story_folder, crawl_state)
+                crawl_missing_with_limit(None, chapters, metadata, current_category, story_folder, crawl_state, num_batches=num_batches)
             )
     # Step 3: Đợi tất cả các task crawl missing chương xong
     if tasks:
