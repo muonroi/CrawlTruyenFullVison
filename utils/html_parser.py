@@ -28,6 +28,11 @@ def extract_chapter_content(html: str, patterns: List[re.Pattern]=BLACKLIST_PATT
 
     cleaned_lines = filter_lines_by_patterns(lines, patterns)
     content = clean_header("\n".join(cleaned_lines)).strip()
+    if not content:
+        logger.warning("Nội dung chương trống sau khi lọc, đã lưu response vào debug_empty_chapter.html")
+        with open('debug_empty_chapter.html', 'w', encoding='utf-8') as f:
+            f.write(html)
+        return ""
     return content
 
 
