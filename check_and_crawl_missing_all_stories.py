@@ -16,6 +16,12 @@ from main import crawl_missing_chapters_for_story
 from utils.notifier import send_telegram_notify
 from utils.state_utils import load_crawl_state
 
+MAX_CONCURRENT_STORIES = 3  # Số truyện crawl đồng thời
+STORY_SEM = asyncio.Semaphore(MAX_CONCURRENT_STORIES)
+
+async def crawl_story_with_limit(*args, **kwargs):
+    async with STORY_SEM:
+        await crawl_missing_with_limit(*args, **kwargs)
 
 async def crawl_missing_with_limit(*args, **kwargs):
     print(f"[START] Crawl missing for {args[2]['title']} ...")
@@ -24,12 +30,8 @@ async def crawl_missing_with_limit(*args, **kwargs):
     print(f"[DONE] Crawl missing for {args[2]['title']} ...")
     return result
 
-
 async def check_genre_complete_and_notify(genre_name, genre_url):
-    # 1. Lấy danh sách truyện trên web
     stories_on_web = await get_all_stories_from_genre(genre_name, genre_url)
-    
-    # 2. Lấy danh sách truyện đã crawl xong trong completed
     completed_folders = os.listdir(os.path.join(COMPLETED_FOLDER, genre_name))
     completed_titles = []
     for folder in completed_folders:
@@ -38,20 +40,19 @@ async def check_genre_complete_and_notify(genre_name, genre_url):
             with open(meta_path, "r", encoding="utf-8") as f:
                 meta = json.load(f)
                 completed_titles.append(meta.get("title"))
-    
-    # 3. Check còn truyện nào trên web mà chưa nằm trong completed không
     missing = [story for story in stories_on_web if story["title"] not in completed_titles]
     if not missing:
         await send_telegram_notify(f"🎉 Đã crawl xong **TẤT CẢ** truyện của thể loại [{genre_name}] trên web!")
 
-def get_auto_batch_count(fixed=10):
-    return fixed
-
-
-
+def get_auto_batch_count(fixed=None, default=10, min_batch=1, max_batch=20, num_items=None):
+    if fixed is not None:
+        return fixed
+    batch = default
+    if num_items:
+        batch = min(batch, num_items)
+    return min(batch, max_batch)
 
 async def check_and_crawl_missing_all_stories():
-    # Step 1: Chuẩn bị thông tin genre (name->url)
     from analyze.parsers import get_all_genres
     HOME_PAGE_URL = "https://truyenfull.vision"
     all_genres = await get_all_genres(HOME_PAGE_URL)
@@ -62,7 +63,7 @@ async def check_and_crawl_missing_all_stories():
     await load_proxies(PROXIES_FILE)
     await initialize_scraper()
 
-    # Step 2: Lấy danh sách tất cả story folder cần crawl
+    # Lấy danh sách tất cả story folder cần crawl
     story_folders = [
         os.path.join(DATA_FOLDER, cast(str, f))
         for f in os.listdir(DATA_FOLDER)
@@ -71,7 +72,6 @@ async def check_and_crawl_missing_all_stories():
     crawl_state = await load_crawl_state()
     tasks = []
     for story_folder in story_folders:
-        # Bỏ qua nếu truyện đã ở completed
         if os.path.dirname(story_folder) == os.path.abspath(COMPLETED_FOLDER):
             continue
         metadata_path = os.path.join(story_folder, "metadata.json")
@@ -82,13 +82,11 @@ async def check_and_crawl_missing_all_stories():
         with open(metadata_path, "r", encoding="utf-8") as f:
             metadata = json.load(f)
         total_chapters = metadata.get("total_chapters_on_site")
-
-        # Lấy tên thể loại đầu tiên
         genre_name = None
         if metadata.get('categories') and isinstance(metadata['categories'], list) and metadata['categories']:
             genre_name = metadata['categories'][0].get('name')
         if not genre_name:
-            genre_name = "Unknown"  # fallback nếu không có thể loại
+            genre_name = "Unknown"
 
         # Auto fix metadata nếu thiếu
         if not total_chapters or total_chapters < 1:
@@ -114,14 +112,14 @@ async def check_and_crawl_missing_all_stories():
             current_category = metadata['categories'][0] if metadata.get('categories') and isinstance(metadata['categories'], list) and metadata['categories'] else {}
             num_batches = get_auto_batch_count(fixed=10)
             logger.info(f"Auto chọn {num_batches} batch cho truyện {metadata['title']} (proxy usable: {len(LOADED_PROXIES)})")
+            # Sử dụng semaphore để chỉ cho phép 3 truyện chạy đồng thời
             tasks.append(
-                crawl_missing_with_limit(None, chapters, metadata, current_category, story_folder, crawl_state, num_batches=num_batches)
+                crawl_story_with_limit(None, chapters, metadata, current_category, story_folder, crawl_state, num_batches=num_batches)
             )
-    # Step 3: Đợi tất cả các task crawl missing chương xong
     if tasks:
         await asyncio.gather(*tasks)
 
-    # Step 4: Move tất cả các truyện đã đủ chương vào completed và kiểm tra notify thể loại
+    # Move completed stories + notify
     for story_folder in story_folders:
         metadata_path = os.path.join(story_folder, "metadata.json")
         if not os.path.exists(metadata_path):
@@ -147,8 +145,6 @@ async def check_and_crawl_missing_all_stories():
                 if genre_url:
                     await check_genre_complete_and_notify(genre_name, genre_url)
                 genre_complete_checked.add(genre_name)
-
-
 
 async def loop_every_1h():
     while True:
