@@ -24,7 +24,11 @@ async def check_and_crawl_missing_all_stories():
     await create_proxy_template_if_not_exists(PROXIES_FILE, PROXIES_FOLDER)
     await load_proxies(PROXIES_FILE)
     await initialize_scraper()  
-    story_folders = [os.path.join(DATA_FOLDER, f) for f in os.listdir(DATA_FOLDER) if os.path.isdir(os.path.join(DATA_FOLDER, f))]
+    story_folders = [
+        os.path.join(DATA_FOLDER, cast(str, f))  # type: ignore
+        for f in os.listdir(DATA_FOLDER)
+        if os.path.isdir(os.path.join(DATA_FOLDER, cast(str, f))) # type: ignore
+    ]
     crawl_state = await load_crawl_state()
     tasks = []
     for story_folder in story_folders:

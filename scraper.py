@@ -13,7 +13,7 @@ import time
 import random
 import cloudscraper
 from utils.logger import logger
-from config.config import loaded_proxies
+from config.config import LOADED_PROXIES
 
 scraper: Optional[cloudscraper.CloudScraper] = None
 
@@ -57,7 +57,7 @@ def make_request(url, headers_override=None, timeout=30, max_retries=5):
 
         proxy_url = None
         if USE_PROXY:
-            available_proxies = [p for p in loaded_proxies if p not in tried_proxies]
+            available_proxies = [p for p in LOADED_PROXIES if p not in tried_proxies]
             if not available_proxies:
                 logger.warning("Đã thử hết proxy đang có, không còn proxy nào tốt.")
                 break

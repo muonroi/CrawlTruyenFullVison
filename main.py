@@ -6,13 +6,15 @@ import aiohttp
 import os
 from urllib.parse import urlparse
 from typing import Dict, Any, List, Tuple
+
+from dotenv import load_dotenv
 from adapters.base_site_adapter import BaseSiteAdapter
 from adapters.factory import get_adapter
 from utils.batch_utils import smart_delay, split_batches
 from utils.chapter_utils import async_download_and_save_chapter, process_chapter_batch
 from utils.io_utils import create_proxy_template_if_not_exists, ensure_directory_exists
 from utils.logger import logger
-from config.config import GENRE_ASYNC_LIMIT, GENRE_BATCH_SIZE, loaded_proxies
+from config.config import GENRE_ASYNC_LIMIT, GENRE_BATCH_SIZE, LOADED_PROXIES
 
 from config.config import (
     BASE_URL, DATA_FOLDER, NUM_CHAPTER_BATCHES, PROXIES_FILE, PROXIES_FOLDER,
@@ -83,7 +85,7 @@ async def initialize_and_log_setup_with_state() -> Tuple[str, Dict[str, Any]]:
 
     logger.info("=== BẮT ĐẦU QUÁ TRÌNH CRAWL ASYNC ===")
     logger.info(f"Thư mục lưu dữ liệu: {os.path.abspath(DATA_FOLDER)}")
-    logger.info(f"Sử dụng {len(loaded_proxies)} proxy(s).")
+    logger.info(f"Sử dụng {len(LOADED_PROXIES)} proxy(s).")
     logger.info(
         f"Giới hạn: {MAX_GENRES_TO_CRAWL or 'Không giới hạn'} thể loại, "
         f"{MAX_STORIES_TOTAL_PER_GENRE or 'Không giới hạn'} truyện/thể loại."
@@ -315,7 +317,7 @@ async def process_genre_item(
 
 async def run_crawler():
     await load_proxies(PROXIES_FILE)
-    homepage_url, crawl_state = await initialize_and_log_setup_with_state()
+    crawl_state = await initialize_and_log_setup_with_state()
     adapter = get_adapter("truyenfull")
     genres = await adapter.get_genres()
     async with aiohttp.ClientSession() as session:
@@ -326,8 +328,7 @@ async def run_crawler():
                 tasks.append(process_genre_with_limit(session, genre, crawl_state, adapter))
             logger.info(f"=== Đang crawl batch thể loại {batch_idx+1}/{len(batches)} ({len(genre_batch)} genres song song) ===")
             await asyncio.gather(*tasks)
-            # Sau khi xong batch, có thể sleep 1 chút nếu muốn an toàn hơn:
-            await asyncio.sleep(3)
+            await smart_delay()
     logger.info("=== HOÀN TẤT TOÀN BỘ QUÁ TRÌNH CRAWL ===")
 
 

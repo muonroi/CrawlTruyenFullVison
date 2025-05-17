@@ -8,7 +8,9 @@ from config.proxy_provider import load_proxies
 from scraper import initialize_scraper
 from utils.chapter_utils import async_save_chapter_with_hash_check
 from utils.io_utils import atomic_write_json, create_proxy_template_if_not_exists
-
+from utils.notifier import send_telegram_notify
+MAX_RETRY_FAILS = 5
+retry_fail_count = 0
 async def retry_queue(filename='chapter_retry_queue.json', interval=900):  # 900 giây = 15 phút
     await create_proxy_template_if_not_exists(PROXIES_FILE, PROXIES_FOLDER)
     await load_proxies(PROXIES_FILE)
@@ -43,11 +45,15 @@ async def retry_queue(filename='chapter_retry_queue.json', interval=900):  # 900
             print(f"Retry chương: {chapter_title} ({url}) ... của truyện: {story_title}")
             content = await get_story_chapter_content(url, chapter_title)
             if content:
+                retry_fail_count = 0
                 save_result = await async_save_chapter_with_hash_check(filename_path, content)
                 print(f"-> Result: {save_result}")
                 to_remove.append(item)
             else:
-                print("-> Vẫn lỗi")
+                retry_fail_count += 1
+                if retry_fail_count >= MAX_RETRY_FAILS:
+                    asyncio.create_task(send_telegram_notify(f"[Crawl Notify] Retry quá nhiều lần nhưng toàn bộ đều lỗi (proxy/blocked)! Queue: {filename}"))
+                    retry_fail_count = 0
 
         # Xoá chương đã thành công khỏi queue
         if to_remove:
