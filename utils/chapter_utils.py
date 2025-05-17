@@ -31,7 +31,7 @@ async def async_save_chapter_with_hash_check(filename, content: str):
             return "unchanged"
         else:
             content = clean_header(content)
-            await atomic_write(filename, content)
+            await atomic_write(filename, content) 
             logger.info(f"Chương '{filename}' đã được cập nhật do nội dung thay đổi.")
             return "updated"
     else:
