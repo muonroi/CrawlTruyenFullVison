@@ -43,7 +43,7 @@ async def retry_queue(filename='chapter_retry_queue.json', interval=900):  # 900
             print(f"Retry chương: {chapter_title} ({url}) ... của truyện: {story_title}")
             content = await get_story_chapter_content(url, chapter_title)
             if content:
-                save_result = async_save_chapter_with_hash_check(filename_path, content)
+                save_result = await async_save_chapter_with_hash_check(filename_path, content)
                 print(f"-> Result: {save_result}")
                 to_remove.append(item)
             else:
