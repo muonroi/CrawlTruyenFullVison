@@ -44,18 +44,9 @@ async def check_genre_complete_and_notify(genre_name, genre_url):
     if not missing:
         await send_telegram_notify(f"🎉 Đã crawl xong **TẤT CẢ** truyện của thể loại [{genre_name}] trên web!")
 
-def get_auto_batch_count(fixed=None, default=10, min_batch=1, max_batch=20, num_items=None):
-    """
-    Nếu fixed có giá trị thì luôn dùng số batch này.
-    Nếu truyền num_items thì batch tối đa cũng không vượt quá số item (ví dụ số chương missing).
-    """
-    if fixed is not None:
-        return fixed
-    usable = max(1, len(LOADED_PROXIES))
-    batch = min(default, max(min_batch, usable // 2))
-    if num_items:
-        batch = min(batch, num_items)
-    return min(batch, max_batch)
+def get_auto_batch_count(fixed=10):
+    return fixed
+
 
 
 
@@ -121,7 +112,7 @@ async def check_and_crawl_missing_all_stories():
                 metadata.get("url"), metadata['title'], total_chapters_on_site=total_chapters
             )
             current_category = metadata['categories'][0] if metadata.get('categories') and isinstance(metadata['categories'], list) and metadata['categories'] else {}
-            num_batches = get_auto_batch_count()
+            num_batches = get_auto_batch_count(fixed=10)
             logger.info(f"Auto chọn {num_batches} batch cho truyện {metadata['title']} (proxy usable: {len(LOADED_PROXIES)})")
             tasks.append(
                 crawl_missing_with_limit(None, chapters, metadata, current_category, story_folder, crawl_state, num_batches=num_batches)
