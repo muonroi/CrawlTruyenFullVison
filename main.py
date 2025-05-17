@@ -11,7 +11,7 @@ from dotenv import load_dotenv
 from adapters.base_site_adapter import BaseSiteAdapter
 from adapters.factory import get_adapter
 from utils.batch_utils import smart_delay, split_batches
-from utils.chapter_utils import async_download_and_save_chapter, process_chapter_batch
+from utils.chapter_utils import async_download_and_save_chapter, get_existing_chapter_nums, get_missing_chapters, process_chapter_batch
 from utils.io_utils import create_proxy_template_if_not_exists, ensure_directory_exists
 from utils.logger import logger
 from config.config import GENRE_ASYNC_LIMIT, GENRE_BATCH_SIZE, LOADED_PROXIES

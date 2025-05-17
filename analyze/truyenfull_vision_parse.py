@@ -1,7 +1,7 @@
 import re
 import asyncio
 from typing import List, Tuple, Optional, Dict, Any
-from bs4 import BeautifulSoup, Comment
+from bs4 import BeautifulSoup
 from urllib.parse import urljoin, urlparse
 
 from utils.html_parser import extract_chapter_content
