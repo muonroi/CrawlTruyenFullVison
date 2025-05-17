@@ -15,7 +15,7 @@ def extract_chapter_content(html: str, patterns: List[re.Pattern]=BLACKLIST_PATT
     if not chapter_div:
         with open('debug_empty_chapter.html', 'w', encoding='utf-8') as f:
             f.write(html)
-        logger.warning(f"Nội dung chương trống, đã lưu response vào debug_empty_chapter.html")
+        logger.warning(f"Không tìm thấy Div Nội dung chương trống, đã lưu response vào debug_empty_chapter.html")
         return ""
     
     # Đừng xóa thẳng tay nếu chưa chắc clean
@@ -40,10 +40,6 @@ def extract_chapter_content(html: str, patterns: List[re.Pattern]=BLACKLIST_PATT
             f.write(html)
         return ""
     return content
-
-
-
-
 
 def clean_header(text: str):
     lines = text.splitlines()
