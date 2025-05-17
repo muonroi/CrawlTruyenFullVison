@@ -2,7 +2,7 @@ import os
 import asyncio
 import json
 import datetime
-
+from typing import cast
 from config.config import DATA_FOLDER, PROXIES_FILE, PROXIES_FOLDER
 from config.proxy_provider import load_proxies
 from scraper import initialize_scraper, make_request
