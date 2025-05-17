@@ -229,7 +229,8 @@ async def get_all_stories_from_genre(
 
 async def get_chapters_from_story(
     story_url: str, story_title: str,
-    max_pages: Optional[int] = None  # Không giới hạn mặc định
+    max_pages: Optional[int] = None,         # Không giới hạn mặc định
+    total_chapters_on_site: Optional[int] = None  # Số chương thật sự trên site (từ metadata)
 ) -> List[Dict[str, str]]:
     logger.info(f"Truyện '{story_title}': Lấy chương từ {story_url}")
     loop = asyncio.get_event_loop()
@@ -245,17 +246,20 @@ async def get_chapters_from_story(
     if not cont:
         logger.warning("Không tìm thấy list-chapter")
         return []
-    
+
     # 2. Lấy tổng số trang chương
     total_pages = 1
-    total_page_input = cont.find("input", {"id": "total-page"})#type: ignore
+    total_page_input = cont.find("input", {"id": "total-page"}) #type: ignore
     if total_page_input:
         try:
             total_pages = int(total_page_input["value"])#type: ignore
         except Exception:
             total_pages = 1
-    
-    # 3. Crawl từng trang chương
+
+    if max_pages:
+        total_pages = min(total_pages, max_pages)
+
+    # 3. Crawl từng trang chương (dừng khi đã lấy đủ số chương thực tế nếu truyền vào)
     for i in range(1, total_pages + 1):
         if i == 1:
             cur_soup = soup
@@ -266,7 +270,7 @@ async def get_chapters_from_story(
             if not resp or not getattr(resp, 'text', None):
                 continue
             cur_soup = BeautifulSoup(resp.text, "html.parser")
-        
+
         cur_cont = cur_soup.find("div", id="list-chapter")
         if cur_cont:
             for ul in cur_cont.find_all("ul", class_=re.compile(r"list-chapter")):#type: ignore
@@ -275,16 +279,26 @@ async def get_chapters_from_story(
                     if a:
                         chapters.append({
                             "url": a["href"],#type: ignore
-                            "title": a.get("title") or a.get_text(strip=True)#type: ignore
-                        })#type: ignore
-    
+                            "title": a.get("title") or a.get_text(strip=True) #type: ignore
+                        }) #type: ignore
+        # Nếu đã lấy đủ số chương metadata thì dừng
+        if total_chapters_on_site and len(chapters) >= total_chapters_on_site:
+            logger.info(f"Đã lấy đủ {total_chapters_on_site} chương, dừng crawl trang chương.")
+            break
+
     # 4. Xử lý trùng lặp và sắp xếp
     uniq, seen = [], set()
     for ch in chapters:
         if ch['url'] not in seen:
             uniq.append(ch)
             seen.add(ch['url'])
-    uniq.sort(key=lambda ch: float(re.search(r"(\d+)", ch['title']).group(1)) if re.search(r"(\d+)", ch['title']) else float('inf'))#type: ignore
+
+    uniq.sort(key=lambda ch: float(re.search(r"(\d+)", ch['title']).group(1)) if re.search(r"(\d+)", ch['title']) else float('inf')) #type: ignore
+
+    # Cảnh báo nếu lấy được ít hơn số chương metadata
+    if total_chapters_on_site and len(uniq) < total_chapters_on_site:
+        logger.warning(f"CHÚ Ý: Số chương lấy được ({len(uniq)}) < metadata ({total_chapters_on_site}) cho truyện '{story_title}'")
+
     logger.info(f"Tìm thấy {len(uniq)} chương.")
     return uniq
 
