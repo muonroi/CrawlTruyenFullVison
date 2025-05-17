@@ -6,7 +6,7 @@ from typing import Any, Dict, Optional
 
 import aiofiles
 from utils.logger import logger
-from utils.io_utils import atomic_write, ensure_backup_folder, ensure_directory_exists
+from utils.io_utils import atomic_write, atomic_write_json, ensure_backup_folder, ensure_directory_exists
 
 
 async def save_story_metadata_file(
@@ -93,8 +93,7 @@ def add_missing_story(story_title, story_url, total_chapters, crawled_chapters, 
         "total_chapters": total_chapters,
         "crawled_chapters": crawled_chapters
     })
-    with open(path, "w", encoding="utf-8") as f:
-        json.dump(data, f, ensure_ascii=False, indent=2)
+    atomic_write_json(data, path)
 
 
 def backup_crawl_state(state_file='crawl_state.json', backup_folder="backup"):
