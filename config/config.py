@@ -339,7 +339,7 @@ BACKUP_FOLDER = 'backup_truyen_data'
 PROXIES_FOLDER = "proxies"
 PROXIES_FILE = os.path.join(PROXIES_FOLDER, "proxies.txt")
 ERROR_CHAPTERS_FILE = 'error_chapters.json'
-
+LOCK = asyncio.Lock()
 # --- Thông tin đăng nhập Proxy (từ env) ---
 GLOBAL_PROXY_USERNAME = os.getenv("PROXY_USER", "muonroi-zone-resi")
 GLOBAL_PROXY_PASSWORD = os.getenv("PROXY_PASS", "0967442142")

@@ -1,6 +1,8 @@
 import asyncio
+import json
 import os
 import re
+import tempfile
 import aiofiles
 
 from utils.logger import logger
@@ -43,6 +45,13 @@ async def atomic_write(filename, content):
     async with aiofiles.open(tmpfile, 'w', encoding='utf-8') as f: 
         await f.write(content)
     os.replace(tmpfile, filename)
+
+def atomic_write_json(obj, filename, encoding="utf-8"):
+    dir_name = os.path.dirname(filename) or "."
+    with tempfile.NamedTemporaryFile('w', dir=dir_name, encoding=encoding, delete=False) as tf:
+        json.dump(obj, tf, ensure_ascii=False, indent=4)
+        tempname = tf.name
+    os.replace(tempname, filename)
 
 def ensure_backup_folder(backup_folder="backup"):
     if not os.path.exists(backup_folder):

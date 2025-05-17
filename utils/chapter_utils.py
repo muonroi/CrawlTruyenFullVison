@@ -4,11 +4,11 @@ import os
 from typing import Any, Dict, List
 
 import aiofiles
-from config.config import ERROR_CHAPTERS_FILE
+from config.config import ERROR_CHAPTERS_FILE, LOCK
 from analyze.parsers import get_story_chapter_content
 from utils.async_utils import SEM
 from utils.html_parser import clean_header
-from utils.io_utils import atomic_write
+from utils.io_utils import atomic_write, atomic_write_json
 from utils.logger import logger
 from utils.batch_utils import smart_delay
 from utils.meta_utils import sanitize_filename
@@ -42,23 +42,17 @@ async def async_save_chapter_with_hash_check(filename, content: str):
     
 
 
-def log_error_chapter(story_title, chapter_title, chapter_url,
-    error_msg="Không lấy được nội dung"):
-    import json
-    data = {
-        "story": story_title,
-        "chapter": chapter_title,
-        "url": chapter_url,
-        "error_msg": error_msg
-    }
-    if os.path.exists(ERROR_CHAPTERS_FILE):
-        with open(ERROR_CHAPTERS_FILE, 'r', encoding='utf-8') as f:
-            arr = json.load(f)
-    else:
+async def log_error_chapter(item, filename="error_chapters.json"):
+    async with LOCK:
         arr = []
-    arr.append(data)
-    with open(ERROR_CHAPTERS_FILE, 'w', encoding='utf-8') as f:
-        json.dump(arr, f, ensure_ascii=False, indent=2)
+        if os.path.exists(filename):
+            try:
+                with open(filename, 'r', encoding='utf-8') as f:
+                    arr = json.load(f)
+            except Exception:
+                arr = []
+        arr.append(item)
+        atomic_write_json(arr, filename)
 
 
 
@@ -76,8 +70,7 @@ def queue_failed_chapter(chapter_data, filename='chapter_retry_queue.json'):
         if item.get("url") == chapter_data.get("url"):
             return
     data.append(chapter_data)
-    with open(path, "w", encoding="utf-8") as f:
-        json.dump(data, f, ensure_ascii=False, indent=2)
+    atomic_write_json(data, filename)
 
  
 
@@ -124,12 +117,12 @@ async def async_download_and_save_chapter(
                     await save_crawl_state(crawl_state)
         except Exception as e:
             logger.error(f"          Lỗi lưu '{chapter_filename_only}': {e}")
-            log_error_chapter(
-                story_title=story_data_item['title'],
-                chapter_title=chapter_info['title'],
-                chapter_url=chapter_info['url'],
-                error_msg=str(e)
-            )
+            await log_error_chapter({
+                "story_title": story_data_item['title'],
+                "chapter_title": chapter_info['title'],
+                "chapter_url": chapter_info['url'],
+                "error_msg": str(e)
+            })
             # --- Queue retry chương lỗi ---
             queue_failed_chapter({
                 "chapter_url": chapter_info['url'],
@@ -147,12 +140,12 @@ async def async_download_and_save_chapter(
             })
     else:
         logger.warning(f"          Không lấy được nội dung '{chapter_info['title']}'")
-        log_error_chapter(
-            story_title=story_data_item['title'],
-            chapter_title=chapter_info['title'],
-            chapter_url=chapter_info['url'],
-            error_msg="Không lấy được nội dung"
-        )
+        await log_error_chapter({
+            "story_title": story_data_item['title'],
+            "chapter_title": chapter_info['title'],
+            "chapter_url": chapter_info['url'],
+            "error_msg": "Không lấy được nội dung"
+        })
         # --- Queue retry chương lỗi ---
         queue_failed_chapter({
             "chapter_url": chapter_info['url'],
