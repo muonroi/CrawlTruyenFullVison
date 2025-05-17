@@ -26,8 +26,7 @@ async def create_proxy_template_if_not_exists(proxies_file_path: str, proxies_fo
     exists = await loop.run_in_executor(None, os.path.exists, proxies_file_path)
     if not exists:
         try:
-            async with aiofiles.open(proxies_file_path, 'w', encoding='utf-8') as f:
-                await f.write("""# Thêm proxy của bạn ở đây, mỗi proxy một dòng.
+            await atomic_write(proxies_file_path, """# Thêm proxy của bạn ở đây, mỗi proxy một dòng.
 # Ví dụ: http://host:port
 # Ví dụ: http://user:pass@host:port
 # Ví dụ (IP:PORT sẽ dùng GLOBAL credentials): 123.45.67.89:1080

@@ -7,6 +7,8 @@ import aiofiles
 from config.config import ERROR_CHAPTERS_FILE
 from analyze.parsers import get_story_chapter_content
 from utils.async_utils import SEM
+from utils.html_parser import clean_header
+from utils.io_utils import atomic_write
 from utils.logger import logger
 from utils.batch_utils import smart_delay
 from utils.meta_utils import sanitize_filename
@@ -28,13 +30,13 @@ async def async_save_chapter_with_hash_check(filename, content: str):
             logger.debug(f"Chương '{filename}' đã tồn tại với nội dung giống hệt, bỏ qua ghi lại.")
             return "unchanged"
         else:
-            async with aiofiles.open(filename, 'w', encoding='utf-8') as f:
-                await f.write(content)
+            content = clean_header(content)
+            await atomic_write(filename, content)
             logger.info(f"Chương '{filename}' đã được cập nhật do nội dung thay đổi.")
             return "updated"
     else:
-        async with aiofiles.open(filename, 'w', encoding='utf-8') as f:
-            await f.write(content)
+        content = clean_header(content)
+        await atomic_write(filename, content)
         logger.info(f"Chương '{filename}' mới đã được lưu.")
         return "new"
     
@@ -185,16 +187,3 @@ async def process_chapter_batch(
         await smart_delay()
     return successful, failed
 
-
-def clean_header(text: str):
-    lines = text.splitlines()
-    out = []
-    skip_prefixes = (
-        "nguồn:", "truyện:", "thể loại:", "chương:"
-    )
-    for line in lines:
-        l = line.strip().lower()
-        if l == "" or any(l.startswith(p) for p in skip_prefixes):
-            continue
-        out.append(line)
-    return "\n".join(out).strip()

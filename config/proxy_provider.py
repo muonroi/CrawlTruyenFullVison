@@ -3,6 +3,7 @@ import random
 import aiofiles
 from typing import List, Optional
 from config.config import USE_PROXY
+from utils.io_utils import atomic_write
 from utils.logger import logger
 
 loaded_proxies: List[str] = []
