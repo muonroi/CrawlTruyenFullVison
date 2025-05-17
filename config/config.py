@@ -9,6 +9,7 @@ load_dotenv()
 
 # -------------- [Cấu hình CƠ BẢN] --------------
 BASE_URL = os.getenv("BASE_URL", "https://truyenfull.vision")
+BASE_METRUYENFULL_URL = "https://metruyenfull.net"
 REQUEST_DELAY = float(os.getenv("REQUEST_DELAY", "5"))  # Giây delay giữa các request
 DATA_FOLDER = os.getenv("DATA_FOLDER", "truyen_data")
 COMPLETED_FOLDER = os.getenv("COMPLETED_FOLDER", "completed_stories")
@@ -17,7 +18,7 @@ BACKUP_FOLDER = os.getenv("BACKUP_FOLDER", "backup_truyen_data")
 # -------------- [Proxy & User-Agent] --------------
 USE_PROXY = os.getenv("USE_PROXY", "True") == "True"
 PROXIES_FOLDER = os.getenv("PROXIES_FOLDER", "proxies")
-PROXIES_FILE = os.getenv("PROXIES_FILE", os.path.join(PROXIES_FOLDER, "proxies_http.txt"))
+PROXIES_FILE = os.getenv("PROXIES_FILE", os.path.join(PROXIES_FOLDER, "proxies.txt"))
 GLOBAL_PROXY_USERNAME = os.getenv("PROXY_USER")
 GLOBAL_PROXY_PASSWORD = os.getenv("PROXY_PASS")
 LOADED_PROXIES = []  # global list (sẽ được load khi chạy)
@@ -102,3 +103,18 @@ async def get_random_headers():
     if BASE_URL:
         headers["Referer"] = BASE_URL.rstrip('/') + '/'
     return headers
+
+def load_blacklist_patterns(file_path):
+    patterns = []
+    contains_list = []
+    with open(file_path, encoding="utf-8") as f:
+        for line in f:
+            line = line.strip()
+            if not line or line.startswith("#"):
+                continue
+            # Regex pattern nếu có ^, $, hoặc kí tự regex đặc biệt
+            if line.startswith('^') or line.endswith('$') or re.search(r'[.*?|\[\]()\\]', line):
+                patterns.append(re.compile(line, re.IGNORECASE))
+            else:
+                contains_list.append(line.lower())
+    return patterns, contains_list

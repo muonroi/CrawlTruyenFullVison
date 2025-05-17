@@ -1,5 +1,5 @@
 from adapters.base_site_adapter import BaseSiteAdapter
-from analyze.parsers import (
+from analyze.truyenfull_vision_parse import (
     get_all_genres,
     get_stories_from_genre_page,
     get_all_stories_from_genre,

@@ -11,7 +11,7 @@ from utils.logger import logger
 from utils.async_utils import SEM
 from utils.io_utils import create_proxy_template_if_not_exists
 from utils.meta_utils import count_txt_files
-from analyze.parsers import get_all_stories_from_genre, get_chapters_from_story, get_story_details
+from analyze.truyenfull_vision_parse import get_all_genres, get_all_stories_from_genre, get_chapters_from_story, get_story_details
 from main import crawl_missing_chapters_for_story
 from utils.notifier import send_telegram_notify
 from utils.state_utils import load_crawl_state
@@ -53,7 +53,6 @@ def get_auto_batch_count(fixed=None, default=10, min_batch=1, max_batch=20, num_
     return min(batch, max_batch)
 
 async def check_and_crawl_missing_all_stories():
-    from analyze.parsers import get_all_genres
     HOME_PAGE_URL = "https://truyenfull.vision"
     all_genres = await get_all_genres(HOME_PAGE_URL)
     genre_name_to_url = {g['name']: g['url'] for g in all_genres}

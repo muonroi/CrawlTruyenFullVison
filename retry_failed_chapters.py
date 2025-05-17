@@ -2,7 +2,7 @@ import json
 import asyncio
 import os
 from datetime import datetime
-from analyze.parsers import get_story_chapter_content
+from analyze.truyenfull_vision_parse import get_story_chapter_content
 from config.config import PROXIES_FILE, PROXIES_FOLDER
 from config.proxy_provider import load_proxies
 from scraper import initialize_scraper

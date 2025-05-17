@@ -4,8 +4,8 @@ import os
 from typing import Any, Dict, List
 
 import aiofiles
-from config.config import ERROR_CHAPTERS_FILE, LOCK
-from analyze.parsers import get_story_chapter_content
+from config.config import LOCK
+from analyze.truyenfull_vision_parse import get_story_chapter_content
 from utils.async_utils import SEM
 from utils.html_parser import clean_header
 from utils.io_utils import atomic_write, atomic_write_json
@@ -187,3 +187,37 @@ def get_category_name(story_data_item, current_discovery_genre_data):
         if story_data_item['categories']:
             return story_data_item['categories'][0].get('name', '')
     return current_discovery_genre_data.get('name', '')
+
+def get_existing_chapter_nums(story_folder):
+    files = [f for f in os.listdir(story_folder) if f.endswith('.txt')]
+    chapter_nums = set()
+    for f in files:
+        # 0001_Tên chương.txt => lấy 0001
+        num = f.split('_')[0]
+        chapter_nums.add(num)
+    return chapter_nums
+
+def get_missing_chapters(chapters, existing_nums):
+    # chapters: list từ web, existing_nums: set 0001, 0002...
+    missing = []
+    for idx, ch in enumerate(chapters):
+        num = f"{idx+1:04d}"
+        if num not in existing_nums:
+            missing.append((idx, ch))
+    return missing
+
+async def crawl_new_chapters(adapter, story_url, story_folder):
+    chapters = await adapter.get_chapters_from_story(story_url)
+    existing = get_existing_chapter_nums(story_folder)
+    new_chapters = []
+    for idx, ch in enumerate(chapters):
+        fname = f"{idx+1:04d}_{sanitize_filename(ch['title']) or 'untitled'}.txt"
+        num = f"{idx+1:04d}"
+        if num not in existing:
+            new_chapters.append((ch, fname))
+    # Crawl các chương mới
+    for ch, fname in new_chapters:
+        content = await adapter.extract_chapter_content(ch['url'])
+        with open(os.path.join(story_folder, fname), "w", encoding="utf-8") as f:
+            f.write(content)
+    print(f"Đã crawl {len(new_chapters)} chương mới.")

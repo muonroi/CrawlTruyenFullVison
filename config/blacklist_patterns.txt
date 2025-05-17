@@ -1,13 +1,8 @@
-# Header, giới thiệu, meta
+# === HEADER, META, GIỚI THIỆU, THÔNG TIN CHUNG ===
 ^nguồn: .*
 ^truyện: .*
 ^thể loại: .*
 ^chương: .*
-
-# Ký tự ngắn rác, line phân cách
-^[-–—=~\s]{2,}$
-
-# Menu, liên quan
 menu
 hiện menu
 doc truyen
@@ -18,8 +13,35 @@ liên hệ
 online
 website hoạt động
 creative commons
+# Các bạn đang đọc truyện tại
+# metruyenfull.net
+# Tổng hợp thư viện sách hay có lượt mua, xem cao
+# ĐƯỢC ĐỀ XUẤT CHO BẠN
+# CLICK VÀO XEM
 
-# Quảng cáo, notice
+# === DÒNG PHÂN CÁCH, DÒNG NGẮN ===
+^[-–—=~\s]{2,}$
+
+# === QUẢNG CÁO, NOTICE, THÔNG BÁO, ĐỀ XUẤT SÁCH, FANPAGE, BANNER ===
+quảng cáo
+nhớ cho 1 đánh giá
+website có một số quảng cáo
+để có kinh phí duy trì
+click theo dõi
+fanpage
+tổng hợp thư viện sách hay
+click vào xem
+các bạn đang đọc truyện tại
+metruyenfull.net
+được đề xuất cho bạn
+báo lỗi chương
+chương lỗi
+back to top
+facebook
+shopee
+lazada
+banner
+# Tên truyện đề xuất
 phá quân vũ đế hồi sinh chuyển thế
 thần đồng đoản mệnh
 nam chính xuyên qua
@@ -29,7 +51,6 @@ hỗ trợ mọi thiết bị
 truyện mới cập nhật
 truyện hot
 truyện full
-truyện hot
 
-# Dòng rác khác (nếu có)
-bình luận
+# === CÁC DÒNG RÁC KHÁC (THÊM MỚI TÙY Ý) ===
+(Tấu chương xong)
