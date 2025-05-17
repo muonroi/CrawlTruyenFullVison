@@ -23,16 +23,16 @@ def extract_chapter_content(html: str, patterns: List[re.Pattern]=BLACKLIST_PATT
 
     # Log text sau clean_chapter_content
     text = chapter_div.get_text(separator="\n")
-    logger.debug(f"[extract_chapter_content] TEXT RAW:\n{text}")
+    logger.warning(f"[extract_chapter_content] TEXT RAW:\n{text}")
 
     lines = [line.strip() for line in text.splitlines() if line.strip()]
-    logger.debug(f"[extract_chapter_content] LINES: {lines}")
+    logger.warning(f"[extract_chapter_content] LINES: {lines}")
 
     cleaned_lines = filter_lines_by_patterns(lines, patterns)
-    logger.debug(f"[extract_chapter_content] CLEANED LINES: {cleaned_lines}")
+    logger.warning(f"[extract_chapter_content] CLEANED LINES: {cleaned_lines}")
 
     content = clean_header("\n".join(cleaned_lines)).strip()
-    logger.debug(f"[extract_chapter_content] FINAL CONTENT: {content}")
+    logger.warning(f"[extract_chapter_content] FINAL CONTENT: {content}")
 
     if not content:
         logger.warning("Nội dung chương trống sau khi lọc, đã lưu response vào debug_empty_chapter.html")
