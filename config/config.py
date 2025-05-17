@@ -349,6 +349,13 @@ _DISABLE_FAKE_UA = True
 
 PATTERN_FILE = "config/blacklist_patterns.txt"
 
+HEADER_PATTERNS = [
+    r"^nguồn:",
+    r"^truyện:",
+    r"^thể loại:",
+    r"^chương:",
+]
+HEADER_RE = re.compile("|".join(HEADER_PATTERNS), re.IGNORECASE)
 
 def _init_user_agent():
     try:
