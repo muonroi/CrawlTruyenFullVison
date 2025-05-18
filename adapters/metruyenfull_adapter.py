@@ -7,14 +7,16 @@ from analyze.metruyenfull_parse import (
     get_story_metadata,
     get_chapters_from_story
 )
+from config.config import BASE_URLS
 _executor = ThreadPoolExecutor(max_workers=8)
 
 class MeTruyenFullAdapter(BaseSiteAdapter):
     SITE_KEY = "metruyenfull"
+    BASE_URL = BASE_URLS[SITE_KEY]
     async def get_genres(self):
         loop = asyncio.get_event_loop()
         return await loop.run_in_executor(
-            _executor, get_all_categories, self, "https://metruyenfull.net"
+            _executor, get_all_categories, self, self.BASE_URL
         )
 
     async def get_all_stories_from_genre(self, genre_name, genre_url, max_pages=None):

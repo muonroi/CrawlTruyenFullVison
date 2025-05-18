@@ -8,8 +8,11 @@ from dotenv import load_dotenv
 load_dotenv()
 
 # -------------- [Cấu hình CƠ BẢN] --------------
-BASE_URL = os.getenv("BASE_URL", "https://truyenfull.vision")
-BASE_METRUYENFULL_URL = "https://metruyenfull.net"
+BASE_URLS = {
+    "truyenfull": "https://truyenfull.vision",
+    "metruyenfull": "https://metruyenfull.net"
+}
+
 REQUEST_DELAY = float(os.getenv("REQUEST_DELAY", "5"))  # Giây delay giữa các request
 DATA_FOLDER = os.getenv("DATA_FOLDER", "truyen_data")
 COMPLETED_FOLDER = os.getenv("COMPLETED_FOLDER", "completed_stories")
@@ -95,15 +98,16 @@ async def get_random_user_agent():
         _DISABLE_FAKE_UA = True
         return random.choice(STATIC_USER_AGENTS)
 
-async def get_random_headers():
+async def get_random_headers(site_key):
     ua_string = await get_random_user_agent()
     headers = {
         "User-Agent": ua_string,
         "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8",
         "Accept-Language": "vi-VN,vi;q=0.9,fr-FR;q=0.8,fr;q=0.7,en-US;q=0.6,en;q=0.5",
     }
-    if BASE_URL:
-        headers["Referer"] = BASE_URL.rstrip('/') + '/'
+    base_url = BASE_URLS.get(site_key)
+    if base_url:
+        headers["Referer"] = base_url.rstrip('/') + '/'
     return headers
 
 def load_blacklist_patterns(file_path):
