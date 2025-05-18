@@ -3,8 +3,8 @@ import json
 import os
 import re
 import shutil
-import tempfile
 import aiofiles
+from filelock import FileLock
 
 from config.config import COMPLETED_FOLDER, FAILED_GENRES_FILE
 from utils.logger import logger
@@ -30,7 +30,7 @@ async def create_proxy_template_if_not_exists(proxies_file_path: str, proxies_fo
     exists = await loop.run_in_executor(None, os.path.exists, proxies_file_path)
     if not exists:
         try:
-            await atomic_write(proxies_file_path, """# Thêm proxy của bạn ở đây, mỗi proxy một dòng.
+            await safe_write_file(proxies_file_path, """# Thêm proxy của bạn ở đây, mỗi proxy một dòng.
 # Ví dụ: http://host:port
 # Ví dụ: http://user:pass@host:port
 # Ví dụ (IP:PORT sẽ dùng GLOBAL credentials): 123.45.67.89:1080
@@ -42,18 +42,14 @@ async def create_proxy_template_if_not_exists(proxies_file_path: str, proxies_fo
             return False
     return True
 
-async def atomic_write(filename, content):
-    tmpfile = filename + ".tmp"
-    async with aiofiles.open(tmpfile, 'w', encoding='utf-8') as f:  
-        await f.write(content)
-    os.replace(tmpfile, filename)
+async def safe_write_json(filepath, obj, timeout=60):
+    import json
+    lock_path = filepath + '.lock'
+    lock = FileLock(lock_path, timeout=timeout)
+    with lock:
+        async with aiofiles.open(filepath, 'w', encoding='utf-8') as f:
+            await f.write(json.dumps(obj, ensure_ascii=False, indent=4))
 
-def atomic_write_json(obj, filename, encoding="utf-8"):
-    dir_name = os.path.dirname(filename) or "."
-    with tempfile.NamedTemporaryFile('w', dir=dir_name, encoding=encoding, delete=False) as tf:
-        json.dump(obj, tf, ensure_ascii=False, indent=4)
-        tempname = tf.name
-    os.replace(tempname, filename)
 
 def ensure_backup_folder(backup_folder="backup"):
     if not os.path.exists(backup_folder):
@@ -100,3 +96,10 @@ def log_failed_genre(genre_data):
                 json.dump(arr, f, ensure_ascii=False, indent=4)
     except Exception as e:
         logger.error(f"Lỗi khi log failed genre: {e}")
+
+async def safe_write_file(filepath, content, timeout=60):
+    lock_path = filepath + '.lock'
+    lock = FileLock(lock_path, timeout=timeout)
+    with lock:
+        async with aiofiles.open(filepath, 'w', encoding='utf-8') as f:
+            await f.write(content)

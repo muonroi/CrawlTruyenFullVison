@@ -3,10 +3,8 @@ import os
 import shutil
 import time
 from typing import Any, Dict, Optional
-
-import aiofiles
 from utils.logger import logger
-from utils.io_utils import atomic_write, atomic_write_json, ensure_backup_folder, ensure_directory_exists
+from utils.io_utils import ensure_backup_folder, ensure_directory_exists, safe_write_file, safe_write_json
 
 
 async def save_story_metadata_file(
@@ -22,12 +20,12 @@ async def save_story_metadata_file(
 
     # Fields quan trọng phải luôn được merge/ưu tiên lấy đủ
     FIELDS_MUST_HAVE = [
-        "title", "url", "author", "cover", "image_url", "description", "categories",
+        "title", "url", "author", "cover", "description", "categories",
         "status", "source", "rating_value", "rating_count", "total_chapters_on_site"
     ]
     
     # Cập nhật fields cơ bản từ base data
-    for key in ["title", "url", "author", "cover", "image_url"]:
+    for key in ["title", "url", "author", "cover", "cover"]:
         if story_base_data.get(key):
             metadata_to_save[key] = story_base_data[key]
     
@@ -60,7 +58,7 @@ async def save_story_metadata_file(
         metadata_to_save["crawled_at"] = now_str
 
     try:
-        await atomic_write(metadata_file, json.dumps(metadata_to_save, ensure_ascii=False, indent=4))
+        await safe_write_file(metadata_file, json.dumps(metadata_to_save, ensure_ascii=False, indent=4))
         logger.info(f"Đã lưu/cập nhật metadata cho truyện vào: {metadata_file}")
         return metadata_to_save
     except Exception as e:
@@ -73,9 +71,6 @@ def is_story_complete(story_folder_path: str, total_chapters_on_site: int) -> bo
     files = [f for f in os.listdir(story_folder_path) if f.endswith('.txt')]
     return len(files) >= total_chapters_on_site
 
-def count_txt_files(story_folder_path):
-    return len([f for f in os.listdir(story_folder_path) if f.endswith('.txt')])
-
 def sanitize_filename(filename):
     # Đơn giản hóa tên file, tránh lỗi tên
     import re
@@ -83,7 +78,7 @@ def sanitize_filename(filename):
     return filename.strip()
 
 
-def add_missing_story(story_title, story_url, total_chapters, crawled_chapters, filename="missing_chapters.json"):
+async def add_missing_story(story_title, story_url, total_chapters, crawled_chapters, filename="missing_chapters.json"):
     """Thêm truyện thiếu chương vào file json."""
     path = os.path.join(os.getcwd(), filename)
     # Đọc danh sách cũ
@@ -102,7 +97,7 @@ def add_missing_story(story_title, story_url, total_chapters, crawled_chapters, 
         "total_chapters": total_chapters,
         "crawled_chapters": crawled_chapters
     })
-    atomic_write_json(data, path)
+    await safe_write_json(path,data)
 
 
 def backup_crawl_state(state_file='crawl_state.json', backup_folder="backup"):

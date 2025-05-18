@@ -10,6 +10,7 @@ from analyze.metruyenfull_parse import (
 _executor = ThreadPoolExecutor(max_workers=8)
 
 class MeTruyenFullAdapter(BaseSiteAdapter):
+    SITE_KEY = "metruyenfull"
     async def get_genres(self):
         loop = asyncio.get_event_loop()
         return await loop.run_in_executor(

@@ -4,13 +4,16 @@ import json
 import datetime
 import shutil
 from typing import cast
+
+from filelock import FileLock
+from adapters.factory import get_adapter
 from config.config import COMPLETED_FOLDER, DATA_FOLDER, LOADED_PROXIES, PROXIES_FILE, PROXIES_FOLDER
 from config.proxy_provider import load_proxies
 from scraper import initialize_scraper
+from utils.chapter_utils import count_txt_files
 from utils.logger import logger
 from utils.async_utils import SEM
-from utils.io_utils import create_proxy_template_if_not_exists
-from utils.meta_utils import count_txt_files
+from utils.io_utils import create_proxy_template_if_not_exists, safe_write_file
 from analyze.truyenfull_vision_parse import get_all_genres, get_all_stories_from_genre, get_chapters_from_story, get_story_details
 from main import crawl_missing_chapters_for_story
 from utils.notifier import send_telegram_notify
@@ -32,17 +35,22 @@ async def crawl_missing_with_limit(*args, **kwargs):
 
 async def check_genre_complete_and_notify(genre_name, genre_url):
     stories_on_web = await get_all_stories_from_genre(genre_name, genre_url)
-    completed_folders = os.listdir(os.path.join(COMPLETED_FOLDER, genre_name))
+    completed_folder = os.path.join(COMPLETED_FOLDER, genre_name)
+    completed_folders = os.listdir(completed_folder)
     completed_titles = []
     for folder in completed_folders:
-        meta_path = os.path.join(COMPLETED_FOLDER, genre_name, folder, "metadata.json")
+        meta_path = os.path.join(completed_folder, folder, "metadata.json")
         if os.path.exists(meta_path):
-            with open(meta_path, "r", encoding="utf-8") as f:
-                meta = json.load(f)
-                completed_titles.append(meta.get("title"))
+            lock_path = meta_path + ".lock"
+            lock = FileLock(lock_path, timeout=30)
+            with lock:
+                with open(meta_path, "r", encoding="utf-8") as f:
+                    meta = json.load(f)
+                    completed_titles.append(meta.get("title"))
     missing = [story for story in stories_on_web if story["title"] not in completed_titles]
     if not missing:
         await send_telegram_notify(f"🎉 Đã crawl xong **TẤT CẢ** truyện của thể loại [{genre_name}] trên web!")
+
 
 def get_auto_batch_count(fixed=None, default=10, min_batch=1, max_batch=20, num_items=None):
     if fixed is not None:
@@ -104,16 +112,42 @@ async def check_and_crawl_missing_all_stories():
 
         crawled_files = count_txt_files(story_folder)
         if crawled_files < total_chapters:
-            print(f"[MISSING] '{metadata['title']}' thiếu chương ({crawled_files}/{total_chapters}) -> Đang kiểm tra/crawl bù...")
-            chapters = await get_chapters_from_story(
-                metadata.get("url"), metadata['title'], total_chapters_on_site=total_chapters
-            )
-            current_category = metadata['categories'][0] if metadata.get('categories') and isinstance(metadata['categories'], list) and metadata['categories'] else {}
-            num_batches = get_auto_batch_count(fixed=10)
-            logger.info(f"Auto chọn {num_batches} batch cho truyện {metadata['title']} (proxy usable: {len(LOADED_PROXIES)})")
-            tasks.append(
-                crawl_story_with_limit(None, chapters, metadata, current_category, story_folder, crawl_state, num_batches=num_batches)
-            )
+            print(f"[MISSING] '{metadata['title']}' thiếu chương ({crawled_files}/{total_chapters}) -> Đang kiểm tra/crawl bù từ mọi nguồn...")
+
+            # --- Bổ sung crawl từ mọi nguồn ---
+            for source in metadata.get("sources", []):
+                site_key = source.get("site")
+                url = source.get("url")
+                if not site_key or not url:
+                    continue
+                adapter = get_adapter(site_key)
+                # Lấy danh sách chương từ nguồn này
+                try:
+                    chapters = await adapter.get_chapter_list(url, metadata['title'])
+                except Exception as ex:
+                    print(f"  [ERROR] Không lấy được chapter list từ {site_key}: {ex}")
+                    continue
+
+                # Chỉ crawl những chương thiếu thực sự
+                existing_files = set(os.listdir(story_folder))
+                missing_chapters = []
+                for idx, ch in enumerate(chapters):
+                    fname_only = f"{idx+1:04d}_{ch.get('title', 'untitled')}.txt"
+                    if fname_only not in existing_files:
+                        ch['idx'] = idx # type: ignore
+                        missing_chapters.append(ch)
+                if not missing_chapters:
+                    print(f"  Không còn chương nào thiếu ở nguồn {site_key}.")
+                    continue
+
+                print(f"  Bắt đầu crawl bổ sung {len(missing_chapters)} chương từ nguồn {site_key}")
+                current_category = metadata['categories'][0] if metadata.get('categories') and isinstance(metadata['categories'], list) and metadata['categories'] else {}
+                num_batches = get_auto_batch_count(fixed=10)
+                logger.info(f"Auto chọn {num_batches} batch cho truyện {metadata['title']} (site: {site_key}, proxy usable: {len(LOADED_PROXIES)})")
+                # Bắt buộc truyền site_key xuống các hàm dưới nếu cần
+                tasks.append(
+                    crawl_story_with_limit(None, missing_chapters, metadata, current_category, story_folder, crawl_state, num_batches=num_batches)
+                )
     if tasks:
         await asyncio.gather(*tasks)
 

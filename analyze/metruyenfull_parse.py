@@ -105,7 +105,7 @@ def get_story_metadata(self, story_url):
         "description": description,
         "categories": categories,
         "total_chapters_on_site": num_chapters,
-        "image_url": image_url,
+        "cover": image_url,
         "url": story_url
     }
 

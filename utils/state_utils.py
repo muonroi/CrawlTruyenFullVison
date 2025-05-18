@@ -2,12 +2,10 @@ import asyncio
 import json
 import os
 from typing import Any, Dict, List
-
 import aiofiles
-
 from config.config import COMPLETED_FOLDER, DATA_FOLDER, STATE_FILE
 from utils import logger
-from utils.io_utils import atomic_write
+from utils.io_utils import safe_write_file
 from utils.logger import logger
 
 CSTATE_LOCK = asyncio.Lock()
@@ -30,7 +28,7 @@ async def save_crawl_state(state: Dict[str, Any]) -> None:
     async with CSTATE_LOCK:
         try:
             content = json.dumps(state, ensure_ascii=False, indent=4)
-            await atomic_write(STATE_FILE, content)
+            await safe_write_file(STATE_FILE, content)
             logger.info(f"Đã lưu trạng thái crawl vào {STATE_FILE}")
         except Exception as e:
             logger.error(f"Lỗi khi lưu trạng thái crawl vào {STATE_FILE}: {e}")
