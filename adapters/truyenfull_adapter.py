@@ -7,11 +7,13 @@ from analyze.truyenfull_vision_parse import (
     get_chapters_from_story,
     get_story_chapter_content,
 )
+from config.config import BASE_URLS
 
 class TruyenFullAdapter(BaseSiteAdapter):
     SITE_KEY = "truyenfull"
+    BASE_URL = BASE_URLS[SITE_KEY]
     async def get_genres(self):
-        return await get_all_genres("https://truyenfull.vision")
+        return await get_all_genres(self.BASE_URL)
 
     async def get_stories_in_genre(self, genre_url, page=1):
         return await get_stories_from_genre_page(genre_url)

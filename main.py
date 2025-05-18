@@ -19,7 +19,7 @@ from utils.logger import logger
 from config.config import FAILED_GENRES_FILE, GENRE_ASYNC_LIMIT, GENRE_BATCH_SIZE, LOADED_PROXIES, RETRY_GENRE_ROUND_LIMIT, RETRY_SLEEP_SECONDS
 
 from config.config import (
-    BASE_URL, DATA_FOLDER, NUM_CHAPTER_BATCHES, PROXIES_FILE, PROXIES_FOLDER,
+    BASE_URLS, DATA_FOLDER, NUM_CHAPTER_BATCHES, PROXIES_FILE, PROXIES_FOLDER,
     MAX_GENRES_TO_CRAWL, MAX_STORIES_PER_GENRE_PAGE,
     MAX_STORIES_TOTAL_PER_GENRE, MAX_CHAPTERS_PER_STORY,
     MAX_CHAPTER_PAGES_TO_CRAWL, RETRY_FAILED_CHAPTERS_PASSES
@@ -114,8 +114,8 @@ async def crawl_missing_chapters_for_story(
 async def initialize_and_log_setup_with_state() -> Tuple[str, Dict[str, Any]]:
     await ensure_directory_exists(DATA_FOLDER)
     await create_proxy_template_if_not_exists(PROXIES_FILE, PROXIES_FOLDER)
-    await initialize_scraper()
-    homepage_url = BASE_URL.rstrip('/') + '/'
+    await initialize_scraper(adapter)
+    homepage_url = BASE_URLS[site_key].rstrip('/') + '/'
     crawl_state = await load_crawl_state()
 
     logger.info("=== BẮT ĐẦU QUÁ TRÌNH CRAWL ASYNC ===")

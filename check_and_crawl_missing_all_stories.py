@@ -7,7 +7,7 @@ from typing import cast
 
 from filelock import FileLock
 from adapters.factory import get_adapter
-from config.config import COMPLETED_FOLDER, DATA_FOLDER, LOADED_PROXIES, PROXIES_FILE, PROXIES_FOLDER
+from config.config import BASE_URLS, COMPLETED_FOLDER, DATA_FOLDER, LOADED_PROXIES, PROXIES_FILE, PROXIES_FOLDER
 from config.proxy_provider import load_proxies
 from scraper import initialize_scraper
 from utils.chapter_utils import count_txt_files
@@ -19,7 +19,7 @@ from main import crawl_missing_chapters_for_story
 from utils.notifier import send_telegram_notify
 from utils.state_utils import load_crawl_state
 
-MAX_CONCURRENT_STORIES = 3  # Số truyện crawl đồng thời
+MAX_CONCURRENT_STORIES = 3
 STORY_SEM = asyncio.Semaphore(MAX_CONCURRENT_STORIES)
 
 async def crawl_story_with_limit(*args, **kwargs):
@@ -60,7 +60,7 @@ def get_auto_batch_count(fixed=None, default=10, min_batch=1, max_batch=20, num_
         batch = min(batch, num_items)
     return min(batch, max_batch)
 
-async def check_and_crawl_missing_all_stories():
+async def check_and_crawl_missing_all_stories(adapter):
     HOME_PAGE_URL = "https://truyenfull.vision"
     all_genres = await get_all_genres(HOME_PAGE_URL)
     genre_name_to_url = {g['name']: g['url'] for g in all_genres}
@@ -68,7 +68,7 @@ async def check_and_crawl_missing_all_stories():
     os.makedirs(COMPLETED_FOLDER, exist_ok=True)
     await create_proxy_template_if_not_exists(PROXIES_FILE, PROXIES_FOLDER)
     await load_proxies(PROXIES_FILE)
-    await initialize_scraper()
+    await initialize_scraper(adapter)
 
     # Lấy danh sách tất cả story folder cần crawl
     story_folders = [
@@ -197,16 +197,21 @@ async def check_and_crawl_missing_all_stories():
                 genre_complete_checked.add(genre_name)
 
 
-async def loop_every_1h():
+async def loop_every_1h_multi_sites():
     while True:
         now = datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-        print(f"\n===== [START] Check missing at {now} =====")
+        print(f"\n===== [START] Check missing for all sites at {now} =====")
+        tasks = []
+        for site_key in BASE_URLS:
+            adapter = get_adapter(site_key)
+            tasks.append(check_and_crawl_missing_all_stories(adapter))
         try:
-            await check_and_crawl_missing_all_stories()
+            await asyncio.gather(*tasks)
         except Exception as e:
             print(f"[ERROR] Lỗi khi kiểm tra/crawl missing: {e}")
         print(f"===== [DONE] Sleeping 1 hour =====\n")
         await asyncio.sleep(3600)
 
+
 if __name__ == "__main__":
-    asyncio.run(loop_every_1h())
+    asyncio.run(loop_every_1h_multi_sites())
