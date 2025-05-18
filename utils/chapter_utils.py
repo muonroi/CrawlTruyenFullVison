@@ -80,7 +80,8 @@ async def async_download_and_save_chapter(
     chapter_filename_full_path: str, chapter_filename_only: str,
     pass_description: str, chapter_display_idx_log: str,
     crawl_state: Dict[str, Any], successfully_saved: set, failed_list: List[Dict[str, Any]],original_idx: int = 0,
-    site_key: str="unknown"
+    site_key: str="unknown",
+    state_file: str = None    # type: ignore
 ) -> None:
     url = chapter_info['url']
     logger.info(f"        {pass_description} - Chương {chapter_display_idx_log}: Đang tải '{chapter_info['title']}' ({url})")
@@ -113,8 +114,8 @@ async def async_download_and_save_chapter(
                 if url not in processed:
                     processed.append(url)
                     crawl_state['processed_chapter_urls_for_current_story'] = processed
-                    state_file = get_state_file(site_key)
-                    await save_crawl_state(crawl_state, state_file)
+                    file_to_save = state_file or get_state_file(site_key)
+                    await save_crawl_state(crawl_state, file_to_save)
         except Exception as e:
             logger.error(f"          Lỗi lưu '{chapter_filename_only}': {e}")
             await log_error_chapter({
@@ -178,7 +179,7 @@ async def process_chapter_batch(
         await async_download_and_save_chapter(
             ch, story_data_item, current_discovery_genre_data,
             full_path, fname_only, f"Batch {batch_idx+1}/{total_batch}", f"{ch['idx']+1}",
-            crawl_state, successful, failed, original_idx=ch['idx'], site_key=site_key
+            crawl_state, successful, failed, original_idx=ch['idx'], site_key=site_key, state_file=get_state_file(site_key)
         )
         await smart_delay()
     return successful, failed
