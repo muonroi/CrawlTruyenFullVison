@@ -34,9 +34,9 @@ from utils.state_utils import clear_specific_state_keys, load_crawl_state, save_
 GENRE_SEM = asyncio.Semaphore(GENRE_ASYNC_LIMIT)
 BATCH_SEMAPHORE_LIMIT = 5
 
-async def process_genre_with_limit(session, genre, crawl_state, adapter):
+async def process_genre_with_limit(session, genre, crawl_state, adapter, site_key):
     async with GENRE_SEM:
-        await process_genre_item(session, genre, crawl_state, adapter)
+        await process_genre_item(session, genre, crawl_state, adapter, site_key)
 
 def get_saved_chapters_files(story_folder_path: str) -> set:
     """Trả về set tên file đã lưu trong folder truyện."""
@@ -46,7 +46,7 @@ def get_saved_chapters_files(story_folder_path: str) -> set:
     return set(os.path.basename(f) for f in files)
 
 async def crawl_missing_chapters_for_story(
-    session, chapters, story_data_item, current_discovery_genre_data, story_folder_path, crawl_state,
+    site_key, session, chapters, story_data_item, current_discovery_genre_data, story_folder_path, crawl_state,
     num_batches=10
 ):
     saved_files = get_saved_chapters_files(story_folder_path)
@@ -111,7 +111,7 @@ async def crawl_missing_chapters_for_story(
         logger.warning(f"Vẫn còn {len(failed)} chương bù không crawl được.")
     return len(successful)
 
-async def initialize_and_log_setup_with_state() -> Tuple[str, Dict[str, Any]]:
+async def initialize_and_log_setup_with_state(site_key) -> Tuple[str, Dict[str, Any]]:
     await ensure_directory_exists(DATA_FOLDER)
     await create_proxy_template_if_not_exists(PROXIES_FILE, PROXIES_FOLDER)
     await initialize_scraper(site_key)
@@ -218,7 +218,7 @@ async def process_story_item(
     session: aiohttp.ClientSession,
     story_data_item: Dict[str, Any], current_discovery_genre_data: Dict[str, Any],
     story_global_folder_path: str, crawl_state: Dict[str, Any],
-    adapter: BaseSiteAdapter
+    adapter: BaseSiteAdapter, site_key: str
 ) -> bool:
     logger.info(f"\n  --- Xử lý truyện: {story_data_item['title']} ---")
 
@@ -368,7 +368,7 @@ async def process_story_item(
 
 async def process_genre_item(
     session: aiohttp.ClientSession,
-    genre_data: Dict[str, Any], crawl_state: Dict[str, Any], adapter: BaseSiteAdapter
+    genre_data: Dict[str, Any], crawl_state: Dict[str, Any], adapter: BaseSiteAdapter, site_key: str
 ) -> None:
     logger.info(f"\n--- Xử lý thể loại: {genre_data['name']} ---")
     crawl_state['current_genre_url'] = genre_data['url']
@@ -408,7 +408,7 @@ async def process_genre_item(
 
         crawl_state['current_story_index_in_genre'] = idx
         await save_crawl_state(crawl_state, state_file)
-        done = await process_story_item(session, story, genre_data, folder, crawl_state, adapter)
+        done = await process_story_item(session, story, genre_data, folder, crawl_state, adapter, site_key)
         if done:
             completed_global.add(story['url'])
         crawl_state['globally_completed_story_urls'] = sorted(completed_global)
@@ -420,7 +420,7 @@ async def process_genre_item(
         'previous_genre_url_in_state_for_stories'
     ], state_file)
 
-async def retry_failed_genres(adapter):
+async def retry_failed_genres(adapter, site_key):
     round_idx = 0
     while True:
         if not os.path.exists(FAILED_GENRES_FILE):
@@ -441,7 +441,7 @@ async def retry_failed_genres(adapter):
                 delay = min(60, 5 * (2 ** genre.get('fail_count', 1)))  # Tối đa 1 phút delay/gen
                 await smart_delay(delay)
                 try:
-                    await process_genre_with_limit(session, genre, {}, adapter)
+                    await process_genre_with_limit(session, genre, {}, adapter, site_key)
                     # Nếu không lỗi thì xóa khỏi fail
                     to_remove.append(genre)
                     logger.info(f"[RETRY] Thành công genre: {genre['name']}")
@@ -475,16 +475,16 @@ async def retry_failed_genres(adapter):
             break
 
 
-async def run_crawler(adapter):
+async def run_crawler(adapter, site_key):
     await load_proxies(PROXIES_FILE)
-    homepage_url, crawl_state = await initialize_and_log_setup_with_state()
+    homepage_url, crawl_state = await initialize_and_log_setup_with_state(site_key)
     genres = await adapter.get_genres()
     async with aiohttp.ClientSession() as session:
         batches = split_batches(genres, GENRE_BATCH_SIZE)
         for batch_idx, genre_batch in enumerate(batches):
             tasks = []
             for genre in genre_batch:
-                tasks.append(process_genre_with_limit(session, genre, crawl_state, adapter))
+                tasks.append(process_genre_with_limit(session, genre, crawl_state, adapter, site_key))
             logger.info(f"=== Đang crawl batch thể loại {batch_idx+1}/{len(batches)} ({len(genre_batch)} genres song song) ===")
             await asyncio.gather(*tasks)
             await smart_delay()
@@ -497,5 +497,5 @@ if __name__ == '__main__':
         site_key = sys.argv[1]
     print(f"[MAIN] Đang chạy crawler cho site: {site_key}")
     adapter = get_adapter(site_key)
-    asyncio.run(run_crawler(adapter))
-    asyncio.run(retry_failed_genres(adapter))
+    asyncio.run(run_crawler(adapter, site_key))
+    asyncio.run(retry_failed_genres(adapter, site_key))
