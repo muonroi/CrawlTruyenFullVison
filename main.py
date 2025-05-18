@@ -80,7 +80,7 @@ async def crawl_missing_chapters_for_story(
                             async_download_and_save_chapter(
                                 ch, story_data_item, current_discovery_genre_data,
                                 full_path, fname_only, "Crawl bù missing",
-                                f"{idx+1}/{len(chapters)}", crawl_state, successful, failed, idx
+                                f"{idx+1}/{len(chapters)}", crawl_state, successful, failed, idx, site_key=site_key
                             ),
                             timeout=120  # Timeout mỗi chương
                         )
