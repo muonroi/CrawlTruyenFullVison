@@ -114,7 +114,7 @@ async def crawl_missing_chapters_for_story(
 async def initialize_and_log_setup_with_state() -> Tuple[str, Dict[str, Any]]:
     await ensure_directory_exists(DATA_FOLDER)
     await create_proxy_template_if_not_exists(PROXIES_FILE, PROXIES_FOLDER)
-    await initialize_scraper(adapter)
+    await initialize_scraper(site_key)
     homepage_url = BASE_URLS[site_key].rstrip('/') + '/'
     state_file = get_state_file(site_key)
     crawl_state = await load_crawl_state(state_file)
@@ -152,7 +152,7 @@ async def process_all_chapters_for_story(
     session: aiohttp.ClientSession,
     chapters: List[Dict[str, Any]], story_data_item: Dict[str, Any],
     current_discovery_genre_data: Dict[str, Any], story_folder_path: str,
-    crawl_state: Dict[str, Any]
+    crawl_state: Dict[str, Any], site_key: str
 ) -> int:
     if not chapters:
         return 0
@@ -166,7 +166,7 @@ async def process_all_chapters_for_story(
         batch_tasks.append(asyncio.create_task(
             process_chapter_batch(
                 session, batch_chapters, story_data_item, current_discovery_genre_data,
-                story_folder_path, crawl_state, batch_idx, total_batch, adapter
+                story_folder_path, crawl_state, batch_idx, total_batch, adapter, site_key
             )
         ))
     # Chạy đồng thời các batch
@@ -197,7 +197,6 @@ async def process_all_chapters_for_story(
                     idx = 0
             fname_only = f"{idx+1:04d}_{sanitize_filename(ch['title']) or 'untitled'}.txt"
             full_path = os.path.join(story_folder_path, fname_only)
-            site_key = getattr(adapter, 'SITE_KEY', None) or getattr(adapter, 'site_key', None) or 'unknown'
             retry_tasks.append(asyncio.create_task(
                 async_download_and_save_chapter(
                     ch, story_data_item, current_discovery_genre_data,
@@ -261,7 +260,6 @@ async def process_story_item(
     if crawl_state.get('previous_story_url_in_state_for_chapters') != story_data_item['url']:
         crawl_state['processed_chapter_urls_for_current_story'] = []
     crawl_state['previous_story_url_in_state_for_chapters'] = story_data_item['url']
-    site_key = getattr(adapter, 'SITE_KEY', None) or getattr(adapter, 'site_key', None) or 'unknown'
     state_file = get_state_file(site_key)
     await save_crawl_state(crawl_state,state_file)
 

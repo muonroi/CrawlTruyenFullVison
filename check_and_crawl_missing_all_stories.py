@@ -99,7 +99,7 @@ async def check_and_crawl_missing_all_stories(adapter, home_page_url, site_key):
     os.makedirs(COMPLETED_FOLDER, exist_ok=True)
     await create_proxy_template_if_not_exists(PROXIES_FILE, PROXIES_FOLDER)
     await load_proxies(PROXIES_FILE)
-    await initialize_scraper(adapter)
+    await initialize_scraper(site_key)
 
 
     # Lấy danh sách tất cả story folder cần crawl

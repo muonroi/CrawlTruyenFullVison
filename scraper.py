@@ -17,12 +17,11 @@ from config.config import LOADED_PROXIES
 
 scraper: Optional[cloudscraper.CloudScraper] = None
 
-async def initialize_scraper(adapter,override_headers: Optional[Dict[str, str]] = None) -> None:
+async def initialize_scraper(site_key,override_headers: Optional[Dict[str, str]] = None) -> None:
     """
     Khởi tạo cloudscraper instance với headers ngẫu nhiên (bất đồng bộ).
     """
     try:
-        site_key = getattr(adapter, 'SITE_KEY', None) or getattr(adapter, 'site_key', None) or 'unknown'
         loop = asyncio.get_event_loop()
         # Tạo scraper trong executor
         scraper = await loop.run_in_executor(None, cloudscraper.create_scraper)
