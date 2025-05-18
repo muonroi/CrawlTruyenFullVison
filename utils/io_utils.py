@@ -97,7 +97,7 @@ def log_failed_genre(genre_data):
     except Exception as e:
         logger.error(f"Lỗi khi log failed genre: {e}")
 
-async def safe_write_file(filepath, content, timeout=60):
+async def safe_write_file(filepath, content, timeout=300):
     lock_path = filepath + '.lock'
     lock = FileLock(lock_path, timeout=timeout)
     with lock:
