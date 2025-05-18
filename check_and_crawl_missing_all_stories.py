@@ -6,7 +6,7 @@ import shutil
 from typing import cast
 from filelock import FileLock
 from adapters.factory import get_adapter
-from config.config import BASE_URLS, COMPLETED_FOLDER, DATA_FOLDER, LOADED_PROXIES, PROXIES_FILE, PROXIES_FOLDER, get_state_file
+from config.config import BASE_URLS, COMPLETED_FOLDER, DATA_FOLDER, LOADED_PROXIES, PROXIES_FILE, PROXIES_FOLDER
 from config.proxy_provider import load_proxies
 from scraper import initialize_scraper
 from utils.chapter_utils import count_txt_files
@@ -16,10 +16,11 @@ from utils.io_utils import create_proxy_template_if_not_exists, safe_write_file
 from analyze.truyenfull_vision_parse import get_all_genres, get_all_stories_from_genre, get_chapters_from_story, get_story_details
 from main import crawl_missing_chapters_for_story
 from utils.notifier import send_telegram_notify
-from utils.state_utils import load_crawl_state
+from utils.state_utils import get_missing_worker_state_file, load_crawl_state
 
 MAX_CONCURRENT_STORIES = 3
 STORY_SEM = asyncio.Semaphore(MAX_CONCURRENT_STORIES)
+
 
 async def crawl_story_with_limit(
     site_key: str,
@@ -116,7 +117,7 @@ async def fix_metadata_with_retry(metadata, metadata_path, story_folder):
     return True
 
 async def check_and_crawl_missing_all_stories(adapter, home_page_url, site_key):
-    state_file = get_state_file(site_key)
+    state_file = get_missing_worker_state_file(site_key)
     crawl_state = await load_crawl_state(state_file)
     all_genres = await get_all_genres(home_page_url)
     genre_name_to_url = {g['name']: g['url'] for g in all_genres}

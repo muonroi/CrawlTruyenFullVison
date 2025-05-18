@@ -1,4 +1,5 @@
 import asyncio
+import glob
 import json
 import os
 from typing import Any, Dict, List
@@ -73,3 +74,31 @@ def is_genre_completed(genre_name):
     src_count = len(os.listdir(src_genre_folder)) if os.path.exists(src_genre_folder) else 0
     completed_count = len(os.listdir(completed_genre_folder)) if os.path.exists(completed_genre_folder) else 0
     return src_count == 0 and completed_count > 0
+
+
+
+def merge_all_missing_workers_to_main(site_key):
+    import glob
+    main_state_file = get_state_file(site_key)
+    main_state = {}
+    if os.path.exists(main_state_file):
+        with open(main_state_file, "r", encoding="utf-8") as f:
+            main_state = json.load(f)
+
+    # Tìm tất cả file _missing_worker*.json (nếu nhiều worker phụ)
+    files = glob.glob(f"{main_state_file.replace('.json', '')}_missing_worker*.json")
+    all_completed = set(main_state.get("globally_completed_story_urls", []))
+    for fname in files:
+        with open(fname, "r", encoding="utf-8") as f:
+            missing_state = json.load(f)
+        all_completed |= set(missing_state.get("globally_completed_story_urls", []))
+        # Xóa file phụ sau khi merge
+        os.remove(fname)
+    main_state["globally_completed_story_urls"] = sorted(all_completed)
+    with open(main_state_file, "w", encoding="utf-8") as f:
+        json.dump(main_state, f, ensure_ascii=False, indent=4)
+
+
+def get_missing_worker_state_file(site_key):
+    base = get_state_file(site_key)
+    return base.replace('.json', '_missing_worker.json')
