@@ -166,7 +166,7 @@ async def async_download_and_save_chapter(
 
 async def process_chapter_batch(
     session, batch_chapters, story_data_item, current_discovery_genre_data,
-    story_folder_path, crawl_state, batch_idx, total_batch, adapter
+    story_folder_path, crawl_state, batch_idx, total_batch, adapter, site_key
 ):
     successful, failed = set(), []
     already_crawled = set(crawl_state.get('processed_chapter_urls_for_current_story', []))
@@ -175,7 +175,6 @@ async def process_chapter_batch(
             continue
         fname_only = f"{ch['idx']+1:04d}_{sanitize_filename(ch['title']) or 'untitled'}.txt"
         full_path = os.path.join(story_folder_path, fname_only)
-        site_key = getattr(adapter, 'SITE_KEY', None) or getattr(adapter, 'site_key', None) or 'unknown'
         await async_download_and_save_chapter(
             ch, story_data_item, current_discovery_genre_data,
             full_path, fname_only, f"Batch {batch_idx+1}/{total_batch}", f"{ch['idx']+1}",

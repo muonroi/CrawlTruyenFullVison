@@ -42,13 +42,12 @@ async def retry_queue(filename='chapter_retry_queue.json', interval=900):
         # --- Nhóm các chương lỗi theo từng site ---
         site_to_items = defaultdict(list)
         for item in queue:
-            site_key = item.get('site', 'truyenfull')
             site_to_items[site_key].append(item)
 
         to_remove = []
         for site_key, items in site_to_items.items():
             adapter = get_adapter(site_key)
-            await initialize_scraper(adapter)  # <-- ĐÃ TRUYỀN ĐÚNG ADAPTER!
+            await initialize_scraper(site_key)  # <-- ĐÃ TRUYỀN ĐÚNG ADAPTER!
             print(f"[{now}] [RetryQueue][{site_key}] Retry {len(items)} chương lỗi...")
             for item in items:
                 url = item['chapter_url']
