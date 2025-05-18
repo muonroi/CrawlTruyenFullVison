@@ -5,10 +5,8 @@ from analyze.metruyenfull_parse import (
     get_all_categories,
     get_stories_from_category,
     get_story_metadata,
-    extract_chapter_content,
     get_chapters_from_story
 )
-
 _executor = ThreadPoolExecutor(max_workers=8)
 
 class MeTruyenFullAdapter(BaseSiteAdapter):
@@ -38,6 +36,14 @@ class MeTruyenFullAdapter(BaseSiteAdapter):
 
     async def get_chapter_content(self, chapter_url, chapter_title):
         loop = asyncio.get_event_loop()
+        from scraper import make_request
+        def _get_content(chapter_url):
+            resp = make_request(chapter_url)
+            if not resp:
+                return ""
+            html = resp.text
+            from utils.html_parser import extract_chapter_content
+            return extract_chapter_content(html)
         return await loop.run_in_executor(
-            _executor, extract_chapter_content, self, chapter_url
+            _executor, _get_content, chapter_url
         )

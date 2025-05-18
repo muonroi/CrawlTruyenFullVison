@@ -111,7 +111,6 @@ async def check_and_crawl_missing_all_stories():
             current_category = metadata['categories'][0] if metadata.get('categories') and isinstance(metadata['categories'], list) and metadata['categories'] else {}
             num_batches = get_auto_batch_count(fixed=10)
             logger.info(f"Auto chọn {num_batches} batch cho truyện {metadata['title']} (proxy usable: {len(LOADED_PROXIES)})")
-            # Sử dụng semaphore để chỉ cho phép 3 truyện chạy đồng thời
             tasks.append(
                 crawl_story_with_limit(None, chapters, metadata, current_category, story_folder, crawl_state, num_batches=num_batches)
             )
@@ -132,7 +131,25 @@ async def check_and_crawl_missing_all_stories():
         if not genre_name:
             genre_name = "Unknown"
         crawled_files = count_txt_files(story_folder)
-        if crawled_files >= total_chapters:
+
+        # ==== Bổ sung kiểm tra fields bắt buộc ====
+        fields_required = ['description', 'author', 'cover', 'categories', 'title', 'total_chapters_on_site']
+        meta_ok = all(metadata.get(f) for f in fields_required)
+        if not meta_ok:
+            print(f"[SKIP] '{story_folder}' thiếu trường quan trọng, sẽ cố gắng lấy lại metadata...")
+            # get_story_details là async
+            details = await get_story_details(metadata.get("url"), metadata.get("title"))
+            if details and all(details.get(f) for f in fields_required):
+                print(f"[FIXED] Đã bổ sung metadata đủ cho '{metadata.get('title')}'")
+                metadata.update(details)
+                with open(metadata_path, "w", encoding="utf-8") as f:
+                    json.dump(metadata, f, ensure_ascii=False, indent=4)
+            else:
+                print(f"[ERROR] Không lấy đủ metadata cho '{metadata.get('title')}'! Sẽ bỏ qua move.")
+                continue
+        # ==== End check meta ====
+
+        if crawled_files >= metadata.get("total_chapters_on_site"):
             dest_genre_folder = os.path.join(COMPLETED_FOLDER, genre_name)
             os.makedirs(dest_genre_folder, exist_ok=True)
             dest_folder = os.path.join(dest_genre_folder, os.path.basename(story_folder))
@@ -144,6 +161,7 @@ async def check_and_crawl_missing_all_stories():
                 if genre_url:
                     await check_genre_complete_and_notify(genre_name, genre_url)
                 genre_complete_checked.add(genre_name)
+
 
 async def loop_every_1h():
     while True:

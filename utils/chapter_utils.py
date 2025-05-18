@@ -205,19 +205,3 @@ def get_missing_chapters(chapters, existing_nums):
         if num not in existing_nums:
             missing.append((idx, ch))
     return missing
-
-async def crawl_new_chapters(adapter, story_url, story_folder):
-    chapters = await adapter.get_chapters_from_story(story_url)
-    existing = get_existing_chapter_nums(story_folder)
-    new_chapters = []
-    for idx, ch in enumerate(chapters):
-        fname = f"{idx+1:04d}_{sanitize_filename(ch['title']) or 'untitled'}.txt"
-        num = f"{idx+1:04d}"
-        if num not in existing:
-            new_chapters.append((ch, fname))
-    # Crawl các chương mới
-    for ch, fname in new_chapters:
-        content = await adapter.extract_chapter_content(ch['url'])
-        with open(os.path.join(story_folder, fname), "w", encoding="utf-8") as f:
-            f.write(content)
-    print(f"Đã crawl {len(new_chapters)} chương mới.")

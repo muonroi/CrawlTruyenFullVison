@@ -28,3 +28,4 @@ def extract_chapter_content(html: str, patterns) -> str:
     # Dùng filter từ pattern file
     cleaned_lines = filter_lines_by_patterns(lines, patterns)
     return "\n".join(cleaned_lines).strip()
+

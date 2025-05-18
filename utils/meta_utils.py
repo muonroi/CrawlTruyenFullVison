@@ -16,35 +16,43 @@ async def save_story_metadata_file(
     fetched_story_details: Optional[Dict[str, Any]],
     existing_metadata: Optional[Dict[str, Any]] = None
 ) -> Dict[str, Any]:
-    """
-    Bất đồng bộ: Lưu hoặc cập nhật file metadata.json cho truyện.
-    Trả về dict metadata đã lưu.
-    """
     await ensure_directory_exists(story_folder_path)
     metadata_file = os.path.join(story_folder_path, "metadata.json")
     metadata_to_save = existing_metadata.copy() if existing_metadata else {}
 
-    # Cập nhật fields cơ bản
-    metadata_to_save["title"] = story_base_data.get("title", metadata_to_save.get("title"))
-    metadata_to_save["url"] = story_base_data.get("url", metadata_to_save.get("url"))
-    metadata_to_save.setdefault("author", story_base_data.get("author"))
-    metadata_to_save.setdefault("image_url", story_base_data.get("image_url"))
+    # Fields quan trọng phải luôn được merge/ưu tiên lấy đủ
+    FIELDS_MUST_HAVE = [
+        "title", "url", "author", "cover", "image_url", "description", "categories",
+        "status", "source", "rating_value", "rating_count", "total_chapters_on_site"
+    ]
+    
+    # Cập nhật fields cơ bản từ base data
+    for key in ["title", "url", "author", "cover", "image_url"]:
+        if story_base_data.get(key):
+            metadata_to_save[key] = story_base_data[key]
+    
     metadata_to_save["crawled_by"] = "muonroi"
 
-    # Cập nhật categories
+    # Merge categories
     current_cats = metadata_to_save.get("categories", [])
     seen_urls = {cat.get("url") for cat in current_cats if cat.get("url")}
     if current_discovery_genre_data and current_discovery_genre_data.get("url") not in seen_urls:
-        current_cats.append({"name": current_discovery_genre_data.get("name"), "url": current_discovery_genre_data.get("url")})
+        current_cats.append({
+            "name": current_discovery_genre_data.get("name"),
+            "url": current_discovery_genre_data.get("url")
+        })
     metadata_to_save["categories"] = sorted(current_cats, key=lambda x: (x.get("name") or "").lower())
 
-    # Cập nhật chi tiết
+    # Cập nhật tất cả field lấy được từ fetched_story_details
     if fetched_story_details:
-        for key in ["description","status","source","rating_value","rating_count","total_chapters_on_site"]:
+        for key in FIELDS_MUST_HAVE:
+            # Ưu tiên lấy từ fetched_story_details nếu có (vì parser lấy trực tiếp từ HTML)
             if fetched_story_details.get(key) is not None:
-                metadata_to_save[key] = fetched_story_details.get(key)
-            else:
-                metadata_to_save.setdefault(key, None)
+                metadata_to_save[key] = fetched_story_details[key]
+
+    # Fallback: các field chưa có thì set None (đảm bảo metadata đầy đủ field, tiện validate về sau)
+    for key in FIELDS_MUST_HAVE:
+        metadata_to_save.setdefault(key, None)
 
     now_str = time.strftime("%Y-%m-%d %H:%M:%S")
     metadata_to_save["metadata_updated_at"] = now_str
@@ -58,6 +66,7 @@ async def save_story_metadata_file(
     except Exception as e:
         logger.error(f"LỖI khi lưu metadata '{metadata_file}': {e}")
         return metadata_to_save
+
     
 def is_story_complete(story_folder_path: str, total_chapters_on_site: int) -> bool:
     """Kiểm tra số file .txt đã crawl có đủ không."""

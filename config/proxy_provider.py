@@ -98,3 +98,11 @@ def remove_bad_proxy(bad_proxy_url):
             removed = True
     if not removed:
         logger.warning(f"Không tìm thấy proxy {bad_proxy_url} để remove.")
+    if removed:
+        with open("banned_proxies.log", "a", encoding="utf-8") as f:
+            f.write(f"{time.strftime('%Y-%m-%d %H:%M:%S')} - {proxy} bị remove vì lỗi nhiều lần\n")
+
+def shuffle_proxies():
+    import random
+    random.shuffle(LOADED_PROXIES)
+    logger.info("[Proxy] Đã shuffle lại proxy pool!")
