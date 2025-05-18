@@ -28,7 +28,7 @@ from config.proxy_provider import  load_proxies, shuffle_proxies
 from scraper import initialize_scraper
 from utils.meta_utils import add_missing_story, backup_crawl_state, sanitize_filename, save_story_metadata_file
 from utils.notifier import send_telegram_notify
-from utils.state_utils import clear_specific_state_keys, load_crawl_state, save_crawl_state
+from utils.state_utils import clear_specific_state_keys, load_crawl_state, merge_all_missing_workers_to_main, save_crawl_state
 
 
 GENRE_SEM = asyncio.Semaphore(GENRE_ASYNC_LIMIT)
@@ -496,6 +496,7 @@ if __name__ == '__main__':
     if len(sys.argv) > 1:
         site_key = sys.argv[1]
     print(f"[MAIN] Đang chạy crawler cho site: {site_key}")
+    merge_all_missing_workers_to_main(site_key)
     adapter = get_adapter(site_key)
     asyncio.run(run_crawler(adapter, site_key))
     asyncio.run(retry_failed_genres(adapter, site_key))
