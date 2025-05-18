@@ -16,7 +16,7 @@ from utils.batch_utils import smart_delay, split_batches
 from utils.chapter_utils import async_download_and_save_chapter, count_txt_files, process_chapter_batch, slugify_title
 from utils.io_utils import  create_proxy_template_if_not_exists, ensure_directory_exists, log_failed_genre, safe_write_file
 from utils.logger import logger
-from config.config import FAILED_GENRES_FILE, GENRE_ASYNC_LIMIT, GENRE_BATCH_SIZE, LOADED_PROXIES, RETRY_GENRE_ROUND_LIMIT, RETRY_SLEEP_SECONDS
+from config.config import FAILED_GENRES_FILE, GENRE_ASYNC_LIMIT, GENRE_BATCH_SIZE, LOADED_PROXIES, RETRY_GENRE_ROUND_LIMIT, RETRY_SLEEP_SECONDS, get_state_file
 
 from config.config import (
     BASE_URLS, DATA_FOLDER, NUM_CHAPTER_BATCHES, PROXIES_FILE, PROXIES_FOLDER,
@@ -116,7 +116,8 @@ async def initialize_and_log_setup_with_state() -> Tuple[str, Dict[str, Any]]:
     await create_proxy_template_if_not_exists(PROXIES_FILE, PROXIES_FOLDER)
     await initialize_scraper(adapter)
     homepage_url = BASE_URLS[site_key].rstrip('/') + '/'
-    crawl_state = await load_crawl_state()
+    state_file = get_state_file(site_key)
+    crawl_state = await load_crawl_state(state_file)
 
     logger.info("=== BẮT ĐẦU QUÁ TRÌNH CRAWL ASYNC ===")
     logger.info(f"Thư mục lưu dữ liệu: {os.path.abspath(DATA_FOLDER)}")
@@ -260,7 +261,9 @@ async def process_story_item(
     if crawl_state.get('previous_story_url_in_state_for_chapters') != story_data_item['url']:
         crawl_state['processed_chapter_urls_for_current_story'] = []
     crawl_state['previous_story_url_in_state_for_chapters'] = story_data_item['url']
-    await save_crawl_state(crawl_state)
+    site_key = getattr(adapter, 'SITE_KEY', None) or getattr(adapter, 'site_key', None) or 'unknown'
+    state_file = get_state_file(site_key)
+    await save_crawl_state(crawl_state,state_file)
 
     # Lấy danh sách chương mới nhất từ web
     chapters = await adapter.get_chapter_list(
@@ -268,7 +271,6 @@ async def process_story_item(
         MAX_CHAPTER_PAGES_TO_CRAWL, details.get('total_chapters_on_site') #type: ignore
     )
 
-    site_key = getattr(adapter, 'SITE_KEY', None) or getattr(adapter, 'site_key', None) or 'unknown'
     now_str = time.strftime("%Y-%m-%d %H:%M:%S")
     # Lấy hoặc khởi tạo danh sách nguồn
     if "sources" not in details: # type: ignore
@@ -360,8 +362,9 @@ async def process_story_item(
         completed.add(story_data_item['url'])
         crawl_state['globally_completed_story_urls'] = sorted(completed)
     backup_crawl_state()
-    await save_crawl_state(crawl_state)
-    await clear_specific_state_keys(crawl_state, ['processed_chapter_urls_for_current_story'])
+    state_file = get_state_file(site_key)
+    await save_crawl_state(crawl_state, state_file)
+    await clear_specific_state_keys(crawl_state, ['processed_chapter_urls_for_current_story'], state_file)
     return is_complete
 
 
@@ -374,7 +377,8 @@ async def process_genre_item(
     if crawl_state.get('previous_genre_url_in_state_for_stories') != genre_data['url']:
         crawl_state['current_story_index_in_genre'] = 0
     crawl_state['previous_genre_url_in_state_for_stories'] = genre_data['url']
-    await save_crawl_state(crawl_state)
+    state_file = get_state_file(site_key)
+    await save_crawl_state(crawl_state, state_file)
 
     try:
         stories = await adapter.get_all_stories_from_genre(genre_data['name'], genre_data['url'], MAX_STORIES_PER_GENRE_PAGE)
@@ -401,22 +405,22 @@ async def process_genre_item(
             details = await adapter.get_story_details(story['url'], story['title'])
             await save_story_metadata_file(story, genre_data, folder, details, None)
             crawl_state['current_story_index_in_genre'] = idx + 1
-            await save_crawl_state(crawl_state)
+            await save_crawl_state(crawl_state, state_file)
             continue
 
         crawl_state['current_story_index_in_genre'] = idx
-        await save_crawl_state(crawl_state)
+        await save_crawl_state(crawl_state, state_file)
         done = await process_story_item(session, story, genre_data, folder, crawl_state, adapter)
         if done:
             completed_global.add(story['url'])
         crawl_state['globally_completed_story_urls'] = sorted(completed_global)
         crawl_state['current_story_index_in_genre'] = idx + 1
-        await save_crawl_state(crawl_state)
+        await save_crawl_state(crawl_state, state_file)
 
     await clear_specific_state_keys(crawl_state, [
         'current_story_index_in_genre', 'current_genre_url',
         'previous_genre_url_in_state_for_stories'
-    ])
+    ], state_file)
 
 async def retry_failed_genres(adapter):
     round_idx = 0

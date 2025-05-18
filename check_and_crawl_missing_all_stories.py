@@ -4,10 +4,9 @@ import json
 import datetime
 import shutil
 from typing import cast
-
 from filelock import FileLock
 from adapters.factory import get_adapter
-from config.config import BASE_URLS, COMPLETED_FOLDER, DATA_FOLDER, LOADED_PROXIES, PROXIES_FILE, PROXIES_FOLDER
+from config.config import BASE_URLS, COMPLETED_FOLDER, DATA_FOLDER, LOADED_PROXIES, PROXIES_FILE, PROXIES_FOLDER, get_state_file
 from config.proxy_provider import load_proxies
 from scraper import initialize_scraper
 from utils.chapter_utils import count_txt_files
@@ -51,7 +50,6 @@ async def check_genre_complete_and_notify(genre_name, genre_url):
     if not missing:
         await send_telegram_notify(f"🎉 Đã crawl xong **TẤT CẢ** truyện của thể loại [{genre_name}] trên web!")
 
-
 def get_auto_batch_count(fixed=None, default=10, min_batch=1, max_batch=20, num_items=None):
     if fixed is not None:
         return fixed
@@ -60,9 +58,42 @@ def get_auto_batch_count(fixed=None, default=10, min_batch=1, max_batch=20, num_
         batch = min(batch, num_items)
     return min(batch, max_batch)
 
-async def check_and_crawl_missing_all_stories(adapter):
-    HOME_PAGE_URL = "https://truyenfull.vision"
-    all_genres = await get_all_genres(HOME_PAGE_URL)
+async def fix_metadata_with_retry(metadata, metadata_path, story_folder):
+    """Retry tối đa 3 lần lấy lại metadata nếu thiếu total_chapters_on_site.
+    Nếu fail, set skip_crawl và return False."""
+    if metadata.get("skip_crawl", False):
+        print(f"[SKIP] Truyện '{metadata.get('title')}' đã bị đánh dấu bỏ qua (skip_crawl), không crawl lại nữa.")
+        return False
+    retry_count = metadata.get("meta_retry_count", 0)
+    total_chapters = metadata.get("total_chapters_on_site")
+    while retry_count < 3 and (not total_chapters or total_chapters < 1):
+        print(f"[SKIP] '{story_folder}' thiếu total_chapters_on_site -> [FIXED] Đang lấy lại metadata lần {retry_count+1} qua proxy...")
+        details = await get_story_details(metadata.get("url"), metadata.get("title"))
+        retry_count += 1
+        metadata["meta_retry_count"] = retry_count
+        if details and details.get("total_chapters_on_site"):
+            print(f"[FIXED] Cập nhật lại metadata, tổng chương: {details['total_chapters_on_site']}")
+            metadata.update(details)
+            metadata['total_chapters_on_site'] = details['total_chapters_on_site']
+            with open(metadata_path, "w", encoding="utf-8") as f:
+                json.dump(metadata, f, ensure_ascii=False, indent=4)
+            return True
+        with open(metadata_path, "w", encoding="utf-8") as f:
+            json.dump(metadata, f, ensure_ascii=False, indent=4)
+        total_chapters = metadata.get("total_chapters_on_site")
+    if not total_chapters or total_chapters < 1:
+        print(f"[SKIP] '{story_folder}' lấy meta 3 lần vẫn lỗi, sẽ không crawl lại truyện này nữa!")
+        metadata["skip_crawl"] = True
+        metadata["skip_reason"] = "meta_failed"
+        with open(metadata_path, "w", encoding="utf-8") as f:
+            json.dump(metadata, f, ensure_ascii=False, indent=4)
+        return False
+    return True
+
+async def check_and_crawl_missing_all_stories(adapter, home_page_url, site_key):
+    state_file = get_state_file(site_key)
+    crawl_state = await load_crawl_state(state_file)
+    all_genres = await get_all_genres(home_page_url)
     genre_name_to_url = {g['name']: g['url'] for g in all_genres}
     genre_complete_checked = set()
     os.makedirs(COMPLETED_FOLDER, exist_ok=True)
@@ -70,13 +101,14 @@ async def check_and_crawl_missing_all_stories(adapter):
     await load_proxies(PROXIES_FILE)
     await initialize_scraper(adapter)
 
+
     # Lấy danh sách tất cả story folder cần crawl
     story_folders = [
         os.path.join(DATA_FOLDER, cast(str, f))
         for f in os.listdir(DATA_FOLDER)
         if os.path.isdir(os.path.join(DATA_FOLDER, cast(str, f)))
     ]
-    crawl_state = await load_crawl_state()
+    crawl_state = await load_crawl_state(state_file)
     tasks = []
     for story_folder in story_folders:
         if os.path.dirname(story_folder) == os.path.abspath(COMPLETED_FOLDER):
@@ -88,27 +120,20 @@ async def check_and_crawl_missing_all_stories(adapter):
 
         with open(metadata_path, "r", encoding="utf-8") as f:
             metadata = json.load(f)
+        # Skip nếu đã flag
+        if metadata.get("skip_crawl", False):
+            print(f"[SKIP] Truyện '{metadata.get('title')}' đã bị đánh dấu bỏ qua (skip_crawl), không crawl lại nữa.")
+            continue
+        # Auto fix metadata nếu thiếu (và skip nếu quá 3 lần)
+        if not await fix_metadata_with_retry(metadata, metadata_path, story_folder):
+            continue
+
         total_chapters = metadata.get("total_chapters_on_site")
         genre_name = None
         if metadata.get('categories') and isinstance(metadata['categories'], list) and metadata['categories']:
             genre_name = metadata['categories'][0].get('name')
         if not genre_name:
             genre_name = "Unknown"
-
-        # Auto fix metadata nếu thiếu
-        if not total_chapters or total_chapters < 1:
-            print(f"[SKIP] '{story_folder}' thiếu total_chapters_on_site -> [FIXED] Đang lấy lại metadata qua proxy...")
-            details = await get_story_details(metadata.get("url"), metadata.get("title"))
-            if details and details.get("total_chapters_on_site"):
-                print(f"[FIXED] Cập nhật lại metadata, tổng chương: {details['total_chapters_on_site']}")
-                metadata.update(details)
-                metadata['total_chapters_on_site'] = details['total_chapters_on_site']
-                with open(metadata_path, "w", encoding="utf-8") as f:
-                    json.dump(metadata, f, ensure_ascii=False, indent=4)
-                total_chapters = metadata['total_chapters_on_site']
-            else:
-                print(f"[SKIP] '{story_folder}' không lấy được metadata mới!")
-                continue
 
         crawled_files = count_txt_files(story_folder)
         if crawled_files < total_chapters:
@@ -121,7 +146,6 @@ async def check_and_crawl_missing_all_stories(adapter):
                 if not site_key or not url:
                     continue
                 adapter = get_adapter(site_key)
-                # Lấy danh sách chương từ nguồn này
                 try:
                     chapters = await adapter.get_chapter_list(url, metadata['title'])
                 except Exception as ex:
@@ -144,7 +168,6 @@ async def check_and_crawl_missing_all_stories(adapter):
                 current_category = metadata['categories'][0] if metadata.get('categories') and isinstance(metadata['categories'], list) and metadata['categories'] else {}
                 num_batches = get_auto_batch_count(fixed=10)
                 logger.info(f"Auto chọn {num_batches} batch cho truyện {metadata['title']} (site: {site_key}, proxy usable: {len(LOADED_PROXIES)})")
-                # Bắt buộc truyền site_key xuống các hàm dưới nếu cần
                 tasks.append(
                     crawl_story_with_limit(None, missing_chapters, metadata, current_category, story_folder, crawl_state, num_batches=num_batches)
                 )
@@ -156,8 +179,16 @@ async def check_and_crawl_missing_all_stories(adapter):
         metadata_path = os.path.join(story_folder, "metadata.json")
         if not os.path.exists(metadata_path):
             continue
+
         with open(metadata_path, "r", encoding="utf-8") as f:
             metadata = json.load(f)
+        if metadata.get("skip_crawl", False):
+            print(f"[SKIP] Truyện '{metadata.get('title')}' đã bị đánh dấu bỏ qua (skip_crawl), không crawl lại nữa.")
+            continue
+        # Lần nữa, fix meta nếu thiếu (tránh lỗi do có thể có truyện chưa retry)
+        if not await fix_metadata_with_retry(metadata, metadata_path, story_folder):
+            continue
+
         total_chapters = metadata.get("total_chapters_on_site")
         genre_name = None
         if metadata.get('categories') and isinstance(metadata['categories'], list) and metadata['categories']:
@@ -166,12 +197,11 @@ async def check_and_crawl_missing_all_stories(adapter):
             genre_name = "Unknown"
         crawled_files = count_txt_files(story_folder)
 
-        # ==== Bổ sung kiểm tra fields bắt buộc ====
+        # ==== Kiểm tra fields bắt buộc ====
         fields_required = ['description', 'author', 'cover', 'categories', 'title', 'total_chapters_on_site']
         meta_ok = all(metadata.get(f) for f in fields_required)
         if not meta_ok:
             print(f"[SKIP] '{story_folder}' thiếu trường quan trọng, sẽ cố gắng lấy lại metadata...")
-            # get_story_details là async
             details = await get_story_details(metadata.get("url"), metadata.get("title"))
             if details and all(details.get(f) for f in fields_required):
                 print(f"[FIXED] Đã bổ sung metadata đủ cho '{metadata.get('title')}'")
@@ -196,22 +226,20 @@ async def check_and_crawl_missing_all_stories(adapter):
                     await check_genre_complete_and_notify(genre_name, genre_url)
                 genre_complete_checked.add(genre_name)
 
-
 async def loop_every_1h_multi_sites():
     while True:
         now = datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')
         print(f"\n===== [START] Check missing for all sites at {now} =====")
         tasks = []
-        for site_key in BASE_URLS:
+        for site_key, url in BASE_URLS.items():
             adapter = get_adapter(site_key)
-            tasks.append(check_and_crawl_missing_all_stories(adapter))
+            tasks.append(check_and_crawl_missing_all_stories(adapter, url, site_key=site_key))
         try:
             await asyncio.gather(*tasks)
         except Exception as e:
             print(f"[ERROR] Lỗi khi kiểm tra/crawl missing: {e}")
         print(f"===== [DONE] Sleeping 1 hour =====\n")
         await asyncio.sleep(3600)
-
 
 if __name__ == "__main__":
     asyncio.run(loop_every_1h_multi_sites())
