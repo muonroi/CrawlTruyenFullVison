@@ -7,7 +7,7 @@ from config.config import PROXIES_FILE, PROXIES_FOLDER
 from config.proxy_provider import load_proxies
 from scraper import initialize_scraper
 from utils.chapter_utils import async_save_chapter_with_hash_check
-from utils.io_utils import atomic_write_json, create_proxy_template_if_not_exists
+from utils.io_utils import atomic_write_json, create_proxy_template_if_not_exists, ensure_directory_exists
 from utils.notifier import send_telegram_notify
 MAX_RETRY_FAILS = 5
 retry_fail_count = 0
@@ -48,6 +48,8 @@ async def retry_queue(filename='chapter_retry_queue.json', interval=900):  # 900
             content = await get_story_chapter_content(url, chapter_title)
             if content:
                 retry_fail_count = 0
+                dir_path = os.path.dirname(filename_path)
+                await ensure_directory_exists(dir_path)
                 save_result = await async_save_chapter_with_hash_check(filename_path, content)
                 print(f"-> Result: {save_result}")
                 to_remove.append(item)

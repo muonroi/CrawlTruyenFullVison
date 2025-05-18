@@ -6,7 +6,7 @@ import shutil
 import tempfile
 import aiofiles
 
-from config.config import COMPLETED_FOLDER
+from config.config import COMPLETED_FOLDER, FAILED_GENRES_FILE
 from utils.logger import logger
 
 
@@ -44,7 +44,7 @@ async def create_proxy_template_if_not_exists(proxies_file_path: str, proxies_fo
 
 async def atomic_write(filename, content):
     tmpfile = filename + ".tmp"
-    async with aiofiles.open(tmpfile, 'w', encoding='utf-8') as f: 
+    async with aiofiles.open(tmpfile, 'w', encoding='utf-8') as f:  
         await f.write(content)
     os.replace(tmpfile, filename)
 
@@ -86,3 +86,17 @@ def move_story_to_completed(story_folder, genre_name):
     if not os.path.exists(dest_folder):
         shutil.move(story_folder, dest_folder)
         print(f"[INFO] Đã chuyển truyện sang {dest_genre_folder}")
+
+def log_failed_genre(genre_data):
+    try:
+        if os.path.exists(FAILED_GENRES_FILE):
+            with open(FAILED_GENRES_FILE, "r", encoding="utf-8") as f:
+                arr = json.load(f)
+        else:
+            arr = []
+        if genre_data not in arr:
+            arr.append(genre_data)
+            with open(FAILED_GENRES_FILE, "w", encoding="utf-8") as f:
+                json.dump(arr, f, ensure_ascii=False, indent=4)
+    except Exception as e:
+        logger.error(f"Lỗi khi log failed genre: {e}")

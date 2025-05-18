@@ -14,7 +14,9 @@ REQUEST_DELAY = float(os.getenv("REQUEST_DELAY", "5"))  # Giây delay giữa cá
 DATA_FOLDER = os.getenv("DATA_FOLDER", "truyen_data")
 COMPLETED_FOLDER = os.getenv("COMPLETED_FOLDER", "completed_stories")
 BACKUP_FOLDER = os.getenv("BACKUP_FOLDER", "backup_truyen_data")
-
+FAILED_GENRES_FILE = "failed_genres.json"
+RETRY_GENRE_ROUND_LIMIT = 3  # Số vòng retry liên tiếp
+RETRY_SLEEP_SECONDS = 30*60  # 30 phút
 # -------------- [Proxy & User-Agent] --------------
 USE_PROXY = os.getenv("USE_PROXY", "True") == "True"
 PROXIES_FOLDER = os.getenv("PROXIES_FOLDER", "proxies")

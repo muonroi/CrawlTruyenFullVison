@@ -1,6 +1,8 @@
 import asyncio
 import glob
 import json
+import random
+import sys
 import time
 import aiohttp
 import os
@@ -12,9 +14,9 @@ from adapters.base_site_adapter import BaseSiteAdapter
 from adapters.factory import get_adapter
 from utils.batch_utils import smart_delay, split_batches
 from utils.chapter_utils import async_download_and_save_chapter, get_existing_chapter_nums, get_missing_chapters, process_chapter_batch
-from utils.io_utils import create_proxy_template_if_not_exists, ensure_directory_exists
+from utils.io_utils import atomic_write, create_proxy_template_if_not_exists, ensure_directory_exists, log_failed_genre
 from utils.logger import logger
-from config.config import GENRE_ASYNC_LIMIT, GENRE_BATCH_SIZE, LOADED_PROXIES
+from config.config import FAILED_GENRES_FILE, GENRE_ASYNC_LIMIT, GENRE_BATCH_SIZE, LOADED_PROXIES, RETRY_GENRE_ROUND_LIMIT, RETRY_SLEEP_SECONDS
 
 from config.config import (
     BASE_URL, DATA_FOLDER, NUM_CHAPTER_BATCHES, PROXIES_FILE, PROXIES_FOLDER,
@@ -22,9 +24,10 @@ from config.config import (
     MAX_STORIES_TOTAL_PER_GENRE, MAX_CHAPTERS_PER_STORY,
     MAX_CHAPTER_PAGES_TO_CRAWL, RETRY_FAILED_CHAPTERS_PASSES
 )
-from config.proxy_provider import  load_proxies
+from config.proxy_provider import  load_proxies, shuffle_proxies
 from scraper import initialize_scraper
 from utils.meta_utils import add_missing_story, backup_crawl_state, count_txt_files, sanitize_filename, save_story_metadata_file
+from utils.notifier import send_telegram_notify
 from utils.state_utils import clear_specific_state_keys, load_crawl_state, save_crawl_state
 
 
@@ -233,7 +236,7 @@ async def process_story_item(
     else:
         need_update = True
 
-    # Chỉ gọi lại get_story_details nếu metadata chưa đủ hoặc chưa có file
+    # Cập nhật metadata nếu thiếu
     if need_update:
         details = await adapter.get_story_details(story_data_item['url'], story_data_item['title'])
         await save_story_metadata_file(
@@ -242,7 +245,6 @@ async def process_story_item(
             metadata
         )
         if metadata:
-            # merge các field detail vào metadata và ghi lại cho chắc chắn
             for field in fields_need_check:
                 if details.get(field) is not None:
                     metadata[field] = details[field]
@@ -250,7 +252,6 @@ async def process_story_item(
             with open(metadata_file, "w", encoding="utf-8") as f:
                 json.dump(metadata, f, ensure_ascii=False, indent=4)
     else:
-        # Nếu metadata đã đủ, dùng lại (không gọi lại get_story_details)
         details = metadata
 
     crawl_state['current_story_url'] = story_data_item['url']
@@ -259,19 +260,28 @@ async def process_story_item(
     crawl_state['previous_story_url_in_state_for_chapters'] = story_data_item['url']
     await save_crawl_state(crawl_state)
 
-    # Chapters async
+    # Lấy danh sách chương mới nhất từ web
     chapters = await adapter.get_chapter_list(
         story_data_item['url'], story_data_item['title'],
-        MAX_CHAPTER_PAGES_TO_CRAWL, details.get('total_chapters_on_site') # type: ignore
-    )
-    await ensure_directory_exists(story_global_folder_path)
-    count = await process_all_chapters_for_story(
-        session, chapters, story_data_item,
-        current_discovery_genre_data, story_global_folder_path, crawl_state
+        MAX_CHAPTER_PAGES_TO_CRAWL, details.get('total_chapters_on_site') #type: ignore
     )
 
-    # === KIỂM TRA VÀ GHI LẠI TRUYỆN THIẾU CHƯƠNG ===
-    total_chapters_on_site = details.get('total_chapters_on_site')#type: ignore
+    # Lấy danh sách số chương đã có (dựa vào file đã crawl)
+    existing_nums = get_existing_chapter_nums(story_global_folder_path)
+    missing_chapters = get_missing_chapters(chapters, existing_nums)
+
+    # Nếu có chương mới thì crawl chương mới
+    if missing_chapters:
+        logger.info(f"Phát hiện {len(missing_chapters)} chương mới ở '{story_data_item['title']}'")
+        for idx, ch in missing_chapters:
+            fname = f"{idx+1:04d}_{sanitize_filename(ch['title']) or 'untitled'}.txt"
+            content = await adapter.get_chapter_content(ch['url'], ch['title'])
+            await atomic_write(os.path.join(story_global_folder_path, fname), content)
+    else:
+        logger.info(f"Không phát hiện chương mới ở '{story_data_item['title']}'.")
+
+    # Kiểm tra số chương đã crawl và update trạng thái
+    total_chapters_on_site = details.get('total_chapters_on_site')# type: ignore
     story_title = story_data_item['title']
     story_url = story_data_item['url']
     if total_chapters_on_site:
@@ -288,9 +298,9 @@ async def process_story_item(
 
     # Check completion
     is_complete = False
-    status = details.get('status') #type: ignore
-    total = details.get('total_chapters_on_site')  #type: ignore
-    if status and total and count >= total:
+    status = details.get('status') # type: ignore
+    total = details.get('total_chapters_on_site')# type: ignore
+    if status and total and crawled_chapters >= total:
         is_complete = True
         completed = set(crawl_state.get('globally_completed_story_urls', []))
         completed.add(story_data_item['url'])
@@ -299,6 +309,7 @@ async def process_story_item(
     await save_crawl_state(crawl_state)
     await clear_specific_state_keys(crawl_state, ['processed_chapter_urls_for_current_story'])
     return is_complete
+
 
 async def process_genre_item(
     session: aiohttp.ClientSession,
@@ -311,8 +322,14 @@ async def process_genre_item(
     crawl_state['previous_genre_url_in_state_for_stories'] = genre_data['url']
     await save_crawl_state(crawl_state)
 
-    stories = await adapter.get_all_stories_from_genre(genre_data['name'], genre_data['url'], MAX_STORIES_PER_GENRE_PAGE)
-
+    try:
+        stories = await adapter.get_all_stories_from_genre(genre_data['name'], genre_data['url'], MAX_STORIES_PER_GENRE_PAGE)
+        if not stories or len(stories) == 0:
+            raise Exception(f"Danh sách truyện rỗng cho genre {genre_data['name']} ({genre_data['url']})")
+    except Exception as ex:
+        logger.error(f"Lỗi khi crawl genre {genre_data['name']} ({genre_data['url']}): {ex}")
+        log_failed_genre(genre_data)
+        return
     completed_global = set(crawl_state.get('globally_completed_story_urls', []))
     start_idx = crawl_state.get('current_story_index_in_genre', 0)
 
@@ -347,10 +364,64 @@ async def process_genre_item(
         'previous_genre_url_in_state_for_stories'
     ])
 
-async def run_crawler():
+async def retry_failed_genres(adapter):
+    round_idx = 0
+    while True:
+        if not os.path.exists(FAILED_GENRES_FILE):
+            break
+        with open(FAILED_GENRES_FILE, "r", encoding="utf-8") as f:
+            failed_genres = json.load(f)
+        if not failed_genres:
+            break
+
+        round_idx += 1
+        logger.warning(f"=== [RETRY ROUND {round_idx}] Đang retry {len(failed_genres)} thể loại bị fail... ===")
+        await send_telegram_notify(f"[Crawler] Retry round {round_idx}: còn {len(failed_genres)} thể loại fail")
+
+        to_remove = []
+        random.shuffle(failed_genres)
+        async with aiohttp.ClientSession() as session:
+            for genre in failed_genres:
+                delay = min(60, 5 * (2 ** genre.get('fail_count', 1)))  # Tối đa 1 phút delay/gen
+                await smart_delay(delay)
+                try:
+                    await process_genre_with_limit(session, genre, {}, adapter)
+                    # Nếu không lỗi thì xóa khỏi fail
+                    to_remove.append(genre)
+                    logger.info(f"[RETRY] Thành công genre: {genre['name']}")
+                except Exception as ex:
+                    genre['fail_count'] = genre.get('fail_count', 1) + 1
+                    logger.error(f"[RETRY] Vẫn lỗi genre: {genre['name']}: {ex}")
+
+        # Update lại file failed_genres.json
+        if to_remove:
+            failed_genres = [g for g in failed_genres if g not in to_remove]
+            with open(FAILED_GENRES_FILE, "w", encoding="utf-8") as f:
+                json.dump(failed_genres, f, ensure_ascii=False, indent=4)
+
+        # Nếu còn fail và chưa đủ số vòng retry thì retry lại tiếp, ngược lại thì sleep 30 phút rồi thử lại
+        if failed_genres:
+            if round_idx < RETRY_GENRE_ROUND_LIMIT:
+                shuffle_proxies()  # <-- Xáo proxy pool trước khi retry tiếp
+                logger.warning(f"Còn {len(failed_genres)} genre fail, bắt đầu vòng retry tiếp theo...")
+                continue
+            else:
+                shuffle_proxies()
+                # Đủ số vòng retry, gửi cảnh báo và sleep rồi retry lại từ đầu
+                genre_names = ", ".join([g["name"] for g in failed_genres])
+                await send_telegram_notify(f"[Crawler] Sau {RETRY_GENRE_ROUND_LIMIT} vòng retry, còn {len(failed_genres)} genre lỗi: {genre_names}. Sẽ sleep {RETRY_SLEEP_SECONDS//60} phút trước khi thử lại.")
+                logger.error(f"Sleep {RETRY_SLEEP_SECONDS//60} phút rồi retry lại các genre fail: {genre_names}")
+                time.sleep(RETRY_SLEEP_SECONDS)
+                round_idx = 0  # Reset lại số vòng retry sau sleep
+                continue
+        else:
+            logger.info("Tất cả genre fail đã retry thành công.")
+            break
+
+
+async def run_crawler(adapter):
     await load_proxies(PROXIES_FILE)
     homepage_url, crawl_state = await initialize_and_log_setup_with_state()
-    adapter = get_adapter("truyenfull")
     genres = await adapter.get_genres()
     async with aiohttp.ClientSession() as session:
         batches = split_batches(genres, GENRE_BATCH_SIZE)
@@ -365,4 +436,10 @@ async def run_crawler():
 
 
 if __name__ == '__main__':
-    asyncio.run(run_crawler())
+    site_key = "metruyenfull"
+    if len(sys.argv) > 1:
+        site_key = sys.argv[1]
+    print(f"[MAIN] Đang chạy crawler cho site: {site_key}")
+    adapter = get_adapter(site_key)
+    asyncio.run(run_crawler(adapter))
+    asyncio.run(retry_failed_genres(adapter))

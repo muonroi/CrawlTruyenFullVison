@@ -10,13 +10,22 @@ from scraper import make_request
 from config.config import (
     MAX_STORIES_PER_GENRE_PAGE,
 )
+import re
+import asyncio
+from typing import Dict, Any, List
+from urllib.parse import urljoin
+from bs4 import BeautifulSoup
+
 async def get_story_details(story_url: str, story_title_for_log: str) -> Dict[str, Any]:
     logger.info(f"Truyện '{story_title_for_log}': Đang lấy thông tin chi tiết từ {story_url}")
     details = {
+        "title": None,
+        "author": None,
+        "cover": None,
         "description": None,
+        "categories": [],
         "status": None,
         "source": None,
-        "detailed_genres": [],
         "rating_value": None,
         "rating_count": None,
         "total_chapters_on_site": None
@@ -28,109 +37,99 @@ async def get_story_details(story_url: str, story_title_for_log: str) -> Dict[st
         return details
     soup = BeautifulSoup(response.text, "html.parser")
 
-    # 1. Description
-    desc_div = soup.find("div", class_="desc-text", itemprop="description")
+    # 1. Title
+    title_tag = (
+        soup.select_one(".col-info-desc h3.title[itemprop='name']")
+        or soup.select_one("h1.title[itemprop='name']")
+        or soup.select_one("h1.title")
+        or soup.select_one("h3.title")
+    )
+    details["title"] = title_tag.get_text(strip=True) if title_tag else story_title_for_log
+
+    # 2. Author
+    author_tag = (
+        soup.select_one('.info-holder a[itemprop="author"]')
+        or soup.select_one("a[itemprop='author']")
+    )
+    details["author"] = author_tag.get_text(strip=True) if author_tag else None
+
+    # 3. Cover (img)
+    img_tag = soup.select_one('.info-holder img[itemprop="image"]') or soup.select_one("img[itemprop='image']")
+    details["cover"] = img_tag['src'] if img_tag and img_tag.has_attr('src') else None
+
+    # 4. Description
+    desc_div = (
+        soup.find("div", class_="desc-text", itemprop="description")
+        or soup.find("div", class_="desc-text")
+        or soup.select_one('.desc-text[itemprop="description"]')
+    )
     if desc_div:
-        if (more := desc_div.find("div", class_="showmore")): more.decompose() #type: ignore
+        if (more := desc_div.find("div", class_="showmore")): more.decompose()#type: ignore
         for br in desc_div.find_all("br"): br.replace_with("\n")#type: ignore
         text = desc_div.get_text(separator="\n", strip=True)
         lines = [ln.strip() for ln in text.split("\n") if ln.strip()]
         details["description"] = "\n".join(lines)
     else:
-        if (meta := soup.find("meta", attrs={"name": "description"})) and meta.get("content"):#type: ignore
+        meta = soup.find("meta", attrs={"name": "description"})
+        if meta and meta.get("content"):#type: ignore
             details["description"] = meta["content"].strip()#type: ignore
 
-    # 2. Info div
-    holder = soup.select_one("div.col-info-desc > div.info-holder > div.info") or soup.find("div", class_="info")
-    if holder:
-        for item in holder.find_all("div", recursive=False):#type: ignore
-            if not (h3 := item.find("h3")): continue#type: ignore
-            label = h3.get_text(strip=True).lower()#type: ignore
-            node = h3.next_sibling#type: ignore
-            parts: List[str] = []
-            genres_tmp: List[Dict[str, str]] = []
-            while node:
-                if getattr(node, 'name', None) == 'a':
-                    nm = node.get_text(strip=True); href = node.get('href')#type: ignore
-                    if nm and href:
-                        genres_tmp.append({"name": nm, "url": urljoin(story_url, href)})#type: ignore
-                    elif nm:
-                        parts.append(nm)
-                elif getattr(node, 'name', None) == 'span':
-                    parts.append(node.get_text(strip=True))
-                elif isinstance(node, str) and node.strip():
-                    parts.append(node.strip())
-                nxt = getattr(node, 'next_sibling', None)
-                if getattr(nxt, 'name', None) == 'h3': break
-                node = nxt
-            value = ", ".join(filter(None, parts)).rstrip(',')
-            if "thể loại:" in label:
-                details["detailed_genres"] = genres_tmp or [{"name": g.strip(), "url": None} for g in value.split(',')]
-            elif "nguồn:" in label:
-                details["source"] = value
-            elif "trạng thái:" in label:
-                span = item.find("span", class_=re.compile(r"text-primary|text-success|text-danger"))#type: ignore
-                details["status"] = span.get_text(strip=True) if span else value
-            elif "số chương:" in label:
-                if m := re.search(r"(\d+)", value):
-                    try:
-                        details["total_chapters_on_site"] = int(m.group(1))
-                    except ValueError:
-                        logger.warning(f"Không thể chuyển đổi số chương '{m.group(1)}'.")
+    # 5. Categories
+    categories = []
+    for a_tag in soup.select('.info-holder a[itemprop="genre"]'):
+        if a_tag.has_attr('href'):
+            categories.append({'name': a_tag.get_text(strip=True), 'url': a_tag['href']})
+    # Fallback cho một số site có thể nằm ở ngoài info-holder
+    if not categories:
+        for a_tag in soup.select('a[itemprop="genre"]'):
+            if a_tag.has_attr('href'):
+                categories.append({'name': a_tag.get_text(strip=True), 'url': a_tag['href']})
+    details["categories"] = categories
 
-    # 3. Latest chapters fallback
-    ul = soup.find("ul", class_="l-chapters")
-    if not ul:
-        cont = soup.find("div", id="list-chapter")
-        if cont:
-            ul = cont.find("ul", class_=re.compile(r"list-chapter"))#type: ignore
-    if ul and (li := ul.find("li")) and (a := li.find("a")):#type: ignore
-        txt, tit = a.get_text(strip=True), a.get('title','')#type: ignore
-        m = re.search(r"Chương\s*(\d+)|^(\d+):", txt) or re.search(r"Chương\s*(\d+)|^(\d+):", tit)#type: ignore
-        if m:
-            num = int(m.group(1) or m.group(2))
-            st = (details.get('status') or '').lower()
-            tc = details.get('total_chapters_on_site')
-            if tc is None or num > (tc or 0):
-                details['total_chapters_on_site'] = num
-                logger.info(f"Cập nhật tổng chương: {num}")
+    # 6. Status
+    # Trạng thái có thể là text hoặc trong span (ví dụ label label-success)
+    status = None
+    for el in soup.select('.info-holder, .info'):
+        for tag in el.find_all(["span", "label", "div", "h4"], recursive=True):
+            txt = tag.get_text(strip=True).lower()
+            if "trạng thái" in txt or "status" in txt:
+                # Có thể lấy text phía sau, hoặc trong strong, span kế tiếp
+                nxt = tag.find_next(string=True)
+                if nxt:
+                    status = nxt.strip()#type: ignore
+                if not status:
+                    strong_tag = tag.find("strong")#type: ignore
+                    status = strong_tag.get_text(strip=True) if strong_tag else txt#type: ignore
+                break
+        if status: break
+    details["status"] = status
 
-    # 4. Rating
-    if (rd := soup.find("div", class_="rate-holder")) and rd.get('data-score'):#type: ignore
-        details['rating_value'] = rd['data-score']#type: ignore
-    if (rc := soup.select_one("div.small[itemprop='aggregateRating'] span[itemprop='ratingCount']")):
+    # 7. Rating
+    rate = soup.find("div", class_="rate-holder")
+    if rate and rate.get('data-score'): #type: ignore
+        details['rating_value'] = rate['data-score']#type: ignore
+    rc = soup.select_one("div.small[itemprop='aggregateRating'] span[itemprop='ratingCount']")
+    if rc:
         details['rating_count'] = rc.get_text(strip=True)
 
-    # 5. Fallback: Đếm số chương bằng cách đếm <li> của ul.list-chapter nếu vẫn chưa có số chương
-    if details['total_chapters_on_site'] is None or details['total_chapters_on_site'] <= 1:
-        cont = soup.find("div", id="list-chapter")
+    # 8. Total chapters
+    num_chapters = None
+    # 8.1 Tìm trong label, span, hoặc input
+    for label in soup.select('.info-holder .label-success, .info .label-success, span.label.label-success'):
+        txt = label.get_text()
+        if 'chương' in txt.lower():
+            match = re.search(r'(\d+)\s*[Cc]hương', txt)
+            if match:
+                num_chapters = int(match.group(1))
+                break
+    # 8.2 Fallback: đếm <li> trong ul.list-chapter nếu cần
+    if not num_chapters or num_chapters < 2:
         chapter_lis = []
-        total_pages = 1
-        if cont:
-            chapter_uls = cont.find_all("ul", class_=re.compile(r"list-chapter"))#type: ignore
-            for ul in chapter_uls:
-                chapter_lis += ul.find_all("li")#type: ignore
-            total_page_input = cont.find("input", {"id": "total-page"})#type: ignore
-            if total_page_input:
-                try:
-                    total_pages = int(total_page_input["value"])#type: ignore
-                except Exception:
-                    total_pages = 1
-        if total_pages > 1:
-            base_url = story_url.rstrip("/")
-            # fetch tất cả các trang
-            for i in range(2, total_pages+1):
-                page_url = f"{base_url}/trang-{i}/"
-                sub_resp = await loop.run_in_executor(None, make_request, page_url)
-                if sub_resp and getattr(sub_resp, 'text', None):
-                    sub_soup = BeautifulSoup(sub_resp.text, "html.parser")
-                    sub_cont = sub_soup.find("div", id="list-chapter")
-                    if sub_cont:
-                        sub_uls = sub_cont.find_all("ul", class_=re.compile(r"list-chapter"))#type: ignore
-                        for ul in sub_uls:
-                            chapter_lis += ul.find_all("li")#type: ignore
-        details["total_chapters_on_site"] = len(chapter_lis)
-        logger.info(f"Đếm tổng số chương thực tế: {len(chapter_lis)}")
+        for ul in soup.select("ul.list-chapter, ul.l-chapters"):
+            chapter_lis += ul.find_all("li")
+        if len(chapter_lis) > (num_chapters or 0):
+            num_chapters = len(chapter_lis)
+    details["total_chapters_on_site"] = num_chapters
 
     return details
 
