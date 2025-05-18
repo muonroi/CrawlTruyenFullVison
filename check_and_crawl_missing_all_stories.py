@@ -141,7 +141,6 @@ async def check_and_crawl_missing_all_stories(adapter, home_page_url, site_key):
 
             # --- Bổ sung crawl từ mọi nguồn ---
             for source in metadata.get("sources", []):
-                site_key = source.get("site")
                 url = source.get("url")
                 if not site_key or not url:
                     continue
