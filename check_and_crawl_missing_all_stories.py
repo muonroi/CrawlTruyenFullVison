@@ -21,16 +21,41 @@ from utils.state_utils import load_crawl_state
 MAX_CONCURRENT_STORIES = 3
 STORY_SEM = asyncio.Semaphore(MAX_CONCURRENT_STORIES)
 
-async def crawl_story_with_limit(*args, **kwargs):
+async def crawl_story_with_limit(
+    site_key: str,
+    session, 
+    missing_chapters: list,
+    metadata: dict,
+    current_category: dict,
+    story_folder: str,
+    crawl_state: dict,
+    num_batches: int = 10
+):
     async with STORY_SEM:
-        await crawl_missing_with_limit(*args, **kwargs)
+        await crawl_missing_with_limit(
+            site_key, session, missing_chapters, metadata,
+            current_category, story_folder, crawl_state, num_batches
+        )
 
-async def crawl_missing_with_limit(*args, **kwargs):
-    print(f"[START] Crawl missing for {args[2]['title']} ...")
+async def crawl_missing_with_limit(
+    site_key: str,
+    session,
+    missing_chapters: list,
+    metadata: dict,
+    current_category: dict,
+    story_folder: str,
+    crawl_state: dict,
+    num_batches: int = 10
+):
+    print(f"[START] Crawl missing for {metadata['title']} ...")
     async with SEM:
-        result = await crawl_missing_chapters_for_story(*args, **kwargs)
-    print(f"[DONE] Crawl missing for {args[2]['title']} ...")
+        result = await crawl_missing_chapters_for_story(
+            site_key, session, missing_chapters, metadata,
+            current_category, story_folder, crawl_state, num_batches
+        )
+    print(f"[DONE] Crawl missing for {metadata['title']} ...")
     return result
+
 
 async def check_genre_complete_and_notify(genre_name, genre_url):
     stories_on_web = await get_all_stories_from_genre(genre_name, genre_url)
@@ -168,7 +193,7 @@ async def check_and_crawl_missing_all_stories(adapter, home_page_url, site_key):
                 num_batches = get_auto_batch_count(fixed=10)
                 logger.info(f"Auto chọn {num_batches} batch cho truyện {metadata['title']} (site: {site_key}, proxy usable: {len(LOADED_PROXIES)})")
                 tasks.append(
-                    crawl_story_with_limit(None, missing_chapters, metadata, current_category, story_folder, crawl_state, num_batches=num_batches)
+                    crawl_story_with_limit(site_key,None, missing_chapters, metadata, current_category, story_folder, crawl_state, num_batches=num_batches)
                 )
     if tasks:
         await asyncio.gather(*tasks)
