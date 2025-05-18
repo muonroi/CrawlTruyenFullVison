@@ -45,9 +45,11 @@ def get_saved_chapters_files(story_folder_path: str) -> set:
     files = glob.glob(os.path.join(story_folder_path, "*.txt"))
     return set(os.path.basename(f) for f in files)
 
+from utils.state_utils import save_crawl_state
+
 async def crawl_missing_chapters_for_story(
     site_key, session, chapters, story_data_item, current_discovery_genre_data, story_folder_path, crawl_state,
-    num_batches=10
+    num_batches=10, state_file=None
 ):
     saved_files = get_saved_chapters_files(story_folder_path)
     missing_chapters = []
@@ -58,10 +60,15 @@ async def crawl_missing_chapters_for_story(
 
     if not missing_chapters:
         logger.info(f"Tất cả chương đã đủ, không có chương missing trong '{story_data_item['title']}'")
+        # Có thể lưu lại trạng thái nếu muốn, tùy yêu cầu
+        if state_file:
+            await save_crawl_state(crawl_state, state_file)
         return 0
 
     num_batches = min(num_batches, max(1, len(missing_chapters)))
-    logger.info(f"Có {len(missing_chapters)} chương thiếu, chia thành {num_batches} batch để crawl song song cho truyện '{story_data_item['title']}'...")
+    logger.info(
+        f"Có {len(missing_chapters)} chương thiếu, chia thành {num_batches} batch để crawl song song cho truyện '{story_data_item['title']}'..."
+    )
 
     batches = split_batches(missing_chapters, num_batches)
 
@@ -80,7 +87,8 @@ async def crawl_missing_chapters_for_story(
                             async_download_and_save_chapter(
                                 ch, story_data_item, current_discovery_genre_data,
                                 full_path, fname_only, "Crawl bù missing",
-                                f"{idx+1}/{len(chapters)}", crawl_state, successful, failed, idx, site_key=site_key
+                                f"{idx+1}/{len(chapters)}", crawl_state, successful, failed, idx,
+                                site_key=site_key, state_file=state_file  #type: ignore # Truyền state_file xuống nếu hàm con có hỗ trợ
                             ),
                             timeout=120  # Timeout mỗi chương
                         )
@@ -94,7 +102,30 @@ async def crawl_missing_chapters_for_story(
                         })
             tasks.append(asyncio.create_task(wrapped()))
         await asyncio.gather(*tasks, return_exceptions=True)
+        # --- Lưu lại state sau mỗi batch ---
+        if state_file:
+            await save_crawl_state(crawl_state, state_file)
         return successful, failed
+
+    batch_tasks = [crawl_batch(batch, i+1) for i, batch in enumerate(batches) if batch]
+    results = await asyncio.gather(*batch_tasks, return_exceptions=True)
+    successful = set()
+    failed = []
+    for res in results:
+        if isinstance(res, tuple):
+            suc, fail = res
+            successful.update(suc)
+            failed.extend(fail)
+        elif isinstance(res, Exception):
+            logger.error(f"Lỗi khi thực thi batch: {res}")
+    if failed:
+        logger.warning(f"Vẫn còn {len(failed)} chương bù không crawl được.")
+
+    # --- Lưu lại state lần cuối cùng khi xong hết ---
+    if state_file:
+        await save_crawl_state(crawl_state, state_file)
+    return len(successful)
+
 
     batch_tasks = [crawl_batch(batch, i+1) for i, batch in enumerate(batches) if batch]
     results = await asyncio.gather(*batch_tasks, return_exceptions=True)
@@ -201,7 +232,7 @@ async def process_all_chapters_for_story(
                 async_download_and_save_chapter(
                     ch, story_data_item, current_discovery_genre_data,
                     full_path, fname_only, f"Lượt thử lại {rp+1}", str(idx+1),
-                    crawl_state, successful, failed, original_idx=idx, site_key=site_key
+                    crawl_state, successful, failed, original_idx=idx, site_key=site_key, state_file=get_state_file(site_key)
                 )
             ))
         await smart_delay()
