@@ -2,13 +2,16 @@ import hashlib
 import json
 import os
 from typing import Any, Dict, List
-
+import re
+from filelock import FileLock
+from unidecode import unidecode
 import aiofiles
+from adapters.factory import get_adapter
 from config.config import LOCK
 from analyze.truyenfull_vision_parse import get_story_chapter_content
 from utils.async_utils import SEM
 from utils.html_parser import clean_header
-from utils.io_utils import atomic_write, atomic_write_json
+from utils.io_utils import  safe_write_file, safe_write_json
 from utils.logger import logger
 from utils.batch_utils import smart_delay
 from utils.meta_utils import sanitize_filename
@@ -31,12 +34,12 @@ async def async_save_chapter_with_hash_check(filename, content: str):
             return "unchanged"
         else:
             content = clean_header(content)
-            await atomic_write(filename, content) 
+            await safe_write_file(filename, content)  
             logger.info(f"Chương '{filename}' đã được cập nhật do nội dung thay đổi.")
             return "updated"
     else:
         content = clean_header(content)
-        await atomic_write(filename, content)
+        await safe_write_file(filename, content)
         logger.info(f"Chương '{filename}' mới đã được lưu.")
         return "new"
     
@@ -52,11 +55,11 @@ async def log_error_chapter(item, filename="error_chapters.json"):
             except Exception:
                 arr = []
         arr.append(item)
-        atomic_write_json(arr, filename)
+        await safe_write_json(filename,arr)
 
 
 
-def queue_failed_chapter(chapter_data, filename='chapter_retry_queue.json'):
+async def queue_failed_chapter(chapter_data, filename='chapter_retry_queue.json'):
     """Ghi chương lỗi vào queue JSON để retry."""
     path = os.path.join(os.getcwd(), filename)
     # Đọc danh sách cũ
@@ -65,23 +68,19 @@ def queue_failed_chapter(chapter_data, filename='chapter_retry_queue.json'):
             data = json.load(f)
     else:
         data = []
-    # Check đã tồn tại (dựa vào url hoặc filename)
     for item in data:
         if item.get("url") == chapter_data.get("url"):
             return
     data.append(chapter_data)
-    atomic_write_json(data, filename)
-
- 
-
-
+    await safe_write_json(filename,data)
 
 async def async_download_and_save_chapter(
     chapter_info: Dict[str, Any], story_data_item: Dict[str, Any],
     current_discovery_genre_data: Dict[str, Any],
     chapter_filename_full_path: str, chapter_filename_only: str,
     pass_description: str, chapter_display_idx_log: str,
-    crawl_state: Dict[str, Any], successfully_saved: set, failed_list: List[Dict[str, Any]],original_idx: int = 0
+    crawl_state: Dict[str, Any], successfully_saved: set, failed_list: List[Dict[str, Any]],original_idx: int = 0,
+    site_key: str="unknown"
 ) -> None:
     url = chapter_info['url']
     logger.info(f"        {pass_description} - Chương {chapter_display_idx_log}: Đang tải '{chapter_info['title']}' ({url})")
@@ -124,12 +123,13 @@ async def async_download_and_save_chapter(
                 "error_msg": str(e)
             })
             # --- Queue retry chương lỗi ---
-            queue_failed_chapter({
+            await queue_failed_chapter({
                 "chapter_url": chapter_info['url'],
                 "chapter_title": chapter_info['title'],
                 "story_title": story_data_item['title'],
                 "story_url": story_data_item['url'],
                 "filename": chapter_filename_full_path,
+                'site': site_key,
                 "reason": f"Lỗi lưu: {e}"
             })
             failed_list.append({
@@ -147,12 +147,13 @@ async def async_download_and_save_chapter(
             "error_msg": "Không lấy được nội dung"
         })
         # --- Queue retry chương lỗi ---
-        queue_failed_chapter({
+        await queue_failed_chapter({
             "chapter_url": chapter_info['url'],
             "chapter_title": chapter_info['title'],
             "story_title": story_data_item['title'],
             "story_url": story_data_item['url'],
             "filename": chapter_filename_full_path,
+            'site': site_key,
             "reason": "Không lấy được nội dung"
         })
         failed_list.append({
@@ -164,7 +165,7 @@ async def async_download_and_save_chapter(
 
 async def process_chapter_batch(
     session, batch_chapters, story_data_item, current_discovery_genre_data,
-    story_folder_path, crawl_state, batch_idx, total_batch
+    story_folder_path, crawl_state, batch_idx, total_batch, adapter
 ):
     successful, failed = set(), []
     already_crawled = set(crawl_state.get('processed_chapter_urls_for_current_story', []))
@@ -173,10 +174,11 @@ async def process_chapter_batch(
             continue
         fname_only = f"{ch['idx']+1:04d}_{sanitize_filename(ch['title']) or 'untitled'}.txt"
         full_path = os.path.join(story_folder_path, fname_only)
+        site_key = getattr(adapter, 'SITE_KEY', None) or getattr(adapter, 'site_key', None) or 'unknown'
         await async_download_and_save_chapter(
             ch, story_data_item, current_discovery_genre_data,
             full_path, fname_only, f"Batch {batch_idx+1}/{total_batch}", f"{ch['idx']+1}",
-            crawl_state, successful, failed, original_idx=ch['idx']
+            crawl_state, successful, failed, original_idx=ch['idx'], site_key=site_key
         )
         await smart_delay()
     return successful, failed
@@ -205,3 +207,20 @@ def get_missing_chapters(chapters, existing_nums):
         if num not in existing_nums:
             missing.append((idx, ch))
     return missing
+
+def slugify_title(title: str) -> str:
+    s = unidecode(title)
+    s = re.sub(r'[^\w\s-]', '', s.lower())  # bỏ ký tự đặc biệt, lowercase
+    s = re.sub(r'[\s]+', '-', s)            # khoảng trắng thành dấu -
+    return s.strip('-_')
+
+
+def count_txt_files(story_folder_path):
+    return len([f for f in os.listdir(story_folder_path) if f.endswith('.txt')])
+
+
+async def async_save_chapter_with_lock(filename, content):
+    lockfile = filename + ".lock"
+    lock = FileLock(lockfile, timeout=60)
+    with lock:
+        await async_save_chapter_with_hash_check(filename, content)

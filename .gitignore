@@ -1,7 +1,9 @@
 
 # Bỏ qua thư mục chứa dữ liệu truyện đã crawl
 /truyen_data/
-
+/completed_stories/
+*.json
+/backup/
 # Các mục khác bạn có thể đã có hoặc muốn thêm:
 # Môi trường ảo Python
 /.venv/

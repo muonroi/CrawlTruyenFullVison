@@ -9,6 +9,7 @@ from analyze.truyenfull_vision_parse import (
 )
 
 class TruyenFullAdapter(BaseSiteAdapter):
+    SITE_KEY = "truyenfull"
     async def get_genres(self):
         return await get_all_genres("https://truyenfull.vision")
 

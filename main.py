@@ -13,8 +13,8 @@ from dotenv import load_dotenv
 from adapters.base_site_adapter import BaseSiteAdapter
 from adapters.factory import get_adapter
 from utils.batch_utils import smart_delay, split_batches
-from utils.chapter_utils import async_download_and_save_chapter, get_existing_chapter_nums, get_missing_chapters, process_chapter_batch
-from utils.io_utils import atomic_write, create_proxy_template_if_not_exists, ensure_directory_exists, log_failed_genre
+from utils.chapter_utils import async_download_and_save_chapter, count_txt_files, process_chapter_batch, slugify_title
+from utils.io_utils import  create_proxy_template_if_not_exists, ensure_directory_exists, log_failed_genre, safe_write_file
 from utils.logger import logger
 from config.config import FAILED_GENRES_FILE, GENRE_ASYNC_LIMIT, GENRE_BATCH_SIZE, LOADED_PROXIES, RETRY_GENRE_ROUND_LIMIT, RETRY_SLEEP_SECONDS
 
@@ -26,7 +26,7 @@ from config.config import (
 )
 from config.proxy_provider import  load_proxies, shuffle_proxies
 from scraper import initialize_scraper
-from utils.meta_utils import add_missing_story, backup_crawl_state, count_txt_files, sanitize_filename, save_story_metadata_file
+from utils.meta_utils import add_missing_story, backup_crawl_state, sanitize_filename, save_story_metadata_file
 from utils.notifier import send_telegram_notify
 from utils.state_utils import clear_specific_state_keys, load_crawl_state, save_crawl_state
 
@@ -165,7 +165,7 @@ async def process_all_chapters_for_story(
         batch_tasks.append(asyncio.create_task(
             process_chapter_batch(
                 session, batch_chapters, story_data_item, current_discovery_genre_data,
-                story_folder_path, crawl_state, batch_idx, total_batch
+                story_folder_path, crawl_state, batch_idx, total_batch, adapter
             )
         ))
     # Chạy đồng thời các batch
@@ -196,11 +196,12 @@ async def process_all_chapters_for_story(
                     idx = 0
             fname_only = f"{idx+1:04d}_{sanitize_filename(ch['title']) or 'untitled'}.txt"
             full_path = os.path.join(story_folder_path, fname_only)
+            site_key = getattr(adapter, 'SITE_KEY', None) or getattr(adapter, 'site_key', None) or 'unknown'
             retry_tasks.append(asyncio.create_task(
                 async_download_and_save_chapter(
                     ch, story_data_item, current_discovery_genre_data,
                     full_path, fname_only, f"Lượt thử lại {rp+1}", str(idx+1),
-                    crawl_state, successful, failed, original_idx=idx
+                    crawl_state, successful, failed, original_idx=idx, site_key=site_key
                 )
             ))
         await smart_delay()
@@ -239,6 +240,7 @@ async def process_story_item(
     # Cập nhật metadata nếu thiếu
     if need_update:
         details = await adapter.get_story_details(story_data_item['url'], story_data_item['title'])
+        
         await save_story_metadata_file(
             story_data_item, current_discovery_genre_data,
             story_global_folder_path, details,
@@ -266,17 +268,47 @@ async def process_story_item(
         MAX_CHAPTER_PAGES_TO_CRAWL, details.get('total_chapters_on_site') #type: ignore
     )
 
-    # Lấy danh sách số chương đã có (dựa vào file đã crawl)
-    existing_nums = get_existing_chapter_nums(story_global_folder_path)
-    missing_chapters = get_missing_chapters(chapters, existing_nums)
+    site_key = getattr(adapter, 'SITE_KEY', None) or getattr(adapter, 'site_key', None) or 'unknown'
+    now_str = time.strftime("%Y-%m-%d %H:%M:%S")
+    # Lấy hoặc khởi tạo danh sách nguồn
+    if "sources" not in details: # type: ignore
+        details["sources"] = [] # type: ignore
+    found = False
+    for src in details["sources"]: # type: ignore
+        if src.get("site") == site_key:
+            src["url"] = story_data_item["url"]
+            src["total_chapters"] = len(chapters)
+            src["last_update"] = now_str
+            found = True
+    if not found:
+        details["sources"].append({ # type: ignore
+            "site": site_key,
+            "url": story_data_item["url"],
+            "total_chapters": len(chapters),
+            "last_update": now_str
+        })
 
-    # Nếu có chương mới thì crawl chương mới
-    if missing_chapters:
-        logger.info(f"Phát hiện {len(missing_chapters)} chương mới ở '{story_data_item['title']}'")
-        for idx, ch in missing_chapters:
-            fname = f"{idx+1:04d}_{sanitize_filename(ch['title']) or 'untitled'}.txt"
+    # Lưu lại metadata (ở vị trí này sẽ là metadata đầy đủ nhất)
+    with open(metadata_file, "w", encoding="utf-8") as f:
+        json.dump(details, f, ensure_ascii=False, indent=4)
+
+    existing_files = set(os.listdir(story_global_folder_path)) if os.path.exists(story_global_folder_path) else set()
+    added = 0
+    for idx, ch in enumerate(chapters):
+        fname_only = f"{idx+1:04d}_{sanitize_filename(ch['title']) or 'untitled'}.txt"
+        fpath = os.path.join(story_global_folder_path, fname_only)
+        if fname_only not in existing_files:
             content = await adapter.get_chapter_content(ch['url'], ch['title'])
-            await atomic_write(os.path.join(story_global_folder_path, fname), content)
+            if content:
+                await safe_write_file(fpath, content)
+                added += 1
+            else:
+                logger.warning(f"Không lấy được nội dung chương {idx+1}: {ch['title']} từ nguồn {story_data_item['url']}")
+        else:
+            # Nếu muốn nâng cao: có thể so sánh nội dung, nếu khác thì log hoặc lưu bản _from_siteB.txt
+            pass
+    if added > 0:
+        logger.info(f"Đã thêm {added} chương mới cho '{story_data_item['title']}' từ nguồn {story_data_item['url']}")
     else:
         logger.info(f"Không phát hiện chương mới ở '{story_data_item['title']}'.")
 
@@ -292,9 +324,31 @@ async def process_story_item(
 
         if crawled_chapters < total_chapters_on_site:
             logger.warning(f"Truyện '{story_title}' chỉ crawl được {crawled_chapters}/{total_chapters_on_site} chương! Ghi lại để crawl bù.")
-            add_missing_story(story_title, story_url, total_chapters_on_site, crawled_chapters)
+            await add_missing_story(story_title, story_url, total_chapters_on_site, crawled_chapters)
         else:
             logger.info(f"Truyện '{story_title}' đã crawl đủ {crawled_chapters}/{total_chapters_on_site} chương.")
+        # === CẬP NHẬT crawled_chapters vào sources ===
+        try:
+            # Đảm bảo details đã đọc lại từ file metadata mới nhất (nếu cần)
+            if os.path.exists(metadata_file):
+                with open(metadata_file, "r", encoding="utf-8") as f:
+                    metadata_latest = json.load(f)
+            else:
+                metadata_latest = details
+
+            sources = metadata_latest.get("sources", []) # type: ignore
+            for src in sources:
+                if src.get("site") == site_key:
+                    src["crawled_chapters"] = crawled_chapters  # Thực tế đã crawl trên local
+                else:
+                    # Nếu muốn, vẫn giữ số cũ, hoặc set None nếu chưa từng crawl từ nguồn đó
+                    src.setdefault("crawled_chapters", None)
+
+            metadata_latest["sources"] = sources # type: ignore
+            with open(metadata_file, "w", encoding="utf-8") as f:
+                json.dump(metadata_latest, f, ensure_ascii=False, indent=4)
+        except Exception as ex:
+            logger.warning(f"Lỗi khi cập nhật crawled_chapters vào sources: {ex}")
 
     # Check completion
     is_complete = False
@@ -338,7 +392,7 @@ async def process_genre_item(
             continue
         if MAX_STORIES_TOTAL_PER_GENRE and idx >= MAX_STORIES_TOTAL_PER_GENRE:
             break
-        slug = sanitize_filename(urlparse(story['url']).path.strip('/').split('/')[-1])
+        slug = slugify_title(story['title'])
         folder = os.path.join(DATA_FOLDER, slug)
         await ensure_directory_exists(folder)
 

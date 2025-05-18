@@ -7,8 +7,10 @@ from config.config import PROXIES_FILE, PROXIES_FOLDER
 from config.proxy_provider import load_proxies
 from scraper import initialize_scraper
 from utils.chapter_utils import async_save_chapter_with_hash_check
-from utils.io_utils import atomic_write_json, create_proxy_template_if_not_exists, ensure_directory_exists
+from utils.io_utils import create_proxy_template_if_not_exists, ensure_directory_exists, safe_write_json
 from utils.notifier import send_telegram_notify
+from adapters.factory import get_adapter
+
 MAX_RETRY_FAILS = 5
 retry_fail_count = 0
 
@@ -43,9 +45,11 @@ async def retry_queue(filename='chapter_retry_queue.json', interval=900):  # 900
             chapter_title = item['chapter_title']
             story_title = item['story_title']
             filename_path = item['filename']
+            site_key = item.get('site', 'truyenfull')
 
-            print(f"Retry chương: {chapter_title} ({url}) ... của truyện: {story_title}")
-            content = await get_story_chapter_content(url, chapter_title)
+            print(f"Retry chương: {chapter_title} ({url}) ... của truyện: {story_title} (site: {site_key})")
+            adapter = get_adapter(site_key)
+            content = await adapter.get_chapter_content(url, chapter_title)
             if content:
                 retry_fail_count = 0
                 dir_path = os.path.dirname(filename_path)
@@ -63,7 +67,7 @@ async def retry_queue(filename='chapter_retry_queue.json', interval=900):  # 900
         # Xoá chương đã thành công khỏi queue
         if to_remove:
             queue = [item for item in queue if item not in to_remove]
-            atomic_write_json(queue, filename)
+            await safe_write_json(filename,queue)
             print(f"[{now}] [RetryQueue] Đã xoá {len(to_remove)} chương khỏi queue.")
 
         print(f"[{now}] [RetryQueue] Đợi {interval//60} phút trước khi kiểm tra lại queue.")
