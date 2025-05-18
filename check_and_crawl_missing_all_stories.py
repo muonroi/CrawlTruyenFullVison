@@ -259,20 +259,19 @@ async def check_and_crawl_missing_all_stories(adapter, home_page_url, site_key):
                     await check_genre_complete_and_notify(genre_name, genre_url)
                 genre_complete_checked.add(genre_name)
 
-async def loop_every_1h_multi_sites():
-    while True:
-        now = datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-        print(f"\n===== [START] Check missing for all sites at {now} =====")
-        tasks = []
-        for site_key, url in BASE_URLS.items():
-            adapter = get_adapter(site_key)
-            tasks.append(check_and_crawl_missing_all_stories(adapter, url, site_key=site_key))
-        try:
-            await asyncio.gather(*tasks)
-        except Exception as e:
-            print(f"[ERROR] Lỗi khi kiểm tra/crawl missing: {e}")
-        print(f"===== [DONE] Sleeping 1 hour =====\n")
-        await asyncio.sleep(3600)
+async def loop_once_multi_sites():
+    now = datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+    print(f"\n===== [START] Check missing for all sites at {now} =====")
+    tasks = []
+    for site_key, url in BASE_URLS.items():
+        adapter = get_adapter(site_key)
+        tasks.append(check_and_crawl_missing_all_stories(adapter, url, site_key=site_key))
+    try:
+        await asyncio.gather(*tasks)
+    except Exception as e:
+        print(f"[ERROR] Lỗi khi kiểm tra/crawl missing: {e}")
+    print(f"===== [DONE] =====\n")
+
 
 if __name__ == "__main__":
-    asyncio.run(loop_every_1h_multi_sites())
+    asyncio.run(loop_once_multi_sites())
