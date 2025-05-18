@@ -30,6 +30,15 @@ def clean_debug_files():
         if os.path.exists(file):
             move_to_recycle(file)
 
+def clean_stale_locks(folder='truyen_data'):
+    for root, dirs, files in os.walk(folder):
+        for file in files:
+            if file.endswith('.lock'):
+                fpath = os.path.join(root, file)
+                if (time.time() - os.path.getmtime(fpath)) > 600:
+                    os.remove(fpath)
+                    print(f"Deleted stale lock: {fpath}")
+
 def clean_lock_files(max_age_hours=24):
     count = 0
     now = time.time()
@@ -120,6 +129,7 @@ def main():
     clean_empty_json_or_txt()
     clean_error_jsons()
     clean_abandoned_stories()
+    clean_stale_locks()
     print("=== DỌN RÁC XONG ===")
 
 if __name__ == "__main__":
