@@ -3,6 +3,7 @@ import os
 import asyncio
 import re
 from dotenv import load_dotenv
+from config.useragent_list import STATIC_USER_AGENTS  # bạn tạo file này bên dưới
 
 # Load env (ưu tiên .env > biến hệ thống)
 load_dotenv()
@@ -65,9 +66,12 @@ HEADER_RE = re.compile("|".join(HEADER_PATTERNS), re.IGNORECASE)
 
 # -------------- [User-Agent] --------------
 # Import list từ file riêng hoặc khai báo ở đây
-from config.useragent_list import STATIC_USER_AGENTS  # bạn tạo file này bên dưới
 _UA_OBJ = None
 _DISABLE_FAKE_UA = False
+
+
+def get_state_file(site_key):
+    return f"crawl_state_{site_key}.json"
 
 def _init_user_agent():
     try:

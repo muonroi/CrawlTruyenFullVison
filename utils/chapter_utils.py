@@ -7,7 +7,7 @@ from filelock import FileLock
 from unidecode import unidecode
 import aiofiles
 from adapters.factory import get_adapter
-from config.config import LOCK
+from config.config import LOCK, get_state_file
 from analyze.truyenfull_vision_parse import get_story_chapter_content
 from utils.async_utils import SEM
 from utils.html_parser import clean_header
@@ -113,7 +113,8 @@ async def async_download_and_save_chapter(
                 if url not in processed:
                     processed.append(url)
                     crawl_state['processed_chapter_urls_for_current_story'] = processed
-                    await save_crawl_state(crawl_state)
+                    state_file = get_state_file(site_key)
+                    await save_crawl_state(crawl_state, state_file)
         except Exception as e:
             logger.error(f"          Lỗi lưu '{chapter_filename_only}': {e}")
             await log_error_chapter({
