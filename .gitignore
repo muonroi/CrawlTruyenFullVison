@@ -1,4 +1,5 @@
-
+.vscode/
+.vs/
 # Bỏ qua thư mục chứa dữ liệu truyện đã crawl
 /truyen_data/
 /completed_stories/

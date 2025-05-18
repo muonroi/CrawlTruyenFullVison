@@ -361,7 +361,7 @@ async def process_story_item(
         completed = set(crawl_state.get('globally_completed_story_urls', []))
         completed.add(story_data_item['url'])
         crawl_state['globally_completed_story_urls'] = sorted(completed)
-    backup_crawl_state()
+    backup_crawl_state(state_file)
     state_file = get_state_file(site_key)
     await save_crawl_state(crawl_state, state_file)
     await clear_specific_state_keys(crawl_state, ['processed_chapter_urls_for_current_story'], state_file)

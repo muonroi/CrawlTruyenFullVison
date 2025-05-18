@@ -101,8 +101,12 @@ async def add_missing_story(story_title, story_url, total_chapters, crawled_chap
 
 
 def backup_crawl_state(state_file='crawl_state.json', backup_folder="backup"):
+    if not os.path.exists(state_file):
+        print(f"[Backup] Không tìm thấy file state: {state_file} => Bỏ qua backup.")
+        return
     ensure_backup_folder(backup_folder)
     ts = time.strftime("%Y%m%d_%H%M%S")
     base_name = os.path.basename(state_file)
     backup_file = os.path.join(backup_folder, f"{base_name}.bak_{ts}")
     shutil.copy(state_file, backup_file)
+
