@@ -3,6 +3,7 @@ from concurrent.futures import ThreadPoolExecutor
 from adapters.base_site_adapter import BaseSiteAdapter
 from analyze.metruyenfull_parse import (
     get_all_categories,
+    get_all_stories_from_category_with_page_check,
     get_stories_from_category,
     get_story_metadata,
     get_chapters_from_story
@@ -50,3 +51,5 @@ class MeTruyenFullAdapter(BaseSiteAdapter):
         return await loop.run_in_executor(
             _executor, _get_content, chapter_url
         )
+    def get_all_stories_from_genre_with_page_check(self, genre_name, genre_url, max_pages=None):
+        return get_all_stories_from_category_with_page_check(self, genre_name, genre_url, max_pages)

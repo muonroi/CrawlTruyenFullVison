@@ -2,6 +2,8 @@ import re
 from bs4 import BeautifulSoup
 from scraper import make_request
 from config.config import PATTERN_FILE, load_blacklist_patterns
+from utils.logger import logger
+from utils.html_parser import get_total_pages_metruyen_category, parse_stories_from_category_page
 PATTERNS, CONTAINS_LIST = load_blacklist_patterns(PATTERN_FILE)
 
 def get_all_categories(self, home_url):
@@ -108,6 +110,38 @@ def get_story_metadata(self, story_url):
         "cover": image_url,
         "url": story_url
     }
+
+def get_all_stories_from_category_with_page_check(self, genre_name, genre_url, max_pages=None):
+    resp = make_request(genre_url)
+    if not resp:
+        return [], 0, 0
+    html = resp.text
+    total_pages = get_total_pages_metruyen_category(html)
+    if max_pages:
+        total_pages = min(total_pages, max_pages)
+    all_stories = []
+    pages_crawled = 0
+    seen_urls = set(s['url'] for s in all_stories)
+
+    for page in range(1, total_pages+1):
+        page_url = genre_url if page == 1 else f"{genre_url.rstrip('/')}/page/{page}"
+        resp = make_request(page_url)
+        if not resp:
+            break
+        stories_on_page = parse_stories_from_category_page(resp.text)
+        if not stories_on_page:
+            break
+        for s in stories_on_page:
+            if s['url'] not in seen_urls:
+                all_stories.append(s)
+                seen_urls.add(s['url'])
+        pages_crawled += 1
+        
+    logger.info(f"Category {genre_name}: crawl được {len(all_stories)} truyện/{pages_crawled}/{total_pages} trang.")
+
+    return all_stories, total_pages, pages_crawled
+
+
 
 
 def get_chapters_from_story(self, story_url):
