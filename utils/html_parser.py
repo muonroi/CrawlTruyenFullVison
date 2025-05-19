@@ -53,25 +53,38 @@ def clean_header(text: str):
     return "\n".join(out).strip()
 
 def get_total_pages_category(html: str) -> int:
+    from bs4 import BeautifulSoup
+    import re
     soup = BeautifulSoup(html, "html.parser")
     pag = soup.select_one('ul.pagination')
     if not pag:
         return 1
     max_page = 1
     for a in pag.find_all('a'):
-        text = a.get_text(strip=True)
-        if text.isdigit():
-            num = int(text)
-            if num > max_page:
-                max_page = num
-        elif 'Cuối' in text or '»' in text:
-            import re
-            m = re.search(r'/trang-(\d+)/', a['href']) #type: ignore
+        # Ưu tiên text "Cuối"
+        if 'Cuối' in a.get_text():
+            # Ưu tiên lấy số từ title nếu có
+            title = a.get('title', '')#type: ignore
+            m = re.search(r'trang[- ]?(\d+)', title, re.I)#type: ignore
             if m:
                 num = int(m.group(1))
                 if num > max_page:
                     max_page = num
+            else:
+                # Nếu không có title, lấy từ href
+                href = a.get('href', '')#type: ignore
+                m = re.search(r'/trang-(\d+)', href) #type: ignore
+                if m:
+                    num = int(m.group(1))
+                    if num > max_page:
+                        max_page = num
+        # Ngoài ra, lấy số lớn nhất xuất hiện trong các thẻ <a> khác
+        elif a.get_text().strip().isdigit():
+            num = int(a.get_text().strip())
+            if num > max_page:
+                max_page = num
     return max_page
+
 
 def parse_stories_from_category_page(html: str):
     soup = BeautifulSoup(html, "html.parser")
