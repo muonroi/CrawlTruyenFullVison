@@ -4,7 +4,7 @@ import os
 import re
 import shutil
 import aiofiles
-from filelock import FileLock
+from filelock import FileLock, Timeout
 
 from config.config import COMPLETED_FOLDER, FAILED_GENRES_FILE
 from utils.logger import logger
@@ -97,9 +97,22 @@ def log_failed_genre(genre_data):
     except Exception as e:
         logger.error(f"Lỗi khi log failed genre: {e}")
 
-async def safe_write_file(filepath, content, timeout=300):
-    lock_path = filepath + '.lock'
+async def safe_write_file(file_path, content, timeout=500, auto_remove_lock=True):
+    lock_path = file_path + ".lock"
     lock = FileLock(lock_path, timeout=timeout)
-    with lock:
-        async with aiofiles.open(filepath, 'w', encoding='utf-8') as f:
-            await f.write(content)
+    try:
+        with lock:
+            async with aiofiles.open(file_path, "w", encoding="utf-8") as f:
+                await f.write(content)
+    except Timeout:
+        logger.error(
+            f"Timeout khi ghi file {file_path}. File lock: {lock_path} bị kẹt! "
+            f"Bạn hãy xóa file .lock này rồi chạy lại."
+        )
+        if auto_remove_lock:
+            try:
+                if os.path.exists(lock_path):
+                    os.remove(lock_path)
+                    logger.warning(f"Đã tự động xóa file lock: {lock_path}")
+            except Exception as e:
+                logger.error(f"Lỗi khi tự động xóa lock file: {e}")
