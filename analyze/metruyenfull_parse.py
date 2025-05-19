@@ -2,17 +2,22 @@ import re
 from bs4 import BeautifulSoup
 from scraper import make_request
 from config.config import PATTERN_FILE, load_blacklist_patterns
+from utils.logger import logger
+from utils.html_parser import get_total_pages_metruyen_category, parse_stories_from_category_page
 PATTERNS, CONTAINS_LIST = load_blacklist_patterns(PATTERN_FILE)
 
-def get_all_categories(self, home_url):
-    resp = make_request(home_url)
+import asyncio
+
+async def get_all_categories(self, home_url):
+    loop = asyncio.get_event_loop()
+    resp = await loop.run_in_executor(None, make_request, home_url)
     if not resp:
         return []
     soup = BeautifulSoup(resp.text, "html.parser")
     categories = []
     for ul_menu in soup.select('.dropdown-menu.multi-column ul.dropdown-menu'):
         for li_item in ul_menu.find_all('li'):
-            a_tag = li_item.find('a')#type: ignore
+            a_tag = li_item.find('a') #type: ignore
             if a_tag and a_tag.has_attr('href'):#type: ignore
                 categories.append({
                     'name': a_tag.get_text(strip=True),#type: ignore
@@ -20,14 +25,17 @@ def get_all_categories(self, home_url):
                 })
     return categories
 
-def get_stories_from_category(self, category_url):
+
+async def get_stories_from_category(self, category_url):
+    import asyncio
+    loop = asyncio.get_event_loop()
     stories = []
     page_num = 1
     while True:
         current_url = category_url
         if page_num > 1:
             current_url = category_url.rstrip('/') + f"/page/{page_num}"
-        resp = make_request(current_url)
+        resp = await loop.run_in_executor(None, make_request, current_url)
         if not resp:
             break
         soup = BeautifulSoup(resp.text, "html.parser")
@@ -50,8 +58,9 @@ def get_stories_from_category(self, category_url):
         page_num += 1
     return stories
 
-def get_story_metadata(self, story_url):
-    resp = make_request(story_url)
+async def get_story_metadata(self, story_url):
+    loop = asyncio.get_event_loop()
+    resp = await loop.run_in_executor(None, make_request, story_url)
     if not resp:
         return None
     soup = BeautifulSoup(resp.text, "html.parser")
@@ -109,8 +118,40 @@ def get_story_metadata(self, story_url):
         "url": story_url
     }
 
+async def get_all_stories_from_category_with_page_check(self, genre_name, genre_url, max_pages=None):
+    import asyncio
+    loop = asyncio.get_event_loop()
+    resp = await loop.run_in_executor(None, make_request, genre_url)
+    if not resp:
+        return [], 0, 0
+    html = resp.text
+    total_pages = get_total_pages_metruyen_category(html)
+    logger.info(f"Category {total_pages} có trang.")
+    if max_pages:
+        total_pages = min(total_pages, max_pages)
+    all_stories = []
+    pages_crawled = 0
+    seen_urls = set()
+    for page in range(1, total_pages+1):
+        page_url = genre_url if page == 1 else f"{genre_url.rstrip('/')}/page/{page}"
+        resp = await loop.run_in_executor(None, make_request, page_url)
+        if not resp:
+            break
+        stories_on_page = parse_stories_from_category_page(resp.text)
+        if not stories_on_page:
+            break
+        for s in stories_on_page:
+            if s['url'] not in seen_urls:
+                all_stories.append(s)
+                seen_urls.add(s['url'])
+        pages_crawled += 1
+    logger.info(f"Category {genre_name}: crawl được {len(all_stories)} truyện/{pages_crawled}/{total_pages} trang.")
+    return all_stories, total_pages, pages_crawled
 
-def get_chapters_from_story(self, story_url):
+
+async def get_chapters_from_story(self, story_url):
+    import asyncio
+    loop = asyncio.get_event_loop()
     chapters = []
     page_num = 1
     seen = set()
@@ -118,7 +159,7 @@ def get_chapters_from_story(self, story_url):
         current_url = story_url
         if page_num > 1:
             current_url = story_url.rstrip('/') + f"/page/{page_num}"
-        resp = make_request(current_url)
+        resp = await loop.run_in_executor(None, make_request, current_url)
         if not resp:
             break
         soup = BeautifulSoup(resp.text, "html.parser")
@@ -141,6 +182,6 @@ def get_chapters_from_story(self, story_url):
         if not pagination or not pagination.find("a", string=str(page_num + 1)):
             break
         page_num += 1
-    # Sort theo số chương trong tiêu đề, giống truyenfull
     chapters.sort(key=lambda ch: float(re.search(r"(\d+)", ch['title']).group(1)) if re.search(r"(\d+)", ch['title']) else float('inf'))#type: ignore
     return chapters
+

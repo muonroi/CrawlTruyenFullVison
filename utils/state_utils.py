@@ -83,7 +83,11 @@ def merge_all_missing_workers_to_main(site_key):
     main_state = {}
     if os.path.exists(main_state_file):
         with open(main_state_file, "r", encoding="utf-8") as f:
-            main_state = json.load(f)
+            try:
+                main_state = json.load(f)
+            except Exception as ex:
+                logger.error(f"Lỗi đọc file state, sẽ reset lại state rỗng: {ex}")
+                main_state = {}
 
     # Tìm tất cả file _missing_worker*.json (nếu nhiều worker phụ)
     files = glob.glob(f"{main_state_file.replace('.json', '')}_missing_worker*.json")

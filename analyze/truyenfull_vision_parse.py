@@ -4,7 +4,7 @@ from typing import List, Tuple, Optional, Dict, Any
 from bs4 import BeautifulSoup
 from urllib.parse import urljoin, urlparse
 
-from utils.html_parser import extract_chapter_content
+from utils.html_parser import extract_chapter_content, get_total_pages_category
 from utils.logger import logger
 from scraper import make_request
 from config.config import (
@@ -318,3 +318,44 @@ async def get_story_chapter_content(
         return None
     return content or None
 
+async def get_all_stories_from_genre_with_page_check(genre_name, genre_url, max_pages=None):
+    """
+    Crawl tất cả truyện trong 1 thể loại (category) của truyenfull.vision
+    Không phụ thuộc next_page_url, crawl từng page dựa vào pattern url và total_pages lấy từ phân trang.
+    Dùng make_request (đồng bộ) để đồng bộ với các hàm cũ.
+    """
+    resp = make_request(genre_url)
+    if not resp or not getattr(resp, 'text', None):
+        logger.error(f"Không nhận được phản hồi từ {genre_url}")
+        return [], 0, 0
+    html = resp.text
+    total_pages = get_total_pages_category(html)
+    logger.info(f"Category {total_pages} có trang.")
+    if max_pages:
+        total_pages = min(total_pages, max_pages)
+
+    all_stories = []
+    seen_urls = set()
+    pages_crawled = 0
+
+    for page in range(1, total_pages + 1):
+        page_url = genre_url if page == 1 else f"{genre_url.rstrip('/')}/trang-{page}/"
+        logger.info(f"[Crawl] Page {page}: {page_url}")
+        resp = make_request(page_url)
+        if not resp or not getattr(resp, 'text', None):
+            logger.warning(f"Không nhận được phản hồi từ {page_url}")
+            break
+        html = resp.text
+        # Parse stories trên page này
+        stories, _ = await get_stories_from_genre_page(page_url)
+        if not stories:
+            logger.warning(f"Không tìm thấy truyện nào ở {page_url}, dừng crawl category.")
+            break
+        for s in stories:
+            if s['url'] not in seen_urls:
+                all_stories.append(s)
+                seen_urls.add(s['url'])
+        pages_crawled += 1
+
+    logger.info(f"Category {genre_name}: crawl được {len(all_stories)} truyện/{pages_crawled}/{total_pages} trang.")
+    return all_stories, total_pages, pages_crawled

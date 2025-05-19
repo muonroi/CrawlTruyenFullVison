@@ -1,6 +1,7 @@
 from adapters.base_site_adapter import BaseSiteAdapter
 from analyze.truyenfull_vision_parse import (
     get_all_genres,
+    get_all_stories_from_genre_with_page_check,
     get_stories_from_genre_page,
     get_all_stories_from_genre,
     get_story_details,
@@ -29,3 +30,6 @@ class TruyenFullAdapter(BaseSiteAdapter):
 
     async def get_chapter_content(self, chapter_url, chapter_title):
         return await get_story_chapter_content(chapter_url, chapter_title)
+    
+    async def get_all_stories_from_genre_with_page_check(self, genre_name, genre_url, max_pages=None):
+        return await get_all_stories_from_genre_with_page_check(genre_name, genre_url, max_pages)
