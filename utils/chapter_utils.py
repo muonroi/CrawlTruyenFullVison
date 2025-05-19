@@ -217,6 +217,8 @@ def slugify_title(title: str) -> str:
 
 
 def count_txt_files(story_folder_path):
+    if not os.path.exists(story_folder_path):
+        return 0
     return len([f for f in os.listdir(story_folder_path) if f.endswith('.txt')])
 
 
