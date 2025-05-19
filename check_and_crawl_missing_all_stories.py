@@ -40,6 +40,20 @@ async def crawl_story_with_limit(
             state_file=state_file
         )
 
+def sync_metadata_total_chapters(story_folder):
+    meta_path = os.path.join(story_folder, "metadata.json")
+    if not os.path.exists(meta_path):
+        return
+    with open(meta_path, "r", encoding="utf-8") as f:
+        meta = json.load(f)
+    txt_files = [f for f in os.listdir(story_folder) if f.endswith('.txt')]
+    if len(txt_files) > meta.get("total_chapters_on_site", 0):
+        meta["total_chapters_on_site"] = len(txt_files)
+        with open(meta_path, "w", encoding="utf-8") as f:
+            json.dump(meta, f, ensure_ascii=False, indent=4)
+        print(f"[SYNC] Đã cập nhật lại total_chapters_on_site cho '{os.path.basename(story_folder)}' thành {len(txt_files)}")
+
+
 async def crawl_missing_with_limit(
     site_key: str,
     session,
@@ -245,7 +259,7 @@ async def check_and_crawl_missing_all_stories(adapter, home_page_url, site_key):
                 print(f"[ERROR] Không lấy đủ metadata cho '{metadata.get('title')}'! Sẽ bỏ qua move.")
                 continue
         # ==== End check meta ====
-
+        sync_metadata_total_chapters(story_folder)
         if crawled_files >= metadata.get("total_chapters_on_site"):
             dest_genre_folder = os.path.join(COMPLETED_FOLDER, genre_name)
             os.makedirs(dest_genre_folder, exist_ok=True)
