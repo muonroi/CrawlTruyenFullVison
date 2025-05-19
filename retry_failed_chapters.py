@@ -42,6 +42,10 @@ async def retry_queue(filename='chapter_retry_queue.json', interval=900):
         # --- Nhóm các chương lỗi theo từng site ---
         site_to_items = defaultdict(list)
         for item in queue:
+            site_key = item.get('site') or item.get('site_key')
+            if not site_key:
+                print(f"[RetryQueue] Chương thiếu trường site: {item}")
+                continue
             site_to_items[site_key].append(item)
 
         to_remove = []
