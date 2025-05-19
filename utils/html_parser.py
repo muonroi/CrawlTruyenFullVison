@@ -1,9 +1,7 @@
 import re
 from typing import List
 from bs4 import BeautifulSoup
-
 from config.config import  HEADER_RE, PATTERN_FILE
-from scraper import make_request
 from utils.logger import logger
 from utils.cleaner import clean_chapter_content
 from utils.io_utils import filter_lines_by_patterns, load_patterns

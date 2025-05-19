@@ -6,7 +6,8 @@ import asyncio
 from filelock import FileLock
 from adapters.factory import get_adapter
 from config.config import BASE_URLS, DATA_FOLDER, COMPLETED_FOLDER
-from utils.chapter_utils import sanitize_filename, count_txt_files
+from utils.chapter_utils import  count_txt_files
+from utils.io_utils import sanitize_filename
 
 # Move truyện từ completed về data để tiếp tục crawl
 def move_story_back_to_data_folder(story_slug):

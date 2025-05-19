@@ -1,7 +1,5 @@
 import logging
 from logging.handlers import RotatingFileHandler
-
-
 LOG_FILE_PATH = "crawler.log"
 logger = logging.getLogger("TruyenFullCrawler")
 logger.setLevel(logging.DEBUG)

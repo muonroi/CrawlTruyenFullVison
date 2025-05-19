@@ -11,6 +11,8 @@ from utils.logger import logger
 
 CSTATE_LOCK = asyncio.Lock()
 
+
+
 async def load_crawl_state(state_file) -> Dict[str, Any]:
     if not state_file:
         from config.config import STATE_FILE
@@ -27,6 +29,9 @@ async def load_crawl_state(state_file) -> Dict[str, Any]:
         except Exception as e:
             logger.error(f"Lỗi khi tải trạng thái crawl từ {state_file}: {e}. Bắt đầu crawl mới.")
     return {}
+
+
+
 
 async def save_crawl_state(state: Dict[str, Any], state_file: str) -> None:
     async with CSTATE_LOCK:
