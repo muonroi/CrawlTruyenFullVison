@@ -251,6 +251,7 @@ async def process_story_item(
     story_global_folder_path: str, crawl_state: Dict[str, Any],
     adapter: BaseSiteAdapter, site_key: str
 ) -> bool:
+    await ensure_directory_exists(story_global_folder_path)
     logger.info(f"\n  --- Xử lý truyện: {story_data_item['title']} ---")
 
     metadata_file = os.path.join(story_global_folder_path, "metadata.json")
