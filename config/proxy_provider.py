@@ -18,6 +18,17 @@ PROXY_NOTIFIED = False
 MAX_FAIL_RATE = 10 
 FAILED_PROXY_TIMES = []
 
+def should_blacklist_proxy(proxy_url, loaded_proxies):
+    proxy_domain = proxy_url.split('@')[-1] if '@' in proxy_url else proxy_url
+    if len(loaded_proxies) <= 1:
+        return False
+    if any(key in proxy_domain for key in [
+        "proxy-cheap.com"
+    ]):
+        return False
+    return True
+
+
 async def load_proxies(filename: str) -> List[str]:
     try:
         async with aiofiles.open(filename, "r") as f:
@@ -33,16 +44,22 @@ async def load_proxies(filename: str) -> List[str]:
 
 def mark_bad_proxy(proxy: str):
     global FAILED_PROXY_TIMES
+    if not should_blacklist_proxy(proxy, LOADED_PROXIES):
+        logger.warning(f"[Proxy] Proxy xoay hoặc pool chỉ có 1 proxy, sẽ không blacklist: {proxy}. Chỉ sleep & retry.")
+        time.sleep(10)  # Đợi IP backend đổi (proxy xoay)
+        return
+
     bad_proxy_counts.setdefault(proxy, 0)
     bad_proxy_counts[proxy] += 1
     if bad_proxy_counts[proxy] >= 3 and proxy in LOADED_PROXIES:
         LOADED_PROXIES.remove(proxy)
-        print(f"Proxy '{proxy}' auto-banned do quá nhiều lỗi.")
+        logger.warning(f"Proxy '{proxy}' auto-banned do quá nhiều lỗi.")
         FAILED_PROXY_TIMES.append(time.time())
         FAILED_PROXY_TIMES = [t for t in FAILED_PROXY_TIMES if time.time() - t < 60]
         if len(FAILED_PROXY_TIMES) >= MAX_FAIL_RATE:
             asyncio.create_task(send_telegram_notify("[Crawl Notify] Cảnh báo: Số lượng proxy bị ban liên tục vượt ngưỡng, hãy kiểm tra lại hệ thống/proxy!"))
-            FAILED_PROXY_TIMES.clear() 
+            FAILED_PROXY_TIMES.clear()
+ 
 
 def get_random_proxy_url(username: str = None, password: str = None) -> Optional[str]: # type: ignore
     if not LOADED_PROXIES:
