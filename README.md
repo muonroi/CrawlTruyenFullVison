@@ -1,52 +1,99 @@
 # Crawl Truyện Full - Python Async Crawler
 
-An advanced story crawling project, supporting async operations, multiple sources, multiple genres, state backup, chapter retry, batching, automatic proxy management, and Telegram notifications.
+Một project crawl truyện nâng cao, hỗ trợ async, đa nguồn, đa thể loại, backup trạng thái, retry chương lỗi, phân batch, quản lý proxy tự động, gửi thông báo Telegram.
 
----
+## 🚀 Tính năng nổi bật
 
-**🌐 Choose Your Language / Chọn Ngôn Ngữ Của Bạn:**
+-   **Async & Multi-batch:** Crawl song song hàng loạt chương/truyện/thể loại, tự động phân batch tối ưu.
+-   **Backup & Retry:** Tự động lưu trạng thái crawl, backup định kỳ, tự động retry các chương/thể loại bị lỗi.
+-   **Quản lý proxy nâng cao:** Hỗ trợ rotate proxy, auto remove proxy lỗi, cảnh báo hết proxy qua Telegram.
+-   **Gửi thông báo Telegram:** Báo trạng thái hoàn thành hoặc cảnh báo lỗi proxy đến Telegram.
+-   **Parser tuỳ biến từng site:** Hỗ trợ nhiều nguồn như truyenfull, metruyenfull..., dễ mở rộng domain mới.
+-   **Clean nội dung thông minh:** Lọc quảng cáo, dòng thừa, anti-spam theo pattern dễ mở rộng.
+-   **Lưu metadata chuẩn:** Metadata đầy đủ cho từng truyện, backup & validate tự động.
+-   **Phục hồi chương/thể loại bị miss:** Tự động detect và crawl bù chương/truyện/thể loại thiếu hoặc lỗi.
 
--   [Tiếng Việt (Vietnamese)](README.vi.md)
--   [English (English)](README.en.md)
----
+## 🗂️ Cấu trúc thư mục chính
+```json
+├── adapters/              # Adapter cho từng site nguồn (truyenfull, metruyenfull,...)
+├── analyze/               # Các hàm phân tích HTML, extract nội dung
+├── config/                # Các file cấu hình, biến môi trường, proxy, pattern blacklist
+├── utils/                 # Các tiện ích chung: logger, io, async, notifier,...
+├── main.py                # Entry point chính để chạy crawler
+├── requirements.txt       # Thư viện cần thiết
+└── README.md              # Tài liệu này
+```
 
-This project helps you crawl stories from various sources efficiently. For detailed information, please select your preferred language above.
+## ⚙️ Hướng dẫn cài đặt
 
-Crawl Full Stories - Python Async Crawler
-An advanced story crawling project that supports async, multiple sources, multiple genres, backup state, retry failed chapters, batch processing, automatic proxy management, and sends notifications via Telegram.
-🚀 Key Features
-- Async & Multi-batch: Crawl multiple chapters/stories/genres in parallel, automatically optimize batch processing.
-- Backup & Retry: Automatically save crawl state, periodic backups, and automatically retry failed chapters/genres.
-- Advanced proxy management: Supports proxy rotation, auto removal of faulty proxies, warning when proxies run out via Telegram.
-- Send Telegram notifications: Report completion status or proxy error warnings to Telegram.
-- Customized site parsers: Supports multiple sources such as truyenfull, metruyenfull..., easy to extend to new domains.
-- Intelligent content cleaning: Filter ads, redundant lines, and implement anti-spam according to easily expandable patterns.
-- Standard metadata storage: Complete metadata for each story, automatic backup & validation.
-- Recover missed chapters/genres: Automatically detect and crawl additional chapters/stories. at_id
-# ... other variables (see config.py file or related configuration file)
-3. Prepare the proxy:
-o Add the list of proxies to the proxies/ directory (for example: proxies/proxies.txt).
-o One proxy per line, supports formats: IP:PORT or USER:PASS@IP:PORT.
-4. Customize the spam and advertising filter patterns:
-o Edit the config/blacklist_patterns.txt file (or corresponding configuration file) to define detection patterns and remove unwanted lines from the chapter content.
-🏃‍♂️ How to run the crawler
-By default, the crawler can be configured to run a specific site. To specify the site you want to crawl (for example, truyenfull or metruyenfull):
+1.  **Clone project và cài đặt thư viện:**
+    ```bash
+    git clone <URL_REPO_CUA_BAN> # Thay <URL_REPO_CUA_BAN> bằng URL thực tế
+    cd CrawlTruyenFullVison # Hoặc tên thư mục project của bạn
+    pip install -r requirements.txt
+    ```
+
+2.  **Tạo file `.env` để cấu hình (tham khảo file `config/config.py` hoặc file `.env.example` nếu có):**
+    ```env
+    REQUEST_DELAY=4
+    USE_PROXY=True
+    PROXIES_FOLDER=proxies
+    TELEGRAM_BOT_TOKEN=your_telegram_bot_token
+    TELEGRAM_CHAT_ID=your_telegram_chat_id
+    # ... các biến khác (xem file config.py hoặc file cấu hình liên quan)
+    ```
+
+3.  **Chuẩn bị proxy:**
+    * Thêm danh sách proxy vào thư mục `proxies/` (ví dụ: `proxies/proxies.txt`).
+    * Mỗi proxy một dòng, hỗ trợ các định dạng: `IP:PORT` hoặc `USER:PASS@IP:PORT`.
+
+4.  **Tùy chỉnh các pattern lọc spam, quảng cáo:**
+    * Sửa file `config/blacklist_patterns.txt` (hoặc file cấu hình tương ứng) để định nghĩa các mẫu nhận diện và loại bỏ các dòng không mong muốn khỏi nội dung chương truyện.
+
+## 🏃‍♂️ Cách chạy crawler
+
+Mặc định, crawler có thể được cấu hình để chạy một site cụ thể. Để chỉ định site muốn crawl (ví dụ `truyenfull` hoặc `metruyenfull`):
+
+```bash
 python main.py truyenfull
-# or
+# hoặc
 python main.py metruyenfull
-(Note: The exact command may vary depending on how you design main.py to accept input parameters.)
-🛠️ Some important files/modules
-main.py: Orchestrates the entire crawling process (from category → story → chapter), managing state, batch, retry.
-adapters/: Defines each Adapter for each site (for example: error to retry later  
-⚡ Expand - customize additional domain  
-Create a new Adapter: Create a new Adapter class that inherits from BaseSiteAdapter (or a similar base class).  
-Implement methods: Override necessary methods such as get_genres, get_story_list_by_genre, get_story_details, get_chapter_list, get_chapter_content, etc.  
-Register Adapter: Update in factory.py (or a similar mechanism) so that the system can recognize and use the new Adapter.  
-⏱️ Note when running in production  
-- It is advisable to use a server or VPS with a "clean" IP or high-quality proxy sources.  
-Use crontab (Linux) or Task Scheduler (Windows) to run automatically on a regular basis, or run in screen/tmux to avoid losing state during SSH disconnections.  
-Regularly monitor log files and backup directories.  
-Customize parameters such as batch_size, buffer_size, request_delay to suit server resources and the policies of the source websites.  
-Contact & Support  
-Author: muonroi  
-Contact Telegram (for proxy alerts, information)
+```
+### (Lưu ý: Câu lệnh chính xác có thể thay đổi tùy theo cách bạn thiết kế main.py để nhận tham số đầu vào.)
+
+## 🛠️ Một số file/module quan trọng
+
+**main.py**: *Điều phối toàn bộ quá trình crawl (từ thể loại → truyện → chương), quản lý trạng thái, batch, retry.*
+
+**adapters/**: *Định nghĩa từng Adapter cho mỗi site (ví dụ: TruyenFullAdapter, MeTruyenFullAdapter), giúp dễ dàng mở rộng và quản lý logic riêng cho từng domain.*
+
+**scraper.py (hoặc module tương tự)**: *Quản lý việc gửi request HTTP, fake User-Agent, luân chuyển proxy, xử lý các lỗi thường gặp (như 403), retry và tự động loại bỏ proxy lỗi*
+
+**utils/logger.py**: *Ghi log chi tiết quá trình hoạt động ra file (ví dụ: crawler.log) và hiển thị trên console.*
+
+**utils/notifier.py**: *Gửi thông báo qua Telegram khi hoàn tất quá trình crawl, hoặc khi có cảnh báo quan trọng (ví dụ: hết proxy khả dụng).*
+
+**utils/cleaner.py, analyze/html_parser.py (hoặc các module tương tự)**: *Chịu trách nhiệm làm sạch nội dung chương truyện, loại bỏ quảng cáo, các đoạn spam, đảm bảo nội dung thu được là chuẩn nhất.*
+
+**utils/meta_utils.py**: *Quản lý việc lưu trữ metadata của truyện, backup trạng thái crawl, và phục hồi trạng thái khi cần.
+
+**utils/chapter_utils.py**: *Chứa các hàm xử lý việc lưu trữ chương truyện (có thể là async), kiểm tra hash để tránh lưu trùng lặp, và quản lý hàng đợi các chương bị lỗi để retry sau*
+
+**⚡ Mở rộng - tuỳ chỉnh thêm domain**
+**Tạo Adapter mới**: *Tạo một class Adapter mới kế thừa từ BaseSiteAdapter (hoặc một class cơ sở tương tự).*
+
+**Implement các phương thức**: *Viết lại (override) các phương thức cần thiết như get_genres, get_story_list_by_genre, get_story_details, get_chapter_list, get_chapter_content, v.v.*
+
+**Đăng ký Adapter**: *Cập nhật vào factory.py (hoặc cơ chế tương tự) để hệ thống có thể nhận diện và sử dụng Adapter mới.*
+
+**⏱️ Lưu ý khi chạy thật/production**
+
+-   *Nên sử dụng server, VPS có IP "sạch" hoặc sử dụng nguồn proxy chất lượng cao.
+    Sử dụng crontab (Linux) hoặc Task Scheduler (Windows) để tự động chạy định kỳ, hoặc chạy trong screen/tmux để tránh mất trạng thái khi mất kết nối SSH.
+    Thường xuyên theo dõi file log và thư mục backup.
+    Tùy chỉnh các thông số như batch_size, buffer_size, request_delay cho phù hợp với tài  nguyên của server và chính sách của các website nguồn.*
+
+**Liên hệ & Hỗ trợ**
+**Author**: `muonroi`
+
+*Liên hệ Telegram (cho cảnh báo proxy, thông báo crawl xong): Thiết lập TELEGRAM_BOT_TOKEN và TELEGRAM_CHAT_ID trong file .env.*
