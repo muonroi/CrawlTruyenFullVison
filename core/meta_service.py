@@ -3,10 +3,9 @@ import os
 import shutil
 import time
 from typing import Any, Dict, Optional
+
 from utils.logger import logger
 from utils.io_utils import ensure_backup_folder, ensure_directory_exists, safe_write_file, safe_write_json
-
-
 async def save_story_metadata_file(
     story_base_data: Dict[str, Any],
     current_discovery_genre_data: Optional[Dict[str, Any]],
@@ -64,20 +63,7 @@ async def save_story_metadata_file(
     except Exception as e:
         logger.error(f"LỖI khi lưu metadata '{metadata_file}': {e}")
         return metadata_to_save
-
     
-def is_story_complete(story_folder_path: str, total_chapters_on_site: int) -> bool:
-    """Kiểm tra số file .txt đã crawl có đủ không."""
-    files = [f for f in os.listdir(story_folder_path) if f.endswith('.txt')]
-    return len(files) >= total_chapters_on_site
-
-def sanitize_filename(filename):
-    # Đơn giản hóa tên file, tránh lỗi tên
-    import re
-    filename = re.sub(r'[\\/*?:"<>|]', "_", filename)
-    return filename.strip()
-
-
 async def add_missing_story(story_title, story_url, total_chapters, crawled_chapters, filename="missing_chapters.json"):
     """Thêm truyện thiếu chương vào file json."""
     path = os.path.join(os.getcwd(), filename)
@@ -99,7 +85,6 @@ async def add_missing_story(story_title, story_url, total_chapters, crawled_chap
     })
     await safe_write_json(path,data)
 
-
 def backup_crawl_state(state_file='crawl_state.json', backup_folder="backup"):
     if not os.path.exists(state_file):
         print(f"[Backup] Không tìm thấy file state: {state_file} => Bỏ qua backup.")
@@ -110,3 +95,7 @@ def backup_crawl_state(state_file='crawl_state.json', backup_folder="backup"):
     backup_file = os.path.join(backup_folder, f"{base_name}.bak_{ts}")
     shutil.copy(state_file, backup_file)
 
+def is_story_complete(story_folder_path: str, total_chapters_on_site: int) -> bool:
+    """Kiểm tra số file .txt đã crawl có đủ không."""
+    files = [f for f in os.listdir(story_folder_path) if f.endswith('.txt')]
+    return len(files) >= total_chapters_on_site

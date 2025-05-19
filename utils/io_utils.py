@@ -116,3 +116,9 @@ async def safe_write_file(file_path, content, timeout=500, auto_remove_lock=True
                     logger.warning(f"Đã tự động xóa file lock: {lock_path}")
             except Exception as e:
                 logger.error(f"Lỗi khi tự động xóa lock file: {e}")
+
+def sanitize_filename(filename):
+    # Đơn giản hóa tên file, tránh lỗi tên
+    import re
+    filename = re.sub(r'[\\/*?:"<>|]', "_", filename)
+    return filename.strip()

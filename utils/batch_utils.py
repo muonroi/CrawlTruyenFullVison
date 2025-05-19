@@ -15,7 +15,6 @@ def split_batches(items, num_batches):
     return [b for b in batches if b]
 
 
-
 async def smart_delay(base=REQUEST_DELAY):
     delay = random.uniform(base*0.7, base*1.3)
     await asyncio.sleep(delay)
