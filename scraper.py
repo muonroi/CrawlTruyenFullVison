@@ -3,7 +3,7 @@ import time
 import cloudscraper
 from typing import Optional, Dict
 import cloudscraper
-from config.proxy_provider import remove_bad_proxy
+from config.proxy_provider import remove_bad_proxy, should_blacklist_proxy
 from utils.logger import logger
 from config.config import (
     USE_PROXY,
@@ -74,8 +74,13 @@ def make_request(url, headers_override=None, timeout=30, max_retries=5):
             if resp.status_code == 403:
                 logger.warning(f"Proxy {proxy_url} bị 403 Forbidden, sẽ thử proxy khác.")
                 tried_proxies.add(proxy_url)
-                remove_bad_proxy(proxy_url)
+                if should_blacklist_proxy(proxy_url, LOADED_PROXIES):
+                    remove_bad_proxy(proxy_url)
+                else:
+                    logger.warning(f"[Proxy] Proxy xoay hoặc pool chỉ có 1 proxy, chỉ sleep rồi thử lại, không remove: {proxy_url}")
+                    time.sleep(10)
                 continue
+
             resp.raise_for_status()
             return resp
         except Exception as ex:
@@ -83,7 +88,12 @@ def make_request(url, headers_override=None, timeout=30, max_retries=5):
             last_exception = ex
             if proxy_url:
                 tried_proxies.add(proxy_url)
-                remove_bad_proxy(proxy_url)
+                # PATCH: Không remove proxy nếu là proxy xoay hoặc chỉ có 1 proxy
+                if should_blacklist_proxy(proxy_url, LOADED_PROXIES):
+                    remove_bad_proxy(proxy_url)
+                else:
+                    logger.warning(f"[Proxy] Proxy xoay hoặc pool chỉ có 1 proxy, chỉ sleep rồi thử lại, không remove: {proxy_url}")
+                    time.sleep(10)  # sleep lâu để backend đổi IP
             # Thử lại với proxy khác
 
     logger.error(f"[make_request] Đã thử {max_retries} proxy nhưng vẫn lỗi: {last_exception}")
