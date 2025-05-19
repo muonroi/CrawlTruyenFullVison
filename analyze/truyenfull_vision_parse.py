@@ -4,7 +4,7 @@ from typing import List, Tuple, Optional, Dict, Any
 from bs4 import BeautifulSoup
 from urllib.parse import urljoin, urlparse
 
-from utils.html_parser import extract_chapter_content
+from utils.html_parser import extract_chapter_content, get_total_pages_category
 from utils.logger import logger
 from scraper import make_request
 from config.config import (
@@ -318,3 +318,37 @@ async def get_story_chapter_content(
         return None
     return content or None
 
+async def get_all_stories_from_genre_with_page_check(genre_name, genre_url, max_pages=None):
+    from bs4 import BeautifulSoup
+    import aiohttp
+
+    all_stories = []
+    visited = set()
+    current_url = genre_url
+    page = 1
+    total_pages = None
+
+    async with aiohttp.ClientSession() as session:
+        while current_url and current_url not in visited and (max_pages is None or page <= max_pages):
+            visited.add(current_url)
+            print(f"[Crawl] Page {page}: {current_url}")
+            async with session.get(current_url) as resp:
+                html = await resp.text()
+            soup = BeautifulSoup(html, "html.parser")
+            # Parse stories từ trang này như cũ
+            stories, next_page_url = await get_stories_from_genre_page(current_url)
+            if not stories:
+                break
+            all_stories.extend([s for s in stories if s['url'] not in {x['url'] for x in all_stories}])
+
+            # Ở trang đầu tiên, lấy tổng số trang
+            if page == 1:
+                total_pages = get_total_pages_category(html)
+                print(f"[INFO] Category {genre_name} có {total_pages} trang.")
+
+            if total_pages and page >= total_pages:
+                break
+            current_url = next_page_url
+            page += 1
+    logger.info(f"Category {genre_name}: crawl được {len(all_stories)} truyện/{page-1}/{total_pages} trang.")
+    return all_stories, total_pages, page-1

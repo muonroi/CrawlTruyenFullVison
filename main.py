@@ -409,14 +409,34 @@ async def process_genre_item(
     state_file = get_state_file(site_key)
     await save_crawl_state(crawl_state, state_file)
 
-    try:
-        stories = await adapter.get_all_stories_from_genre(genre_data['name'], genre_data['url'], MAX_STORIES_PER_GENRE_PAGE)
-        if not stories or len(stories) == 0:
-            raise Exception(f"Danh sách truyện rỗng cho genre {genre_data['name']} ({genre_data['url']})")
-    except Exception as ex:
-        logger.error(f"Lỗi khi crawl genre {genre_data['name']} ({genre_data['url']}): {ex}")
-        log_failed_genre(genre_data)
-        return
+    retry_time = 0
+    max_retry = 5
+
+    while True:
+        try:
+            stories, total_pages, crawled_pages = await adapter.get_all_stories_from_genre_with_page_check(
+                genre_data['name'], genre_data['url'], MAX_STORIES_PER_GENRE_PAGE
+            )
+            if not stories or len(stories) == 0:
+                raise Exception(f"Danh sách truyện rỗng cho genre {genre_data['name']} ({genre_data['url']})")
+
+            if total_pages and (crawled_pages is not None) and crawled_pages < total_pages:
+                logger.warning(
+                    f"Thể loại {genre_data['name']} chỉ crawl được {crawled_pages}/{total_pages} trang, sẽ retry lần {retry_time+1}..."
+                )
+                retry_time += 1
+                if retry_time >= max_retry:
+                    logger.error(f"Thể loại {genre_data['name']} không crawl đủ số trang sau {max_retry} lần.")
+                    log_failed_genre(genre_data)
+                    return
+                await asyncio.sleep(5)
+                continue  # Retry tiếp
+            break
+        except Exception as ex:
+            logger.error(f"Lỗi khi crawl genre {genre_data['name']} ({genre_data['url']}): {ex}")
+            log_failed_genre(genre_data)
+            return
+
     completed_global = set(crawl_state.get('globally_completed_story_urls', []))
     start_idx = crawl_state.get('current_story_index_in_genre', 0)
 
@@ -450,6 +470,7 @@ async def process_genre_item(
         'current_story_index_in_genre', 'current_genre_url',
         'previous_genre_url_in_state_for_stories'
     ], state_file)
+
 
 async def retry_failed_genres(adapter, site_key):
     round_idx = 0
