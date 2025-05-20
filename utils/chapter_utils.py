@@ -74,7 +74,7 @@ async def queue_failed_chapter(chapter_data, filename='chapter_retry_queue.json'
     for item in data:
         if item.get("url") == chapter_data.get("url"):
             return
-    data.append(chapter_data)
+    data.append(chapter_data)  # type: ignore
     await safe_write_json(filename,data)
 
 async def async_download_and_save_chapter(

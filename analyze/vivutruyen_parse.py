@@ -1,8 +1,7 @@
 import re
 from bs4 import BeautifulSoup
-from scraper import make_request
-from config.config import BASE_URLS
 import asyncio
+from scraper import make_request
 
 def absolutize(url):
     if url.startswith("http"):
@@ -18,11 +17,11 @@ async def get_all_genres(home_url):
     genres = []
     for ul in soup.select('.dropdown_columns ul'):
         for li in ul.find_all('li'):
-            a = li.find('a')
-            if a and a.has_attr('href'):
+            a = li.find('a') #type:ignore
+            if a and a.has_attr('href'): #type:ignore
                 genres.append({
-                    'name': a.get_text(strip=True),
-                    'url': absolutize(a['href'])
+                    'name': a.get_text(strip=True), #type:ignore
+                    'url': absolutize(a['href']) #type:ignore
                 })
     return genres
 
@@ -44,8 +43,8 @@ async def get_stories_from_genre(genre_url, max_pages=None):
         for item in story_items:
             a = item.find('a', href=True, title=True)
             if a:
-                title = a['title'].strip()
-                url = absolutize(a['href'])
+                title = a['title'].strip() #type:ignore
+                url = absolutize(a['href']) #type:ignore
                 found_stories_on_page = True
                 stories.append({'title': title, 'url': url})
         if not found_stories_on_page:
@@ -87,19 +86,19 @@ async def get_story_details(story_url, story_title):
             for li in uls.find_all('li'):
                 t = li.text.strip().lower()
                 if 'tác giả' in t:
-                    a = li.find('a')
-                    author = a.text.strip() if a else li.text.replace("Tác giả :", "").strip()
+                    a = li.find('a') #type:ignore
+                    author = a.text.strip() if a else li.text.replace("Tác giả :", "").strip() #type:ignore
                 if 'thể loại' in t:
-                    for cat in li.find_all('a'):
+                    for cat in li.find_all('a'): #type:ignore
                         categories.append({
                             'name': cat.text.strip(),
-                            'url': absolutize(cat['href'])
+                            'url': absolutize(cat['href']) #type:ignore
                         })
                 if 'số chương' in t:
-                    total_chapters = int(re.search(r'(\d+)', li.text).group(1)) if re.search(r'(\d+)', li.text) else 0
+                    total_chapters = int(re.search(r'(\d+)', li.text).group(1)) if re.search(r'(\d+)', li.text) else 0 #type:ignore
                 if 'trạng thái' in t:
-                    span = li.find('span')
-                    status = span.text.strip() if span else li.text.replace("Trạng thái :", "").strip()
+                    span = li.find('span') #type:ignore
+                    status = span.text.strip() if span else li.text.replace("Trạng thái :", "").strip() #type:ignore
     # Lấy mô tả
     desc = soup.select_one('#gioithieu [itemprop="description"]')
     if desc:
@@ -115,43 +114,6 @@ async def get_story_details(story_url, story_title):
         'url': story_url
     }
 
-async def get_chapters_from_story(story_url, max_pages=None):
-    loop = asyncio.get_event_loop()
-    resp = await loop.run_in_executor(None, make_request, story_url)
-    if not resp:
-        return []
-    soup = BeautifulSoup(resp.text, "html.parser")
-    chapters = []
-    chapter_list = soup.select('.book-info-chapter .chapter-list .chap-item a')
-    for a in chapter_list:
-        title = a.get_text(strip=True)
-        url = absolutize(a['href'])
-        chapters.append({'title': title, 'url': url})
-    # Check phân trang chương
-    pag = soup.select_one('.phan-trang ul')
-    max_page = 1
-    if pag:
-        # Tìm số trang cuối cùng
-        last_page = pag.select('li.page-grey a')
-        if last_page:
-            try:
-                max_page = int(last_page[-1].get('data-ci-pagination-page', '1'))
-            except Exception:
-                pass
-    # Nếu có nhiều trang, crawl từng trang
-    for page in range(2, max_page+1):
-        url = f"{story_url}/{page}"
-        resp = await loop.run_in_executor(None, make_request, url)
-        if not resp:
-            continue
-        soup = BeautifulSoup(resp.text, "html.parser")
-        chapter_list = soup.select('.book-info-chapter .chapter-list .chap-item a')
-        for a in chapter_list:
-            title = a.get_text(strip=True)
-            url = absolutize(a['href'])
-            chapters.append({'title': title, 'url': url})
-    return chapters
-
 async def get_story_chapter_content(chapter_url, chapter_title):
     loop = asyncio.get_event_loop()
     resp = await loop.run_in_executor(None, make_request, chapter_url)
@@ -164,3 +126,74 @@ async def get_story_chapter_content(chapter_url, chapter_title):
     # Loại bỏ <br>, giữ dòng
     text = content_div.get_text(separator="\n", strip=True)
     return text
+
+async def get_chapter_list(self, story_url, story_title, max_pages=None, total_chapters=None):
+    import re
+    from bs4 import BeautifulSoup
+    from scraper import make_request
+    import asyncio
+
+    def absolutize(url):
+        if url.startswith("http"):
+            return url
+        return "https://vivutruyen.com" + url
+
+    loop = asyncio.get_event_loop()
+    resp = await loop.run_in_executor(None, make_request, story_url)
+    if not resp:
+        return []
+    soup = BeautifulSoup(resp.text, "html.parser")
+
+    # Lấy list chương trang đầu
+    all_chapters = []
+    chapter_list = soup.select('.book-info-chapter .chapter-list .chap-item a')
+    for a in chapter_list:
+        title = a.get_text(strip=True)
+        url = absolutize(a['href'])
+        all_chapters.append({'title': title, 'url': url})
+
+    # Phân trang: lấy số page cuối cùng
+    total_pages = 1
+    pag = soup.select_one('.phan-trang ul')
+    if pag:
+        page_links = pag.select('a[data-ci-pagination-page]')
+        if page_links:
+            try:
+                total_pages = max(int(a['data-ci-pagination-page']) for a in page_links) #type:ignore
+            except Exception:
+                nums = [int(a.get_text()) for a in page_links if a.get_text().isdigit()]
+                if nums:
+                    total_pages = max(nums)
+    # Parse story_id từ url
+    match = re.search(r'/truyen/[^/]+/(\d+)', story_url)
+    story_id = match.group(1) if match else None
+    if not story_id:
+        for a in pag.select('a[href]'): #type:ignore
+            m = re.search(r'/truyen/[^/]+/(\d+)/', a['href']) #type:ignore
+            if m:
+                story_id = m.group(1)
+                break
+    if not story_id:
+        print("[ERROR] Không lấy được story_id từ URL hoặc phân trang.")
+        return all_chapters
+
+    # Lặp các page còn lại
+    for page in range(2, total_pages+1):
+        page_url = f"{story_url}/{story_id}/{page}"
+        resp = await loop.run_in_executor(None, make_request, page_url)
+        if not resp:
+            break
+        soup = BeautifulSoup(resp.text, "html.parser")
+        chapter_list = soup.select('.book-info-chapter .chapter-list .chap-item a')
+        for a in chapter_list:
+            title = a.get_text(strip=True)
+            url = absolutize(a['href'])
+            all_chapters.append({'title': title, 'url': url})
+
+    # Đảo ngược thứ tự
+    all_chapters = list(reversed(all_chapters))
+    # Debug số chương
+    print(f"[vivutruyen] Lấy được tổng cộng {len(all_chapters)} chương")
+    if all_chapters:
+        print(f"  Chương đầu: {all_chapters[0]['title']}, chương cuối: {all_chapters[-1]['title']}")
+    return all_chapters
