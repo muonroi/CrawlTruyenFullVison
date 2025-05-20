@@ -103,6 +103,34 @@ def get_auto_batch_count(fixed=None, default=10, min_batch=1, max_batch=20, num_
         batch = min(batch, num_items)
     return min(batch, max_batch)
 
+def parse_args():
+    import argparse
+    parser = argparse.ArgumentParser()
+    parser.add_argument('--force-unskip', action='store_true', help='Bỏ qua skip_crawl để crawl lại toàn bộ truyện skip')
+    return parser.parse_args()
+
+def unskip_all_stories(data_folder):
+    import os, json
+    for folder in os.listdir(data_folder):
+        story_folder = os.path.join(data_folder, folder)
+        if not os.path.isdir(story_folder): continue
+        meta_path = os.path.join(story_folder, "metadata.json")
+        if not os.path.exists(meta_path): continue
+        with open(meta_path, "r", encoding="utf-8") as f:
+            meta = json.load(f)
+        changed = False
+        if meta.get("skip_crawl"):
+            meta.pop("skip_crawl", None)
+            changed = True
+        if "meta_retry_count" in meta:
+            meta.pop("meta_retry_count", None)
+            changed = True
+        if changed:
+            with open(meta_path, "w", encoding="utf-8") as f:
+                json.dump(meta, f, ensure_ascii=False, indent=4)
+            print(f"Unskipped: {meta.get('title')}")
+
+
 async def fix_metadata_with_retry(metadata, metadata_path, story_folder):
     """Retry tối đa 3 lần lấy lại metadata nếu thiếu total_chapters_on_site.
     Nếu fail, set skip_crawl và return False."""
@@ -135,7 +163,7 @@ async def fix_metadata_with_retry(metadata, metadata_path, story_folder):
         return False
     return True
 
-async def check_and_crawl_missing_all_stories(adapter, home_page_url, site_key):
+async def check_and_crawl_missing_all_stories(adapter, home_page_url, site_key, force_unskip=False):
     state_file = get_missing_worker_state_file(site_key)   # <--- dùng file phụ!
     crawl_state = await load_crawl_state(state_file)
     all_genres = await get_all_genres(home_page_url)
@@ -165,6 +193,20 @@ async def check_and_crawl_missing_all_stories(adapter, home_page_url, site_key):
 
         with open(metadata_path, "r", encoding="utf-8") as f:
             metadata = json.load(f)
+
+                # Nếu force_unskip: Xoá skip_crawl & meta_retry_count nếu có
+        if force_unskip:
+            changed = False
+            if metadata.get("skip_crawl"):
+                metadata.pop("skip_crawl", None)
+                changed = True
+            if "meta_retry_count" in metadata:
+                metadata.pop("meta_retry_count", None)
+                changed = True
+            if changed:
+                with open(metadata_path, "w", encoding="utf-8") as f:
+                    json.dump(metadata, f, ensure_ascii=False, indent=4)
+                print(f"[UNSKIP] Tự động unskip: {metadata.get('title')}")
         # Skip nếu đã flag
         if metadata.get("skip_crawl", False):
             print(f"[SKIP] Truyện '{metadata.get('title')}' đã bị đánh dấu bỏ qua (skip_crawl), không crawl lại nữa.")
@@ -273,13 +315,13 @@ async def check_and_crawl_missing_all_stories(adapter, home_page_url, site_key):
                     await check_genre_complete_and_notify(genre_name, genre_url)
                 genre_complete_checked.add(genre_name)
 
-async def loop_once_multi_sites():
+async def loop_once_multi_sites(force_unskip=False):
     now = datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')
     print(f"\n===== [START] Check missing for all sites at {now} =====")
     tasks = []
     for site_key, url in BASE_URLS.items():
         adapter = get_adapter(site_key)
-        tasks.append(check_and_crawl_missing_all_stories(adapter, url, site_key=site_key))
+        tasks.append(check_and_crawl_missing_all_stories(adapter, url, site_key=site_key, force_unskip=force_unskip))
     try:
         await asyncio.gather(*tasks)
     except Exception as e:
@@ -288,4 +330,5 @@ async def loop_once_multi_sites():
 
 
 if __name__ == "__main__":
-    asyncio.run(loop_once_multi_sites())
+    args = parse_args()
+    asyncio.run(loop_once_multi_sites(force_unskip=args.force_unskip))
