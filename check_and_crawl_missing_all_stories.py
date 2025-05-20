@@ -130,8 +130,7 @@ def unskip_all_stories(data_folder):
                 json.dump(meta, f, ensure_ascii=False, indent=4)
             print(f"Unskipped: {meta.get('title')}")
 
-
-async def fix_metadata_with_retry(metadata, metadata_path, story_folder, site_key=None):
+async def fix_metadata_with_retry(metadata, metadata_path, story_folder, site_key=None, adapter=None):
     """
     Retry tối đa 3 lần lấy lại metadata nếu thiếu total_chapters_on_site hoặc thiếu url/title.
     Nếu fail, set skip_crawl và return False.
@@ -152,13 +151,11 @@ async def fix_metadata_with_retry(metadata, metadata_path, story_folder, site_ke
         # Ưu tiên lấy url từ sources đúng site_key
         if not url and metadata.get("sources"):
             url_found = None
-            # Ưu tiên đúng site_key
             if site_key:
                 for src in metadata["sources"]:
                     if src.get("site") == site_key and src.get("url"):
                         url_found = src["url"]
                         break
-            # Nếu không tìm được, lấy url đầu tiên có
             if not url_found:
                 for src in metadata["sources"]:
                     if src.get("url"):
@@ -193,8 +190,45 @@ async def fix_metadata_with_retry(metadata, metadata_path, story_folder, site_ke
             metadata["title"] = title
         retry_count += 1
 
+    # === BỔ SUNG: fallback đoán url theo slug folder + tìm qua category ===
+    if not url:
+        # 1. Đoán url dựa trên slug folder và BASE_URL
+        from config.config import BASE_URLS
+        if site_key and site_key in BASE_URLS:
+            base_url = BASE_URLS[site_key].rstrip("/")
+            slug = os.path.basename(story_folder)
+            guessed_url = f"{base_url}/{slug}"
+            # Test thử request vào guessed_url
+            try:
+                from scraper import make_request
+                resp = await asyncio.get_event_loop().run_in_executor(None, make_request, guessed_url)
+                if resp and getattr(resp, "status_code", None) == 200:
+                    url = guessed_url
+                    metadata["url"] = url
+                    print(f"[GUESS] Đã đoán lại url cho '{story_folder}': {url}")
+            except Exception as e:
+                print(f"[GUESS-FAIL] Lỗi khi thử guessed url: {e}")
+
+        # 2. Tìm lại url trong danh sách truyện của category
+        if not url and metadata.get("categories") and adapter is not None:
+            try:
+                for cat in metadata["categories"]:
+                    stories = await adapter.get_all_stories_from_genre(cat["name"], cat["url"])
+                    for story in stories:
+                        if story.get("title", "").strip().lower() == (metadata.get("title") or "").strip().lower():
+                            url = story["url"]
+                            metadata["url"] = url
+                            print(f"[FIND] Đã tìm lại url từ category '{cat['name']}': {url}")
+                            break
+                    if url:
+                        break
+            except Exception as e:
+                print(f"[FIND-FAIL] Lỗi khi tìm url trong category: {e}")
+
+    # === END BỔ SUNG ===
+
     if not url or not title:
-        print(f"[SKIP] '{story_folder}' thiếu url/title (đã thử 3 lần), không thể lấy lại metadata!")
+        print(f"[SKIP] '{story_folder}' thiếu url/title (đã thử 3 lần + fallback), không thể lấy lại metadata!")
         metadata["skip_crawl"] = True
         metadata["skip_reason"] = "missing_url_title"
         with open(metadata_path, "w", encoding="utf-8") as f:
@@ -205,6 +239,7 @@ async def fix_metadata_with_retry(metadata, metadata_path, story_folder, site_ke
     retry_count = metadata.get("meta_retry_count", 0)
     while retry_count < 3 and (not total_chapters or total_chapters < 1):
         print(f"[SKIP] '{story_folder}' thiếu total_chapters_on_site -> [FIXED] Đang lấy lại metadata lần {retry_count+1} qua proxy...")
+        # Lưu ý: phải truyền đúng adapter cho hàm này (bạn cần truyền adapter vào khi gọi fix_metadata_with_retry)
         details = await get_story_details(url, title)
         retry_count += 1
         metadata["meta_retry_count"] = retry_count
@@ -226,7 +261,6 @@ async def fix_metadata_with_retry(metadata, metadata_path, story_folder, site_ke
             json.dump(metadata, f, ensure_ascii=False, indent=4)
         return False
     return True
-
 
 
 async def check_and_crawl_missing_all_stories(adapter, home_page_url, site_key, force_unskip=False):
@@ -278,7 +312,7 @@ async def check_and_crawl_missing_all_stories(adapter, home_page_url, site_key, 
             print(f"[SKIP] Truyện '{metadata.get('title')}' đã bị đánh dấu bỏ qua (skip_crawl), không crawl lại nữa.")
             continue
         # Auto fix metadata nếu thiếu (và skip nếu quá 3 lần)
-        if not await fix_metadata_with_retry(metadata, metadata_path, story_folder):
+        if not await fix_metadata_with_retry(metadata, metadata_path, story_folder, site_key=site_key, adapter=adapter):
             continue
 
         total_chapters = metadata.get("total_chapters_on_site")
@@ -341,7 +375,7 @@ async def check_and_crawl_missing_all_stories(adapter, home_page_url, site_key, 
             print(f"[SKIP] Truyện '{metadata.get('title')}' đã bị đánh dấu bỏ qua (skip_crawl), không crawl lại nữa.")
             continue
         # Lần nữa, fix meta nếu thiếu (tránh lỗi do có thể có truyện chưa retry)
-        if not await fix_metadata_with_retry(metadata, metadata_path, story_folder):
+        if not await fix_metadata_with_retry(metadata, metadata_path, story_folder, site_key=site_key, adapter=adapter):
             continue
 
         total_chapters = metadata.get("total_chapters_on_site")
