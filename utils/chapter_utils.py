@@ -63,9 +63,12 @@ async def queue_failed_chapter(chapter_data, filename='chapter_retry_queue.json'
     """Ghi chương lỗi vào queue JSON để retry."""
     path = os.path.join(os.getcwd(), filename)
     # Đọc danh sách cũ
-    if os.path.exists(path):
+    try:
         with open(path, "r", encoding="utf-8") as f:
             data = json.load(f)
+    except json.JSONDecodeError:
+        print(f"[ERROR] File {path} bị lỗi hoặc rỗng, sẽ tạo lại file mới.")
+        data = {}
     else:
         data = []
     for item in data:
