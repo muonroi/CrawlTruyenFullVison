@@ -131,7 +131,7 @@ def unskip_all_stories(data_folder):
             print(f"Unskipped: {meta.get('title')}")
 
 
-async def fix_metadata_with_retry(metadata, metadata_path, story_folder):
+async def fix_metadata_with_retry(metadata, metadata_path, story_folder, site_key=None):
     """
     Retry tối đa 3 lần lấy lại metadata nếu thiếu total_chapters_on_site hoặc thiếu url/title.
     Nếu fail, set skip_crawl và return False.
@@ -145,20 +145,47 @@ async def fix_metadata_with_retry(metadata, metadata_path, story_folder):
     url = metadata.get("url")
     title = metadata.get("title")
 
-    # Thử lấy lại url/title nếu thiếu
+    # Bổ sung: lấy lại url/title từ sources theo site_key
     for _ in range(3):
         if url and title:
             break
-        # Thử lấy lại url/title từ backup, source, hoặc folder name (tùy vào pipeline của bạn)
-        # Ví dụ: nếu có trường "sources" chứa url
+        # Ưu tiên lấy url từ sources đúng site_key
         if not url and metadata.get("sources"):
-            for src in metadata["sources"]:
-                if src.get("url"):
-                    url = src["url"]
-                    print(f"[FIX] Bổ sung lại url cho '{story_folder}' từ sources: {url}")
-                    metadata["url"] = url
-                    break
-        # Thử lấy lại title từ folder name
+            url_found = None
+            # Ưu tiên đúng site_key
+            if site_key:
+                for src in metadata["sources"]:
+                    if src.get("site") == site_key and src.get("url"):
+                        url_found = src["url"]
+                        break
+            # Nếu không tìm được, lấy url đầu tiên có
+            if not url_found:
+                for src in metadata["sources"]:
+                    if src.get("url"):
+                        url_found = src["url"]
+                        break
+            if url_found:
+                url = url_found
+                print(f"[FIX] Bổ sung lại url cho '{story_folder}' theo site_key '{site_key}': {url}")
+                metadata["url"] = url
+        # Lấy lại title từ sources (nếu có title hợp lệ), ưu tiên đúng site_key
+        if not title and metadata.get("sources"):
+            title_found = None
+            if site_key:
+                for src in metadata["sources"]:
+                    if src.get("site") == site_key and src.get("title"):
+                        title_found = src["title"]
+                        break
+            if not title_found:
+                for src in metadata["sources"]:
+                    if src.get("title"):
+                        title_found = src["title"]
+                        break
+            if title_found:
+                title = title_found
+                print(f"[FIX] Bổ sung lại title cho '{story_folder}' từ sources: {title}")
+                metadata["title"] = title
+        # Nếu vẫn chưa có, lấy lại title từ folder
         if not title:
             folder_title = os.path.basename(story_folder).replace("-", " ").title()
             print(f"[FIX] Bổ sung lại title cho '{story_folder}' từ folder: {folder_title}")
@@ -199,6 +226,7 @@ async def fix_metadata_with_retry(metadata, metadata_path, story_folder):
             json.dump(metadata, f, ensure_ascii=False, indent=4)
         return False
     return True
+
 
 
 async def check_and_crawl_missing_all_stories(adapter, home_page_url, site_key, force_unskip=False):
