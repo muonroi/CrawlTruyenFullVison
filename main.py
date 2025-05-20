@@ -8,8 +8,7 @@ import aiohttp
 import os
 from urllib.parse import urlparse
 from typing import Dict, Any, List, Tuple
-
-from dotenv import load_dotenv
+from aiogram import Bot, Dispatcher, types, F, Router
 from adapters.base_site_adapter import BaseSiteAdapter
 from adapters.factory import get_adapter
 from utils.batch_utils import smart_delay, split_batches
@@ -30,7 +29,8 @@ from utils.meta_utils import add_missing_story, backup_crawl_state, sanitize_fil
 from utils.notifier import send_telegram_notify
 from utils.state_utils import clear_specific_state_keys, load_crawl_state, merge_all_missing_workers_to_main, save_crawl_state
 
-
+router = Router()
+is_crawling = False
 GENRE_SEM = asyncio.Semaphore(GENRE_ASYNC_LIMIT)
 BATCH_SEMAPHORE_LIMIT = 5
 
@@ -529,11 +529,16 @@ async def retry_failed_genres(adapter, site_key):
             logger.info("Tất cả genre fail đã retry thành công.")
             break
 
-
 async def run_crawler(adapter, site_key):
+    import aiohttp
+    from utils.notifier import send_telegram_notify
+
     await load_proxies(PROXIES_FILE)
     homepage_url, crawl_state = await initialize_and_log_setup_with_state(site_key)
     genres = await adapter.get_genres()
+    total_genres = len(genres)
+    genres_done = 0
+
     async with aiohttp.ClientSession() as session:
         batches = split_batches(genres, GENRE_BATCH_SIZE)
         for batch_idx, genre_batch in enumerate(batches):
@@ -541,9 +546,22 @@ async def run_crawler(adapter, site_key):
             for genre in genre_batch:
                 tasks.append(process_genre_with_limit(session, genre, crawl_state, adapter, site_key))
             logger.info(f"=== Đang crawl batch thể loại {batch_idx+1}/{len(batches)} ({len(genre_batch)} genres song song) ===")
-            await asyncio.gather(*tasks)
+            results = await asyncio.gather(*tasks)
+            genres_done += len(genre_batch)
+            percent = int(genres_done * 100 / total_genres)
+            msg = f"⏳ Tiến độ: {genres_done}/{total_genres} thể loại ({percent}%) đã crawl xong cho {site_key}."
+            logger.info(msg)
+            try:
+                await send_telegram_notify(msg)
+            except Exception:
+                pass  # Nếu chạy không qua Telegram, có thể bỏ qua notify lỗi
             await smart_delay()
+
     logger.info("=== HOÀN TẤT TOÀN BỘ QUÁ TRÌNH CRAWL ===")
+    try:
+        await send_telegram_notify(f"✅ HOÀN TẤT crawl full site {site_key}!")
+    except Exception:
+        pass
 
 
 if __name__ == '__main__':

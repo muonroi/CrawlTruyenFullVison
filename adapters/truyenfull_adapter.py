@@ -1,18 +1,20 @@
+from bs4 import BeautifulSoup
 from adapters.base_site_adapter import BaseSiteAdapter
 from analyze.truyenfull_vision_parse import (
     get_all_genres,
-    get_all_stories_from_genre_with_page_check,
     get_stories_from_genre_page,
     get_all_stories_from_genre,
     get_story_details,
     get_chapters_from_story,
     get_story_chapter_content,
+    get_all_stories_from_genre_with_page_check
 )
 from config.config import BASE_URLS
 
 class TruyenFullAdapter(BaseSiteAdapter):
     SITE_KEY = "truyenfull"
     BASE_URL = BASE_URLS[SITE_KEY]
+
     async def get_genres(self):
         return await get_all_genres(self.BASE_URL)
 
@@ -33,3 +35,10 @@ class TruyenFullAdapter(BaseSiteAdapter):
     
     async def get_all_stories_from_genre_with_page_check(self, genre_name, genre_url, max_pages=None):
         return await get_all_stories_from_genre_with_page_check(genre_name, genre_url, max_pages)
+
+    async def extract_chapter_content(self, html: str) -> str:
+        soup = BeautifulSoup(html, "html.parser")
+        chapter_div = soup.find("div", id="chapter-c") or soup.find("div", class_="chapter-c")
+        if not chapter_div:
+            return ""
+        return chapter_div.get_text(separator="\n")
