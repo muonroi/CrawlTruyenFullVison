@@ -148,7 +148,6 @@ async def get_all_stories_from_category_with_page_check(self, genre_name, genre_
 
 
 async def get_chapters_from_story(self, story_url):
-    import asyncio
     loop = asyncio.get_event_loop()
     chapters = []
     page_num = 1

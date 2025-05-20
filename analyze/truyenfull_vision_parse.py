@@ -249,6 +249,7 @@ async def get_chapters_from_story(
         return []
 
     # 2. Lấy tổng số trang chương
+    total_pages = 1
     total_page_input = cont.find("input", {"id": "total-page"})
     if total_page_input:
         try:
