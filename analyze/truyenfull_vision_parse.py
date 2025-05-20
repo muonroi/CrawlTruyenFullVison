@@ -236,7 +236,7 @@ async def get_chapters_from_story(
     logger.info(f"Truyện '{story_title}': Lấy chương từ {story_url}")
     loop = asyncio.get_event_loop()
     chapters: List[Dict[str, str]] = []
-
+    max_pages = None
     # 1. Lấy trang đầu tiên
     response = await loop.run_in_executor(None, make_request, story_url)
     if not response or not getattr(response, 'text', None):
