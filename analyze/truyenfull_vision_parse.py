@@ -114,7 +114,8 @@ async def get_story_details(story_url: str, story_title_for_log: str) -> Dict[st
 
     # 8. Total chapters
     num_chapters = None
-    # 8.1 Tìm trong label, span, hoặc input
+    # (giữ lại code lấy label cũ nếu có)
+    # Tìm trong label, span, hoặc input
     for label in soup.select('.info-holder .label-success, .info .label-success, span.label.label-success'):
         txt = label.get_text()
         if 'chương' in txt.lower():
@@ -122,15 +123,16 @@ async def get_story_details(story_url: str, story_title_for_log: str) -> Dict[st
             if match:
                 num_chapters = int(match.group(1))
                 break
-    # 8.2 Fallback: đếm <li> trong ul.list-chapter nếu cần
-    if not num_chapters or num_chapters < 2:
-        chapter_lis = []
-        for ul in soup.select("ul.list-chapter, ul.l-chapters"):
-            chapter_lis += ul.find_all("li")
-        if len(chapter_lis) > (num_chapters or 0):
-            num_chapters = len(chapter_lis)
-    details["total_chapters_on_site"] = num_chapters
 
+    # Nếu không có hoặc < 50 thì paginate để đếm toàn bộ chương
+    if not num_chapters or num_chapters < 100:
+        logger.warning(f"Không tìm thấy tổng số chương hoặc số nhỏ, paginate để đếm chính xác số chương!")
+        from adapters.truyenfull_adapter import TruyenFullAdapter
+        # Dùng hàm crawl chapter list (nó sẽ tự động phân trang), LƯU Ý: truyền max_pages=None để lấy hết!
+        chapters = await get_chapters_from_story(story_url, story_title_for_log, max_pages=None)
+        num_chapters = len(chapters)
+
+    details["total_chapters_on_site"] = num_chapters
     return details
 
 
@@ -247,14 +249,12 @@ async def get_chapters_from_story(
         return []
 
     # 2. Lấy tổng số trang chương
-    total_pages = 1
-    total_page_input = cont.find("input", {"id": "total-page"}) #type: ignore
+    total_page_input = cont.find("input", {"id": "total-page"})
     if total_page_input:
         try:
-            total_pages = int(total_page_input["value"])#type: ignore
+            total_pages = int(total_page_input["value"])
         except Exception:
             total_pages = 1
-
     if max_pages:
         total_pages = min(total_pages, max_pages)
 

@@ -113,7 +113,7 @@ async def fix_metadata_with_retry(metadata, metadata_path, story_folder):
     total_chapters = metadata.get("total_chapters_on_site")
     while retry_count < 3 and (not total_chapters or total_chapters < 1):
         print(f"[SKIP] '{story_folder}' thiếu total_chapters_on_site -> [FIXED] Đang lấy lại metadata lần {retry_count+1} qua proxy...")
-        details = await get_story_details(metadata.get("url"), metadata.get("title"))
+        details = await get_story_details(metadata.get("url"), metadata.get("title")) 
         retry_count += 1
         metadata["meta_retry_count"] = retry_count
         if details and details.get("total_chapters_on_site"):
