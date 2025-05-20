@@ -78,14 +78,13 @@ def main():
                 "status": "OK" if ok else "ERROR",
                 "message": msg
             }
-            move_to_data_folder(story_folder, genre_name)
-            # if not ok:
-            #     move_to_data_folder(story_folder, genre_name)
-            #     error_stories.append(item)
-            # else:
-            #     ok_count += 1
-            # print(f"[{item['status']}] {genre_name}/{story_name}: {msg}")
-            # report.append(item)
+            if not ok:
+                move_to_data_folder(story_folder, genre_name)
+                error_stories.append(item)
+            else:
+                ok_count += 1
+            print(f"[{item['status']}] {genre_name}/{story_name}: {msg}")
+            report.append(item)
 
     # Xuất report ra file
     with open("report_check_completed.json", "w", encoding="utf-8") as f:
