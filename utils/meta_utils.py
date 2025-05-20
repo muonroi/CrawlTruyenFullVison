@@ -83,8 +83,12 @@ async def add_missing_story(story_title, story_url, total_chapters, crawled_chap
     path = os.path.join(os.getcwd(), filename)
     # Đọc danh sách cũ
     if os.path.exists(path):
-        with open(path, "r", encoding="utf-8") as f:
-            data = json.load(f)
+        try:
+            with open(path, "r", encoding="utf-8") as f:
+                data = json.load(f)
+        except json.JSONDecodeError:
+            print(f"[ERROR] File {path} bị lỗi hoặc rỗng, sẽ tạo lại file mới.")
+            data = {}
     else:
         data = []
     # Check đã tồn tại chưa
