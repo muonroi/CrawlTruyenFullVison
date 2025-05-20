@@ -132,16 +132,53 @@ def unskip_all_stories(data_folder):
 
 
 async def fix_metadata_with_retry(metadata, metadata_path, story_folder):
-    """Retry tối đa 3 lần lấy lại metadata nếu thiếu total_chapters_on_site.
-    Nếu fail, set skip_crawl và return False."""
+    """
+    Retry tối đa 3 lần lấy lại metadata nếu thiếu total_chapters_on_site hoặc thiếu url/title.
+    Nếu fail, set skip_crawl và return False.
+    """
     if metadata.get("skip_crawl", False):
         print(f"[SKIP] Truyện '{metadata.get('title')}' đã bị đánh dấu bỏ qua (skip_crawl), không crawl lại nữa.")
         return False
+
     retry_count = metadata.get("meta_retry_count", 0)
     total_chapters = metadata.get("total_chapters_on_site")
+    url = metadata.get("url")
+    title = metadata.get("title")
+
+    # Thử lấy lại url/title nếu thiếu
+    for _ in range(3):
+        if url and title:
+            break
+        # Thử lấy lại url/title từ backup, source, hoặc folder name (tùy vào pipeline của bạn)
+        # Ví dụ: nếu có trường "sources" chứa url
+        if not url and metadata.get("sources"):
+            for src in metadata["sources"]:
+                if src.get("url"):
+                    url = src["url"]
+                    print(f"[FIX] Bổ sung lại url cho '{story_folder}' từ sources: {url}")
+                    metadata["url"] = url
+                    break
+        # Thử lấy lại title từ folder name
+        if not title:
+            folder_title = os.path.basename(story_folder).replace("-", " ").title()
+            print(f"[FIX] Bổ sung lại title cho '{story_folder}' từ folder: {folder_title}")
+            title = folder_title
+            metadata["title"] = title
+        retry_count += 1
+
+    if not url or not title:
+        print(f"[SKIP] '{story_folder}' thiếu url/title (đã thử 3 lần), không thể lấy lại metadata!")
+        metadata["skip_crawl"] = True
+        metadata["skip_reason"] = "missing_url_title"
+        with open(metadata_path, "w", encoding="utf-8") as f:
+            json.dump(metadata, f, ensure_ascii=False, indent=4)
+        return False
+
+    # Nếu đã có đủ url/title, tiếp tục retry lấy metadata như bình thường
+    retry_count = metadata.get("meta_retry_count", 0)
     while retry_count < 3 and (not total_chapters or total_chapters < 1):
         print(f"[SKIP] '{story_folder}' thiếu total_chapters_on_site -> [FIXED] Đang lấy lại metadata lần {retry_count+1} qua proxy...")
-        details = await get_story_details(metadata.get("url"), metadata.get("title")) 
+        details = await get_story_details(url, title)
         retry_count += 1
         metadata["meta_retry_count"] = retry_count
         if details and details.get("total_chapters_on_site"):
@@ -162,6 +199,7 @@ async def fix_metadata_with_retry(metadata, metadata_path, story_folder):
             json.dump(metadata, f, ensure_ascii=False, indent=4)
         return False
     return True
+
 
 async def check_and_crawl_missing_all_stories(adapter, home_page_url, site_key, force_unskip=False):
     state_file = get_missing_worker_state_file(site_key)   # <--- dùng file phụ!
