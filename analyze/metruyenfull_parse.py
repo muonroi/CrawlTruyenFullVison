@@ -93,14 +93,12 @@ async def get_story_metadata(self, story_url):
             match = re.search(r'(\d+)', txt)
             if match:
                 num_chapters = int(match.group(1))
-                break
+                logger.info(f"Lấy được số chương từ label: {num_chapters} chương")
     # Fallback
-    if not num_chapters or num_chapters < 2:
-        chapter_lis = []
-        for ul in soup.select("ul.list-chapter, ul.l-chapters"):
-            chapter_lis += ul.find_all("li")
-        if len(chapter_lis) > num_chapters:
-            num_chapters = len(chapter_lis)
+    if not num_chapters or num_chapters < 100:
+        logger.warning(f"Không lấy được tổng số chương chuẩn, sẽ crawl paginate đếm số chương cho {story_url}")
+        chapters = await get_chapters_from_story(self, story_url)
+        num_chapters = len(chapters)
 
     # Cover
     image_url = None
