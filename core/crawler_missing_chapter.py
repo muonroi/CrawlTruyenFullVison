@@ -196,7 +196,7 @@ async def check_and_crawl_missing_all_stories(adapter, home_page_url, site_key, 
                 num_batches = get_auto_batch_count(fixed=10)
                 logger.info(f"Auto chọn {num_batches} batch cho truyện {metadata['title']} (site: {site_key}, proxy usable: {len(LOADED_PROXIES)})") #type:ignore
                 tasks.append(
-                    await crawl_story_with_limit(
+                    crawl_story_with_limit(
                         site_key, None, missing_chapters, metadata, current_category, #type:ignore
                         story_folder, crawl_state, num_batches=num_batches, state_file=state_file
                     )
