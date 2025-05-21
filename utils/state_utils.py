@@ -32,7 +32,7 @@ async def load_crawl_state(state_file) -> Dict[str, Any]:
 CSTATE_LOCK = asyncio.Lock()
 _last_save_time = {}
 
-async def save_crawl_state(state: Dict[str, Any], state_file: str, debounce=1.5) -> None:
+async def save_crawl_state(state: Dict[str, Any], state_file: str, debounce=2.0) -> None:
     global _last_save_time
     now = time.monotonic()
     last = _last_save_time.get(state_file, 0)
