@@ -183,6 +183,7 @@ async def check_and_crawl_missing_all_stories(adapter, home_page_url, site_key, 
                     fname_only = f"{idx+1:04d}_{title}.txt"
                     file_path = os.path.join(story_folder, fname_only)
                     if fname_only in existing_files and os.path.getsize(file_path) > 10:
+                        logger.debug(f"File '{fname_only}' đã tồn tại, bỏ qua.")
                         continue
                     ch['idx'] = idx #type:ignore
                     missing_chapters.append(ch)
