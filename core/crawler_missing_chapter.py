@@ -39,9 +39,6 @@ async def loop_once_multi_sites(force_unskip=False):
     # Sau khi crawl xong:
     await send_telegram_notify(f"✅ DONE: Đã crawl/check missing xong toàn bộ ({now})")
 
-
-
-
 async def check_and_crawl_missing_all_stories(adapter, home_page_url, site_key, force_unskip=False):
     state_file = get_missing_worker_state_file(site_key)
     crawl_state = await load_crawl_state(state_file)
@@ -170,6 +167,20 @@ async def check_and_crawl_missing_all_stories(adapter, home_page_url, site_key, 
             try:
                 with open(meta_path, "r", encoding="utf-8") as f:
                     metadata = json.load(f)
+                # ==== AUTO-FIX SOURCES (NÊN BỎ ĐÂY) ====
+                if "sources" in metadata and isinstance(metadata["sources"], list):
+                    fixed_sources = []
+                    for src in metadata["sources"]:
+                        if isinstance(src, dict):
+                            fixed_sources.append(src)
+                        elif isinstance(src, str):
+                            fixed_sources.append({"url": src})
+                    if len(fixed_sources) != len(metadata["sources"]):
+                        logger.warning(f"[FIX] Đã phát hiện và sửa nguồn 'sources' bị sai type ở {story_folder}")
+                        metadata["sources"] = fixed_sources
+                        with open(metadata_path, "w", encoding="utf-8") as f:
+                            json.dump(metadata, f, ensure_ascii=False, indent=4)
+                # ==== END AUTO-FIX SOURCES ====
             except Exception as ex:
                 metadata = autofix_metadata(story_folder, site_key)
                 auto_fixed_titles.append(metadata["title"])
