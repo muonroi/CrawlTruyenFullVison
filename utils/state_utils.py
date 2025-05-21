@@ -33,6 +33,7 @@ CSTATE_LOCK = asyncio.Lock()
 _last_save_time = {}
 
 async def save_crawl_state(state: Dict[str, Any], state_file: str, debounce=2.0) -> None:
+    logger.debug(f"1")
     global _last_save_time
     now = time.monotonic()
     last = _last_save_time.get(state_file, 0)
@@ -40,6 +41,7 @@ async def save_crawl_state(state: Dict[str, Any], state_file: str, debounce=2.0)
         logger.debug(f"Skip save state vì debounce (file: {state_file})")
         return
     _last_save_time[state_file] = now
+    logger.debug(f"2")
     async with CSTATE_LOCK:
         try:
             logger.debug(f"[SAVE_STATE] Bắt đầu lưu state vào {state_file}")
