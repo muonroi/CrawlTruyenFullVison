@@ -2,6 +2,7 @@ import asyncio
 import glob
 import json
 import os
+import time
 from typing import Any, Dict, List
 import aiofiles
 from config.config import COMPLETED_FOLDER, DATA_FOLDER, STATE_FILE, get_state_file
@@ -29,8 +30,16 @@ async def load_crawl_state(state_file) -> Dict[str, Any]:
     return {}
 
 CSTATE_LOCK = asyncio.Lock()
+_last_save_time = {}
 
-async def save_crawl_state(state: Dict[str, Any], state_file: str) -> None:
+async def save_crawl_state(state: Dict[str, Any], state_file: str, debounce=1.5) -> None:
+    global _last_save_time
+    now = time.monotonic()
+    last = _last_save_time.get(state_file, 0)
+    if now - last < debounce:
+        logger.debug(f"Skip save state vì debounce (file: {state_file})")
+        return
+    _last_save_time[state_file] = now
     async with CSTATE_LOCK:
         try:
             logger.debug(f"[SAVE_STATE] Bắt đầu lưu state vào {state_file}")
@@ -39,6 +48,7 @@ async def save_crawl_state(state: Dict[str, Any], state_file: str) -> None:
             logger.info(f"Đã lưu trạng thái crawl vào {state_file}")
         except Exception as e:
             logger.error(f"Lỗi khi lưu trạng thái crawl vào {state_file}: {e}")
+
 
 
 async def clear_specific_state_keys(state: Dict[str, Any], keys_to_remove: List[str], state_file: str) -> None:
