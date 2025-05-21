@@ -272,17 +272,19 @@ async def check_and_crawl_missing_all_stories(adapter, home_page_url, site_key, 
         if not meta_ok:
             logger.info(f"[SKIP] '{story_folder}' thiếu trường quan trọng, sẽ cố gắng lấy lại metadata...")
             details = await get_story_details(metadata.get("url"), metadata.get("title"))
-            if update_metadata_from_details(metadata, details) and all(metadata.get(f) for f in fields_required):
-            logger.info(f"[SKIP] '{story_folder}' thiếu trường quan trọng, sẽ cố gắng lấy lại metadata...")
-            details = await get_story_details(metadata.get("url"), metadata.get("title")) #type:ignore
-            if details and all(details.get(f) for f in fields_required):
-                logger.info(f"[FIXED] Đã bổ sung metadata đủ cho '{metadata.get('title')}'")
-                metadata.update(details)
-                with open(meta_path, "w", encoding="utf-8") as f:
-                    json.dump(metadata, f, ensure_ascii=False, indent=4)
+            if update_metadata_from_details(metadata, details):
+                meta_ok = all(metadata.get(f) for f in fields_required)
+                if meta_ok:
+                    logger.info(f"[FIXED] Đã bổ sung metadata đủ cho '{metadata.get('title')}'")
+                    with open(meta_path, "w", encoding="utf-8") as f:
+                        json.dump(metadata, f, ensure_ascii=False, indent=4)
+                else:
+                    logger.error(f"[ERROR] Không lấy đủ metadata cho '{metadata.get('title')}'! Sẽ bỏ qua move.")
+                    continue
             else:
                 logger.error(f"[ERROR] Không lấy đủ metadata cho '{metadata.get('title')}'! Sẽ bỏ qua move.")
                 continue
+
 
         # Move nếu đủ chương, và chỉ move nếu folder chưa nằm ở completed
         if chapter_count >= metadata.get("total_chapters_on_site", 0):
