@@ -106,26 +106,21 @@ def log_failed_genre(genre_data):
     except Exception as e:
         logger.error(f"Lỗi khi log failed genre: {e}")
 
-async def safe_write_file(file_path, content, timeout=60, auto_remove_lock=True):
+async def safe_write_file(file_path, content, timeout=30, auto_remove_lock=True):
     lock_path = file_path + ".lock"
     tmp_path = file_path + ".tmp"
     lock = FileLock(lock_path, timeout=timeout)
     try:
-        logger.debug(f"[SAFE_WRITE] Locking {lock_path} để ghi file {file_path}...")
         with lock:
             async with aiofiles.open(tmp_path, "w", encoding="utf-8") as f:
                 await f.write(content)
-            await asyncio.sleep(0.05)
-            os.replace(tmp_path, file_path)  # Atomic replace
-        logger.debug(f"[SAFE_WRITE] Ghi file {file_path} thành công!")
+            await asyncio.sleep(0.01)
+            os.replace(tmp_path, file_path)
     except Timeout:
         logger.error(f"Timeout khi ghi file {file_path}. File lock: {lock_path} bị kẹt! Hãy xóa file .lock này rồi chạy lại.")
-        if auto_remove_lock:
-            try:
-                if os.path.exists(lock_path):
-                    os.remove(lock_path)
-                    logger.warning(f"Đã tự động xóa file lock: {lock_path}")
-            except Exception as e:
-                logger.error(f"Lỗi khi tự động xóa lock file: {e}")
+        if auto_remove_lock and os.path.exists(lock_path):
+            os.remove(lock_path)
+            logger.warning(f"Đã tự động xóa file lock: {lock_path}")
     except Exception as e:
         logger.error(f"Lỗi khi ghi file {file_path}: {e}")
+
