@@ -45,10 +45,19 @@ async def create_proxy_template_if_not_exists(proxies_file_path: str, proxies_fo
 async def safe_write_json(filepath, obj, timeout=60):
     import json
     lock_path = filepath + '.lock'
+    tmp_path = filepath + '.tmp'
     lock = FileLock(lock_path, timeout=timeout)
-    with lock:
-        async with aiofiles.open(filepath, 'w', encoding='utf-8') as f:
-            await f.write(json.dumps(obj, ensure_ascii=False, indent=4))
+    try:
+        with lock:
+            async with aiofiles.open(tmp_path, 'w', encoding='utf-8') as f:
+                await f.write(json.dumps(obj, ensure_ascii=False, indent=4))
+            await asyncio.sleep(0.05)
+            os.replace(tmp_path, filepath)
+    except Timeout:
+        logger.error(f"Timeout khi ghi file {filepath}. File lock: {lock_path} bị kẹt!")
+        # Tự remove lock nếu cần, như bên trên
+    except Exception as e:
+        logger.error(f"Lỗi khi ghi file {filepath}: {e}")
 
 
 def ensure_backup_folder(backup_folder="backup"):
@@ -97,18 +106,20 @@ def log_failed_genre(genre_data):
     except Exception as e:
         logger.error(f"Lỗi khi log failed genre: {e}")
 
-async def safe_write_file(file_path, content, timeout=500, auto_remove_lock=True):
+async def safe_write_file(file_path, content, timeout=60, auto_remove_lock=True):
     lock_path = file_path + ".lock"
+    tmp_path = file_path + ".tmp"
     lock = FileLock(lock_path, timeout=timeout)
     try:
+        logger.debug(f"[SAFE_WRITE] Locking {lock_path} để ghi file {file_path}...")
         with lock:
-            async with aiofiles.open(file_path, "w", encoding="utf-8") as f:
+            async with aiofiles.open(tmp_path, "w", encoding="utf-8") as f:
                 await f.write(content)
+            await asyncio.sleep(0.05)
+            os.replace(tmp_path, file_path)  # Atomic replace
+        logger.debug(f"[SAFE_WRITE] Ghi file {file_path} thành công!")
     except Timeout:
-        logger.error(
-            f"Timeout khi ghi file {file_path}. File lock: {lock_path} bị kẹt! "
-            f"Bạn hãy xóa file .lock này rồi chạy lại."
-        )
+        logger.error(f"Timeout khi ghi file {file_path}. File lock: {lock_path} bị kẹt! Hãy xóa file .lock này rồi chạy lại.")
         if auto_remove_lock:
             try:
                 if os.path.exists(lock_path):
@@ -116,3 +127,5 @@ async def safe_write_file(file_path, content, timeout=500, auto_remove_lock=True
                     logger.warning(f"Đã tự động xóa file lock: {lock_path}")
             except Exception as e:
                 logger.error(f"Lỗi khi tự động xóa lock file: {e}")
+    except Exception as e:
+        logger.error(f"Lỗi khi ghi file {file_path}: {e}")

@@ -61,8 +61,8 @@ async def crawl_missing_chapters_for_story(
     if not missing_chapters:
         logger.info(f"Tất cả chương đã đủ, không có chương missing trong '{story_data_item['title']}'")
         # Có thể lưu lại trạng thái nếu muốn, tùy yêu cầu
-        # if state_file:
-        #     await save_crawl_state(crawl_state, state_file)
+        if state_file:
+            await save_crawl_state(crawl_state, state_file)
         return 0
 
     num_batches = min(num_batches, max(1, len(missing_chapters)))

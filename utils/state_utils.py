@@ -28,14 +28,18 @@ async def load_crawl_state(state_file) -> Dict[str, Any]:
             logger.error(f"Lỗi khi tải trạng thái crawl từ {state_file}: {e}. Bắt đầu crawl mới.")
     return {}
 
+CSTATE_LOCK = asyncio.Lock()
+
 async def save_crawl_state(state: Dict[str, Any], state_file: str) -> None:
     async with CSTATE_LOCK:
         try:
+            logger.debug(f"[SAVE_STATE] Bắt đầu lưu state vào {state_file}")
             content = json.dumps(state, ensure_ascii=False, indent=4)
             await safe_write_file(state_file, content)
             logger.info(f"Đã lưu trạng thái crawl vào {state_file}")
         except Exception as e:
             logger.error(f"Lỗi khi lưu trạng thái crawl vào {state_file}: {e}")
+
 
 async def clear_specific_state_keys(state: Dict[str, Any], keys_to_remove: List[str], state_file: str) -> None:
     updated = False
