@@ -127,22 +127,6 @@ async def crawl_missing_chapters_for_story(
         await save_crawl_state(crawl_state, state_file)
     return len(successful)
 
-
-    batch_tasks = [crawl_batch(batch, i+1) for i, batch in enumerate(batches) if batch]
-    results = await asyncio.gather(*batch_tasks, return_exceptions=True)
-    successful = set()
-    failed = []
-    for res in results:
-        if isinstance(res, tuple):
-            suc, fail = res
-            successful.update(suc)
-            failed.extend(fail)
-        elif isinstance(res, Exception):
-            logger.error(f"Lỗi khi thực thi batch: {res}")
-    if failed:
-        logger.warning(f"Vẫn còn {len(failed)} chương bù không crawl được.")
-    return len(successful)
-
 async def initialize_and_log_setup_with_state(site_key) -> Tuple[str, Dict[str, Any]]:
     await ensure_directory_exists(DATA_FOLDER)
     await create_proxy_template_if_not_exists(PROXIES_FILE, PROXIES_FOLDER)
