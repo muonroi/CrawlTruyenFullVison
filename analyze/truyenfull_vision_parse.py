@@ -1,3 +1,4 @@
+import datetime
 import re
 import asyncio
 from typing import List, Tuple, Optional, Dict, Any
@@ -8,6 +9,7 @@ from utils.html_parser import extract_chapter_content, get_total_pages_category
 from utils.logger import logger
 from scraper import make_request
 from config.config import (
+    BASE_URLS,
     MAX_STORIES_PER_GENRE_PAGE,
 )
 import re
@@ -133,6 +135,28 @@ async def get_story_details(story_url: str, story_title_for_log: str) -> Dict[st
         num_chapters = len(chapters)
 
     details["total_chapters_on_site"] = num_chapters
+
+    # 9. Sources (bổ sung luôn field cho metadata autofix)
+    current_site = None
+    for k, v in BASE_URLS.items():
+        if v.rstrip('/') in story_url:
+            current_site = k
+            break
+    if not current_site:
+        current_site = story_url.split('/')[2]  # fallback lấy domain nếu chưa match
+
+    details["sources"] = [{
+        "site": current_site,
+        "url": story_url,
+        "total_chapters": details.get("total_chapters_on_site", 0),
+        "last_update": datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+    }]
+
+    # Fix None -> "" (chuẩn hóa trả về cho autofix dễ merge)
+    for k in list(details.keys()):
+        if details[k] is None:
+            details[k] = "" if not isinstance(details[k], list) else []
+
     return details
 
 
