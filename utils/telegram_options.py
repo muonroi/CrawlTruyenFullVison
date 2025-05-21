@@ -2,6 +2,7 @@
 
 import asyncio
 import json
+from mailbox import Message
 import os
 from timeit import main
 from adapters.factory import get_adapter
@@ -18,6 +19,7 @@ from utils.notifier import send_telegram_notify
 telegram_router = Router()
 is_crawling = False
 user_state = {}
+active_crawl_tasks = {}
 
 @telegram_router.message(F.text == '/start')
 async def handle_start_crawl(message: types.Message):
@@ -69,34 +71,36 @@ async def ask_meta_story(message: types.Message):
 
 @telegram_router.message()
 async def handle_text_input(message: types.Message):
-    uid = message.from_user.id#type:ignore
+    uid = message.from_user.id # type: ignore
     if uid not in user_state:
-        return  # Không có state gì, có thể trả về menu hoặc bỏ qua
+        return
 
-    name = message.text.strip() #type:ignore
+    name = message.text.strip() # type: ignore
     slug = slugify_title(name)
 
-    if uid in user_state and user_state[uid] == "recrawl_story":
-        from core.crawler_missing_chapter import crawl_missing_chapters_for_story
-        name = message.text.strip() #type:ignore
-        slug = slugify_title(name)
-        for folder in [os.path.join("truyen_data", slug)] + [
-            os.path.join("completed_stories", genre, slug) for genre in os.listdir("completed_stories")
-        ]:
+    if user_state[uid] == "recrawl_story":
+        found = False
+        # Ưu tiên folder truyen_data trước
+        search_paths = [os.path.join("truyen_data", slug)]
+        if os.path.exists("completed_stories"):
+            for genre in os.listdir("completed_stories"):
+                genre_folder = os.path.join("completed_stories", genre)
+                if not os.path.isdir(genre_folder):
+                    continue
+                search_paths.append(os.path.join(genre_folder, slug))
+
+        for folder in search_paths:
             meta_path = os.path.join(folder, "metadata.json")
             if os.path.exists(meta_path):
                 with open(meta_path, "r", encoding="utf-8") as f:
                     meta = json.load(f)
-                # --- Lấy site_key ---
                 site_key = meta.get("site_key")
                 sources = meta.get("sources", [])
                 if not site_key:
                     if isinstance(sources, list) and len(sources) == 1:
                         site_key = sources[0].get("site")
                     elif isinstance(sources, list) and len(sources) > 1:
-                        # Yêu cầu người dùng chọn site
                         user_state[uid] = ("recrawl_choose_site", slug, folder, meta)
-                        # Tạo menu chọn site từ sources
                         buttons = [
                             [KeyboardButton(text=f"Recrawl nguồn {s.get('site', 'unknown')}")] for s in sources
                         ]
@@ -110,32 +114,44 @@ async def handle_text_input(message: types.Message):
                     await message.reply("Không xác định được site_key trong metadata.\nNội dung meta:\n" + json.dumps(meta, ensure_ascii=False, indent=2))
                     user_state.pop(uid, None)
                     return
-                adapter = get_adapter(site_key)
-                chapters = await adapter.get_chapter_list(meta["url"], meta["title"])
-                await crawl_missing_chapters_for_story(site_key, None, chapters, meta, {}, folder, {}, 10)
-                await message.reply(f"Đã recrawl lại truyện '{name}' ({slug})!")
+                try:
+                    adapter = get_adapter(site_key)
+                    chapters = await adapter.get_chapter_list(meta["url"], meta["title"])
+                    from core.crawler_missing_chapter import crawl_missing_chapters_for_story
+                    await crawl_missing_chapters_for_story(site_key, None, chapters, meta, {}, folder, {}, 10)
+                    await message.reply(f"✅ Đã recrawl lại truyện '{meta['title']}' ({slug})!")
+                except Exception as ex:
+                    await message.reply(f"❌ Lỗi recrawl: {ex}")
                 user_state.pop(uid, None)
-                return
-        await message.reply("Không tìm thấy truyện hoặc metadata!", reply_markup=ReplyKeyboardRemove())
-        user_state.pop(uid, None)
+                found = True
+                break
+        if not found:
+            await message.reply("Không tìm thấy truyện hoặc metadata!", reply_markup=ReplyKeyboardRemove())
+            user_state.pop(uid, None)
         return
+
 
 @telegram_router.message(F.text.regexp(r"^Recrawl nguồn "))
 async def recrawl_story_choose_site(message: types.Message):
-    uid = message.from_user.id#type:ignore
+    uid = message.from_user.id # type: ignore
     if uid not in user_state:
         return
     state = user_state[uid]
     if not (isinstance(state, tuple) and state[0] == "recrawl_choose_site"):
         return
-    site_key = message.text.replace("Recrawl nguồn ", "").strip() #type:ignore
+    site_key = message.text.replace("Recrawl nguồn ", "").strip() # type: ignore
     slug, folder, meta = state[1], state[2], state[3]
-    adapter = get_adapter(site_key)
-    chapters = await adapter.get_chapter_list(meta["url"], meta["title"])
-    from core.crawler_missing_chapter import crawl_missing_chapters_for_story
-    await crawl_missing_chapters_for_story(site_key, None, chapters, meta, {}, folder, {}, 10)
-    await message.reply(f"Đã recrawl lại truyện '{meta['title']}' ({slug}) theo nguồn {site_key}!")
+    try:
+        adapter = get_adapter(site_key)
+        chapters = await adapter.get_chapter_list(meta["url"], meta["title"])
+        from core.crawler_missing_chapter import crawl_missing_chapters_for_story
+        await crawl_missing_chapters_for_story(site_key, None, chapters, meta, {}, folder, {}, 10)
+        await message.reply(f"✅ Đã recrawl lại truyện '{meta['title']}' ({slug}) theo nguồn {site_key}!")
+    except Exception as ex:
+        await message.reply(f"❌ Lỗi recrawl: {ex}")
     user_state.pop(uid, None)
+
+
 
 @telegram_router.message(F.text == "Chạy các tác vụ worker khác")
 async def show_worker_menu(message: types.Message):
@@ -179,9 +195,21 @@ async def run_clean_worker(message: types.Message):
 
 # ---- Crawl tất cả site (Missing) ----
 @telegram_router.message(F.text == "Crawl missing ALL sites")
-async def crawl_all_sites(message: types.Message):
-    await message.reply("Bắt đầu crawl missing tất cả site...", reply_markup=ReplyKeyboardRemove())
-    await loop_once_multi_sites(force_unskip=False)
+async def crawl_all_sites(message: Message):
+    uid = message.from_user.id# type: ignore
+    if uid in active_crawl_tasks and not active_crawl_tasks[uid].done():
+        await message.reply("Đang có 1 tác vụ crawl running. Vui lòng đợi.")# type: ignore
+        return
+    await message.reply("Bắt đầu crawl missing tất cả site...", reply_markup=ReplyKeyboardRemove())# type: ignore
+    task = asyncio.create_task(run_crawl_and_notify_user(message))
+    active_crawl_tasks[uid] = task
+
+async def run_crawl_and_notify_user(message: Message):
+    try:
+        await loop_once_multi_sites(force_unskip=False)
+        await message.reply("✅ Đã crawl/check missing xong toàn bộ!", reply_markup=ReplyKeyboardRemove()) # type: ignore
+    except Exception as ex:
+        await message.reply(f"❌ Crawl gặp lỗi: {ex}", reply_markup=ReplyKeyboardRemove())# type: ignore
 
 # ---- Bắt đầu chọn 1 site cụ thể ----
 @telegram_router.message(F.text == "Crawl một site cụ thể")
