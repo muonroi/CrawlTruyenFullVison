@@ -189,17 +189,19 @@ async def check_and_crawl_missing_all_stories(adapter, home_page_url, site_key, 
                     missing_chapters.append(ch)
                 if not missing_chapters:
                     logger.info(f"  Không còn chương nào thiếu ở nguồn {site_key}.")
+                    logger.info(f"[NEXT STORY] Done process for {os.path.basename(story_folder)} (KHÔNG missing chapter)")
                     continue
 
                 logger.info(f"  Bắt đầu crawl bổ sung {len(missing_chapters)} chương từ nguồn {site_key}")
                 current_category = metadata['categories'][0] if metadata.get('categories') and isinstance(metadata['categories'], list) and metadata['categories'] else {} #type:ignore
                 num_batches = get_auto_batch_count(fixed=10)
                 logger.info(f"Auto chọn {num_batches} batch cho truyện {metadata['title']} (site: {site_key}, proxy usable: {len(LOADED_PROXIES)})") #type:ignore
-                tasks.append(crawl_story_with_limit(
-                        site_key, None, missing_chapters, metadata, current_category, #type:ignore
+                tasks.append(asyncio.create_task(
+                    crawl_story_with_limit(
+                        site_key, None, missing_chapters, metadata, current_category,
                         story_folder, crawl_state, num_batches=num_batches, state_file=state_file
                     )
-                )
+                ))
 
     # ============ 2. Chờ crawl bù xong ============
     if tasks:
@@ -243,8 +245,9 @@ async def check_and_crawl_missing_all_stories(adapter, home_page_url, site_key, 
                             json.dump(metadata, f, ensure_ascii=False, indent=4)
                 # ==== END AUTO-FIX SOURCES ====
             except Exception as ex:
-                metadata = autofix_metadata(story_folder, site_key)
-                auto_fixed_titles.append(metadata["title"])
+                logger.error(f"Lỗi khi xử lý truyện {os.path.basename(story_folder)}: {ex}")
+            finally:
+                logger.info(f"[NEXT STORY] Done process for {os.path.basename(story_folder)}")
 
         chapter_count = recount_chapters(story_folder)
 
