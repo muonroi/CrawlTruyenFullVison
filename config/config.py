@@ -23,7 +23,7 @@ FAILED_GENRES_FILE = "failed_genres.json"
 RETRY_GENRE_ROUND_LIMIT = 3  # Số vòng retry liên tiếp
 RETRY_SLEEP_SECONDS = 30*60  # 30 phút
 # -------------- [Proxy & User-Agent] --------------
-USE_PROXY = os.getenv("USE_PROXY", "True") == "True"
+USE_PROXY = False#os.getenv("USE_PROXY", "True") == "True"
 PROXIES_FOLDER = os.getenv("PROXIES_FOLDER", "proxies")
 PROXIES_FILE = os.getenv("PROXIES_FILE", os.path.join(PROXIES_FOLDER, "proxies.txt"))
 GLOBAL_PROXY_USERNAME = os.getenv("PROXY_USER")
