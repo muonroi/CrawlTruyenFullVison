@@ -61,6 +61,8 @@ async def check_and_crawl_missing_all_stories(adapter, home_page_url, site_key, 
 
     # ============ 1. Tạo tasks crawl missing ============
     for story_folder in story_folders:
+        need_autofix = False
+        metadata = None
         if auto_fixed_titles:
             msg = "[AUTO-FIX] Đã tự động tạo metadata cho các truyện: " + ", ".join(auto_fixed_titles[:10])
             if len(auto_fixed_titles) > 10:
@@ -71,22 +73,29 @@ async def check_and_crawl_missing_all_stories(adapter, home_page_url, site_key, 
             continue
         metadata_path = os.path.join(story_folder, "metadata.json")
         if not os.path.exists(metadata_path):
-            # Đoán url truyện dựa trên tên folder và site_key
             guessed_url = f"{BASE_URLS.get(site_key, '').rstrip('/')}/{os.path.basename(story_folder)}"
-            # Lấy metadata chi tiết từ web
             logger.info(f"[AUTO-FIX] Không có metadata.json, đang lấy metadata chi tiết từ {guessed_url}")
             details = await get_story_details(guessed_url, os.path.basename(story_folder).replace("-", " "))
-            if details and details.get("total_chapters_on_site"):
+            metadata = autofix_metadata(story_folder, site_key)
+            if details:
+                # Merge tất cả các trường (kể cả trường mới hoặc chỉ có trong details)
+                for k, v in details.items():
+                    # Ưu tiên giữ lại autofix nếu details không có dữ liệu
+                    if v is not None and v != "":
+                        metadata[k] = v
                 with open(metadata_path, "w", encoding="utf-8") as f:
-                    json.dump(details, f, ensure_ascii=False, indent=4)
-                logger.info(f"[AUTO-FIX] Đã tạo metadata đầy đủ cho '{details.get('title')}' ({details.get('total_chapters_on_site')} chương)")
-                metadata = details
-                auto_fixed_titles.append(metadata["title"])
+                    json.dump(metadata, f, ensure_ascii=False, indent=4)
+                logger.info(f"[AUTO-FIX] Đã tạo metadata đầy đủ/merge cho '{metadata.get('title')}' ({metadata.get('total_chapters_on_site', 0)} chương)")
+                # Log trường thiếu cho dev dễ debug adapter
+                fields_required = ['title', 'categories', 'total_chapters_on_site', 'author', 'description', 'cover', 'sources']
+                missing = [f for f in fields_required if not metadata.get(f)]
+                if missing:
+                    logger.warning(f"[AUTO-FIX] Metadata của '{metadata.get('title')}' vẫn còn thiếu các trường: {missing}")
             else:
-                # Fallback nếu web không trả về đủ info, tạo metadata tạm
-                metadata = autofix_metadata(story_folder, site_key)
-                auto_fixed_titles.append(metadata["title"])
-            # Không cần continue, cứ cho flow xử lý tiếp với metadata vừa được bổ sung!
+                logger.info(f"[AUTO-FIX] Tạo metadata tạm cho '{metadata['title']}' ({metadata.get('total_chapters_on_site', 0)} chương)")
+            auto_fixed_titles.append(metadata["title"])
+
+
         try:
             with open(metadata_path, "r", encoding="utf-8") as f:
                 metadata = json.load(f)
