@@ -13,6 +13,7 @@ from config.config import BASE_URLS, TELEGRAM_CHAT_ID
 from core.crawler_missing_chapter import check_and_crawl_missing_all_stories, loop_once_multi_sites
 from main import retry_failed_genres, run_crawler
 from retry_failed_chapters import retry_queue
+from utils.logger import logger
 from utils.chapter_utils import slugify_title
 from utils.notifier import send_telegram_notify
 
@@ -71,64 +72,76 @@ async def ask_meta_story(message: types.Message):
 
 @telegram_router.message()
 async def handle_text_input(message: types.Message):
-    uid = message.from_user.id # type: ignore
+    uid = message.from_user.id  # type: ignore
     if uid not in user_state:
         return
 
     name = message.text.strip() # type: ignore
     slug = slugify_title(name)
 
-    if user_state[uid] == "recrawl_story":
-        found = False
-        # Ưu tiên folder truyen_data trước
-        search_paths = [os.path.join("truyen_data", slug)]
+    state = user_state[uid]
+
+    if state == "search_story":
+        # --- LOGIC TÌM TRUYỆN THEO TÊN ---
+        found_paths = []
+        # Tìm trong truyen_data
+        truyen_data_folder = os.path.join("truyen_data", slug)
+        if os.path.exists(os.path.join(truyen_data_folder, "metadata.json")):
+            found_paths.append(truyen_data_folder)
+        # Tìm trong completed_stories
         if os.path.exists("completed_stories"):
             for genre in os.listdir("completed_stories"):
                 genre_folder = os.path.join("completed_stories", genre)
-                if not os.path.isdir(genre_folder):
-                    continue
-                search_paths.append(os.path.join(genre_folder, slug))
+                candidate = os.path.join(genre_folder, slug)
+                if os.path.exists(os.path.join(candidate, "metadata.json")):
+                    found_paths.append(candidate)
+        if not found_paths:
+            await message.reply("❌ Không tìm thấy truyện!", reply_markup=ReplyKeyboardRemove())
+        else:
+            reply = "Tìm thấy truyện ở các folder:\n" + "\n".join(found_paths)
+            await message.reply(reply, reply_markup=ReplyKeyboardRemove())
+        user_state.pop(uid, None)
+        await handle_start_crawl(message)
+        return
 
-        for folder in search_paths:
-            meta_path = os.path.join(folder, "metadata.json")
+    if state == "meta_story":
+        # --- LOGIC XEM METADATA TRUYỆN ---
+        found = False
+        # Tìm trong truyen_data
+        meta_paths = [os.path.join("truyen_data", slug, "metadata.json")]
+        # Tìm trong completed_stories
+        if os.path.exists("completed_stories"):
+            for genre in os.listdir("completed_stories"):
+                genre_folder = os.path.join("completed_stories", genre)
+                meta_paths.append(os.path.join(genre_folder, slug, "metadata.json"))
+        for meta_path in meta_paths:
             if os.path.exists(meta_path):
                 with open(meta_path, "r", encoding="utf-8") as f:
                     meta = json.load(f)
-                site_key = meta.get("site_key")
-                sources = meta.get("sources", [])
-                if not site_key:
-                    if isinstance(sources, list) and len(sources) == 1:
-                        site_key = sources[0].get("site")
-                    elif isinstance(sources, list) and len(sources) > 1:
-                        user_state[uid] = ("recrawl_choose_site", slug, folder, meta)
-                        buttons = [
-                            [KeyboardButton(text=f"Recrawl nguồn {s.get('site', 'unknown')}")] for s in sources
-                        ]
-                        kb = ReplyKeyboardMarkup(keyboard=buttons, resize_keyboard=True, one_time_keyboard=True)
-                        await message.reply(
-                            "Truyện này có nhiều nguồn. Chọn nguồn muốn recrawl:",
-                            reply_markup=kb
-                        )
-                        return
-                if not site_key:
-                    await message.reply("Không xác định được site_key trong metadata.\nNội dung meta:\n" + json.dumps(meta, ensure_ascii=False, indent=2))
-                    user_state.pop(uid, None)
-                    return
-                try:
-                    adapter = get_adapter(site_key)
-                    chapters = await adapter.get_chapter_list(meta["url"], meta["title"])
-                    from core.crawler_missing_chapter import crawl_missing_chapters_for_story
-                    await crawl_missing_chapters_for_story(site_key, None, chapters, meta, {}, folder, {}, 10)
-                    await message.reply(f"✅ Đã recrawl lại truyện '{meta['title']}' ({slug})!")
-                except Exception as ex:
-                    await message.reply(f"❌ Lỗi recrawl: {ex}")
-                user_state.pop(uid, None)
+                reply = f"**Metadata truyện:**\n```\n{json.dumps(meta, ensure_ascii=False, indent=2)}\n```"
+                await message.reply(reply, reply_markup=ReplyKeyboardRemove())
                 found = True
                 break
         if not found:
-            await message.reply("Không tìm thấy truyện hoặc metadata!", reply_markup=ReplyKeyboardRemove())
-            user_state.pop(uid, None)
+            await message.reply("❌ Không tìm thấy metadata!", reply_markup=ReplyKeyboardRemove())
+        user_state.pop(uid, None)
+        await handle_start_crawl(message)
         return
+
+def normalize_chapter_item(ch):
+    """Đảm bảo item chương là dict, luôn có title và url."""
+    if isinstance(ch, dict):
+        title = ch.get('title', 'untitled')
+        url = ch.get('url', None)
+        ch['title'] = title
+        ch['url'] = url
+        return ch
+    elif isinstance(ch, str):
+        logger.warning(f"[WARNING] Chương nhận về là str, không phải dict! Dữ liệu: {ch[:100]}")
+        return {'title': 'untitled', 'url': ch}
+    else:
+        logger.warning(f"[WARNING] Chương nhận về kiểu {type(ch)}, bỏ qua: {ch}")
+        return {'title': 'untitled', 'url': None}
 
 
 @telegram_router.message(F.text.regexp(r"^Recrawl nguồn "))
