@@ -3,6 +3,7 @@ import asyncio
 import json
 import datetime
 import shutil
+import traceback
 from typing import cast
 from adapters.factory import get_adapter
 from config.config import BASE_URLS, COMPLETED_FOLDER, DATA_FOLDER, LOADED_PROXIES, PROXIES_FILE, PROXIES_FOLDER
@@ -39,13 +40,16 @@ async def loop_once_multi_sites(force_unskip=False):
     tasks = []
     for site_key, url in BASE_URLS.items():
         adapter = get_adapter(site_key)
-        tasks.append(check_and_crawl_missing_all_stories(adapter, url, site_key=site_key, force_unskip=force_unskip))
+        tasks.append(asyncio.create_task(check_and_crawl_missing_all_stories(adapter, url, site_key=site_key, force_unskip=force_unskip)))
     try:
-        await asyncio.gather(*tasks)
+        logger.info("Before await gather")
+        results = await asyncio.gather(*tasks, return_exceptions=True)
+        for i, result in enumerate(results):
+            if isinstance(result, Exception):
+                logger.error(f"Task {i} bị lỗi: {result}\n{traceback.format_exc()}")
+        logger.info(f"===== [DONE] =====\n")
     except Exception as e:
         logger.error(f"[ERROR] Lỗi khi kiểm tra/crawl missing: {e}")
-    logger.info(f"===== [DONE] =====\n")
-    # Sau khi crawl xong:
     await send_telegram_notify(f"✅ DONE: Đã crawl/check missing xong toàn bộ ({now})")
 
 async def check_and_crawl_missing_all_stories(adapter, home_page_url, site_key, force_unskip=False):
