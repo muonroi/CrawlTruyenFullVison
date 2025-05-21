@@ -50,7 +50,9 @@ async def loop_once_multi_sites(force_unskip=False):
         logger.info(f"===== [DONE] =====\n")
     except Exception as e:
         logger.error(f"[ERROR] Lỗi khi kiểm tra/crawl missing: {e}")
+    logger.info(f"===== [DONE] =====\n")
     await send_telegram_notify(f"✅ DONE: Đã crawl/check missing xong toàn bộ ({now})")
+
 
 async def check_and_crawl_missing_all_stories(adapter, home_page_url, site_key, force_unskip=False):
     state_file = get_missing_worker_state_file(site_key)
@@ -89,6 +91,7 @@ async def check_and_crawl_missing_all_stories(adapter, home_page_url, site_key, 
             guessed_url = f"{BASE_URLS.get(site_key, '').rstrip('/')}/{os.path.basename(story_folder)}"
             logger.info(f"[AUTO-FIX] Không có metadata.json, đang lấy metadata chi tiết từ {guessed_url}")
             details = await get_story_details(guessed_url, os.path.basename(story_folder).replace("-", " "))
+            logger.info("... sau await get_story_details ...")
             metadata = autofix_metadata(story_folder, site_key)
             if details:
                 # Merge tất cả các trường (kể cả trường mới hoặc chỉ có trong details)
@@ -206,6 +209,7 @@ async def check_and_crawl_missing_all_stories(adapter, home_page_url, site_key, 
                         story_folder, crawl_state, num_batches=num_batches, state_file=state_file
                     )
                 ))
+        logger.info(f"[NEXT] Kết thúc process cho story: {story_folder}")
 
     # ============ 2. Chờ crawl bù xong ============
     if tasks:
@@ -311,6 +315,8 @@ async def check_and_crawl_missing_all_stories(adapter, home_page_url, site_key, 
                 if genre_url:
                     await check_genre_complete_and_notify(genre_name, genre_url)
                 genre_complete_checked.add(genre_name)
+    logger.info(f"[TASK END] Task {site_key} đã xong toàn bộ story.")
+
 
 
 
