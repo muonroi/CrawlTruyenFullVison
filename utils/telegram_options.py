@@ -49,12 +49,22 @@ async def show_extra_menu(message: types.Message):
             [KeyboardButton(text="Tìm truyện theo tên")],
             [KeyboardButton(text="Recrawl truyện")],
             [KeyboardButton(text="Xem meta truyện")],
+            [KeyboardButton(text="Xem tiến độ crawl truyện")], 
             [KeyboardButton(text="Hủy")],
         ],
         resize_keyboard=True,
         one_time_keyboard=True
     )
     await message.reply("Chọn chức năng:", reply_markup=kb)
+
+
+@telegram_router.message(F.text == "Xem tiến độ crawl truyện")
+async def ask_progress_story(message: types.Message):
+    user_state[message.from_user.id] = "progress_story"  # Đặt state riêng #type:ignore
+    await message.reply("Nhập tên truyện muốn kiểm tra tiến độ (chỉ tên):", reply_markup=ReplyKeyboardRemove())
+
+
+
 @telegram_router.message(F.text == "Tìm truyện theo tên")
 async def ask_search_story(message: types.Message):
     user_state[message.from_user.id] = "search_story"#type:ignore
@@ -124,6 +134,39 @@ async def handle_text_input(message: types.Message):
                 break
         if not found:
             await message.reply("❌ Không tìm thấy metadata!", reply_markup=ReplyKeyboardRemove())
+        user_state.pop(uid, None)
+        await handle_start_crawl(message)
+        return
+    if state == "progress_story":
+        found = False
+        truyen_data_folder = os.path.join("truyen_data", slug)
+        meta_paths = [os.path.join(truyen_data_folder, "metadata.json")]
+
+        # Tìm trong completed_stories
+        if os.path.exists("completed_stories"):
+            for genre in os.listdir("completed_stories"):
+                genre_folder = os.path.join("completed_stories", genre)
+                meta_paths.append(os.path.join(genre_folder, slug, "metadata.json"))
+
+        for meta_path in meta_paths:
+            if os.path.exists(meta_path):
+                # Đếm số file .txt trong folder này
+                story_folder = os.path.dirname(meta_path)
+                num_txt = len([f for f in os.listdir(story_folder) if f.endswith('.txt')])
+                with open(meta_path, "r", encoding="utf-8") as f:
+                    meta = json.load(f)
+                total_chapters = meta.get("total_chapters_on_site", "?")
+                reply = (
+                    f"Tiến độ truyện: <b>{meta.get('title')}</b>\n"
+                    f"Đã crawl: <b>{num_txt}</b> chương / Tổng số chương trên site: <b>{total_chapters}</b>"
+                )
+                await message.reply(reply, parse_mode="HTML", reply_markup=ReplyKeyboardRemove())
+                found = True
+                break
+
+        if not found:
+            await message.reply("❌ Không tìm thấy truyện hoặc chưa có metadata!", reply_markup=ReplyKeyboardRemove())
+
         user_state.pop(uid, None)
         await handle_start_crawl(message)
         return
@@ -297,12 +340,29 @@ async def cancel_command(message: types.Message):
 
 @telegram_router.message(F.text == "Thống kê completed theo thể loại")
 async def count_completed_by_genre(message: types.Message):
+    completed_root = "completed_stories"
     result_lines = []
-    for genre in os.listdir("completed_stories"):
-        genre_path = os.path.join("completed_stories", genre)
-        if os.path.isdir(genre_path):
-            count = sum(os.path.isdir(os.path.join(genre_path, name)) for name in os.listdir(genre_path))
-            result_lines.append(f"{genre}: {count}")
+
+    if not os.path.exists(completed_root):
+        await message.reply("❌ Chưa có thư mục completed_stories!", reply_markup=ReplyKeyboardRemove())
+        return
+
+    genres = [g for g in os.listdir(completed_root) if os.path.isdir(os.path.join(completed_root, g))]
+    if not genres:
+        await message.reply("❌ Chưa có thể loại nào trong completed_stories!", reply_markup=ReplyKeyboardRemove())
+        return
+
+    for genre in genres:
+        genre_path = os.path.join(completed_root, genre)
+        # Đếm số truyện (folder) có file metadata.json bên trong
+        count = 0
+        for name in os.listdir(genre_path):
+            story_folder = os.path.join(genre_path, name)
+            if os.path.isdir(story_folder) and os.path.exists(os.path.join(story_folder, "metadata.json")):
+                count += 1
+        result_lines.append(f"{genre}: {count}")
+
     reply = "\n".join(result_lines) if result_lines else "Chưa có truyện nào completed."
     await message.reply(reply, reply_markup=ReplyKeyboardRemove())
+
 
