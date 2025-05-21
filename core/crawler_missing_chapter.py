@@ -531,6 +531,7 @@ async def crawl_story_with_limit(
             current_category, story_folder, crawl_state, num_batches,
             state_file=state_file
         )
+    logger.info(f"[DONE-CRAWL-STORY-WITH-LIMIT] {metadata.get('title')}")
 
 async def crawl_missing_with_limit(
     site_key: str,
@@ -547,11 +548,11 @@ async def crawl_missing_with_limit(
         state_file = get_missing_worker_state_file(site_key)
     logger.info(f"[START] Crawl missing for {metadata['title']} ...")
     async with SEM:
-        result = await crawl_missing_chapters_for_story(
+        result = await asyncio.wait_for(crawl_missing_chapters_for_story(
             site_key, session, missing_chapters, metadata,
             current_category, story_folder, crawl_state, num_batches,
             state_file=state_file
-        )
+        ), timeout=60)
     logger.info(f"[DONE] Crawl missing for {metadata['title']} ...")
     return result
 
