@@ -24,6 +24,15 @@ auto_fixed_titles = []
 MAX_CONCURRENT_STORIES = 3
 STORY_SEM = asyncio.Semaphore(MAX_CONCURRENT_STORIES)
 
+def update_metadata_from_details(metadata: dict, details: dict) -> bool:
+    changed = False
+    for k, v in details.items():
+        if v is not None and v != "" and metadata.get(k) != v:
+            metadata[k] = v
+            changed = True
+    return changed
+
+
 async def loop_once_multi_sites(force_unskip=False):
     now = datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')
     logger.info(f"\n===== [START] Check missing for all sites at {now} =====")
@@ -67,7 +76,7 @@ async def check_and_crawl_missing_all_stories(adapter, home_page_url, site_key, 
             msg = "[AUTO-FIX] Đã tự động tạo metadata cho các truyện: " + ", ".join(auto_fixed_titles[:10])
             if len(auto_fixed_titles) > 10:
                 msg += f" ... (và {len(auto_fixed_titles)-10} truyện nữa)"
-            await send_telegram_notify(msg)
+            #await send_telegram_notify(msg)
             auto_fixed_titles.clear()
         if os.path.dirname(story_folder) == os.path.abspath(COMPLETED_FOLDER):
             continue
@@ -80,8 +89,8 @@ async def check_and_crawl_missing_all_stories(adapter, home_page_url, site_key, 
             if details:
                 # Merge tất cả các trường (kể cả trường mới hoặc chỉ có trong details)
                 for k, v in details.items():
-                    # Ưu tiên giữ lại autofix nếu details không có dữ liệu
-                    if v is not None and v != "":
+                    if v is not None and v != "" and metadata.get(k) != v:
+                        logger.info(f"[UPDATE] {metadata['title']}: Trường '{k}' được cập nhật.")
                         metadata[k] = v
                 with open(metadata_path, "w", encoding="utf-8") as f:
                     json.dump(metadata, f, ensure_ascii=False, indent=4)
@@ -120,36 +129,43 @@ async def check_and_crawl_missing_all_stories(adapter, home_page_url, site_key, 
         # Nếu force_unskip: Xoá skip_crawl & meta_retry_count nếu có
         if force_unskip:
             changed = False
-            if metadata.get("skip_crawl"):
-                metadata.pop("skip_crawl", None)
+            if metadata.get("skip_crawl"): #type:ignore
+                metadata.pop("skip_crawl", None) #type:ignore
                 changed = True
-            if "meta_retry_count" in metadata:
-                metadata.pop("meta_retry_count", None)
+            if "meta_retry_count" in metadata: #type:ignore
+                metadata.pop("meta_retry_count", None) #type:ignore
                 changed = True
             if changed:
                 with open(metadata_path, "w", encoding="utf-8") as f:
                     json.dump(metadata, f, ensure_ascii=False, indent=4)
-                logger.info(f"[UNSKIP] Tự động unskip: {metadata.get('title')}")
+                logger.info(f"[UNSKIP] Tự động unskip: {metadata.get('title')}") #type:ignore
 
-        if metadata.get("skip_crawl", False):
-            logger.info(f"[SKIP] Truyện '{metadata.get('title')}' đã bị đánh dấu bỏ qua (skip_crawl), không crawl lại nữa.")
+        if metadata.get("skip_crawl", False): #type:ignore
+            logger.info(f"[SKIP] Truyện '{metadata.get('title')}' đã bị đánh dấu bỏ qua (skip_crawl), không crawl lại nữa.") #type:ignore
             continue
 
         # Auto fix metadata nếu thiếu (và skip nếu quá 3 lần)
         if not await fix_metadata_with_retry(metadata, metadata_path, story_folder, site_key=site_key, adapter=adapter):
             continue
 
-        total_chapters = metadata.get("total_chapters_on_site")
+        total_chapters = metadata.get("total_chapters_on_site") #type:ignore
         crawled_files = count_txt_files(story_folder)
-        if crawled_files < total_chapters:
-            logger.info(f"[MISSING] '{metadata['title']}' thiếu chương ({crawled_files}/{total_chapters}) -> Đang kiểm tra/crawl bù từ mọi nguồn...")
-            for source in metadata.get("sources", []):
+        if crawled_files < total_chapters: #type:ignore
+                # Trước khi crawl missing, luôn update lại metadata từ web!
+            logger.info(f"[RECHECK] Đang cập nhật lại metadata từ web cho '{metadata['title']}' trước khi crawl missing...") #type:ignore
+            new_details = await get_story_details(metadata.get('url'), metadata.get('title')) #type:ignore
+            if update_metadata_from_details(metadata, new_details):
+                with open(metadata_path, "w", encoding="utf-8") as f:
+                    json.dump(metadata, f, ensure_ascii=False, indent=4)
+                logger.info(f"[RECHECK] Metadata đã được cập nhật lại từ web!")
+            logger.info(f"[MISSING] '{metadata['title']}' thiếu chương ({crawled_files}/{total_chapters}) -> Đang kiểm tra/crawl bù từ mọi nguồn...") #type:ignore
+            for source in metadata.get("sources", []): #type:ignore
                 url = source.get("url")
                 if not site_key or not url:
                     continue
                 adapter = get_adapter(site_key)
                 try:
-                    chapters = await adapter.get_chapter_list(url, metadata['title'])
+                    chapters = await adapter.get_chapter_list(url, metadata['title']) #type:ignore
                 except Exception as ex:
                     logger.error(f"  [ERROR] Không lấy được chapter list từ {site_key}: {ex}")
                     continue
@@ -175,12 +191,12 @@ async def check_and_crawl_missing_all_stories(adapter, home_page_url, site_key, 
                     continue
 
                 logger.info(f"  Bắt đầu crawl bổ sung {len(missing_chapters)} chương từ nguồn {site_key}")
-                current_category = metadata['categories'][0] if metadata.get('categories') and isinstance(metadata['categories'], list) and metadata['categories'] else {}
+                current_category = metadata['categories'][0] if metadata.get('categories') and isinstance(metadata['categories'], list) and metadata['categories'] else {} #type:ignore
                 num_batches = get_auto_batch_count(fixed=10)
-                logger.info(f"Auto chọn {num_batches} batch cho truyện {metadata['title']} (site: {site_key}, proxy usable: {len(LOADED_PROXIES)})")
+                logger.info(f"Auto chọn {num_batches} batch cho truyện {metadata['title']} (site: {site_key}, proxy usable: {len(LOADED_PROXIES)})") #type:ignore
                 tasks.append(
                     await crawl_story_with_limit(
-                        site_key, None, missing_chapters, metadata, current_category,
+                        site_key, None, missing_chapters, metadata, current_category, #type:ignore
                         story_folder, crawl_state, num_batches=num_batches, state_file=state_file
                     )
                 )
@@ -254,6 +270,9 @@ async def check_and_crawl_missing_all_stories(adapter, home_page_url, site_key, 
         fields_required = ['description', 'author', 'cover', 'categories', 'title', 'total_chapters_on_site']
         meta_ok = all(metadata.get(f) for f in fields_required)
         if not meta_ok:
+            logger.info(f"[SKIP] '{story_folder}' thiếu trường quan trọng, sẽ cố gắng lấy lại metadata...")
+            details = await get_story_details(metadata.get("url"), metadata.get("title"))
+            if update_metadata_from_details(metadata, details) and all(metadata.get(f) for f in fields_required):
             logger.info(f"[SKIP] '{story_folder}' thiếu trường quan trọng, sẽ cố gắng lấy lại metadata...")
             details = await get_story_details(metadata.get("url"), metadata.get("title")) #type:ignore
             if details and all(details.get(f) for f in fields_required):
