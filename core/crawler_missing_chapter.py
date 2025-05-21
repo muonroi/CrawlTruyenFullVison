@@ -118,7 +118,15 @@ async def check_and_crawl_missing_all_stories(adapter, home_page_url, site_key, 
                 existing_files = set(os.listdir(story_folder))
                 missing_chapters = []
                 for idx, ch in enumerate(chapters):
-                    fname_only = f"{idx+1:04d}_{ch.get('title', 'untitled')}.txt"
+                    if isinstance(ch, dict):
+                        title = ch.get('title', 'untitled')
+                    elif isinstance(ch, str):
+                        title = 'untitled'
+                        logger.warning(f"[WARNING] Chương nhận về là str, không phải dict! Dữ liệu: {ch[:100]}")
+                        ch = {'title': ch, 'url': ch}
+                    else:
+                        title = 'untitled'
+                    fname_only = f"{idx+1:04d}_{title}.txt"
                     file_path = os.path.join(story_folder, fname_only)
                     if fname_only in existing_files and os.path.getsize(file_path) > 10:
                         continue
