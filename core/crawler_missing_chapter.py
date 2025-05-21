@@ -73,8 +73,26 @@ async def check_and_crawl_missing_all_stories(adapter, home_page_url, site_key, 
         if not os.path.exists(metadata_path):
             logger.info(f"[SKIP] Không có metadata.json trong {story_folder}")
             continue
-        with open(metadata_path, "r", encoding="utf-8") as f:
-            metadata = json.load(f)
+        try:
+            with open(metadata_path, "r", encoding="utf-8") as f:
+                metadata = json.load(f)
+            # Validate cấu trúc sources và các trường bắt buộc
+            if not isinstance(metadata.get("sources", []), list):
+                need_autofix = True
+            fields_required = ['title', 'categories', 'total_chapters_on_site']
+            if not all(metadata.get(f) for f in fields_required):
+                need_autofix = True
+        except Exception as ex:
+            logger.warning(f"[AUTO-FIX] metadata.json lỗi/parsing fail tại {story_folder}, sẽ xoá file và tạo lại! {ex}")
+            need_autofix = True
+
+        if need_autofix:
+            try:
+                os.remove(metadata_path)
+            except Exception as ex:
+                logger.error(f"Lỗi xóa metadata lỗi: {ex}")
+            metadata = autofix_metadata(story_folder, site_key)
+            auto_fixed_titles.append(metadata["title"])
 
         # Nếu force_unskip: Xoá skip_crawl & meta_retry_count nếu có
         if force_unskip:
@@ -151,6 +169,8 @@ async def check_and_crawl_missing_all_stories(adapter, home_page_url, site_key, 
     # ============ 3. Quét lại & move, cảnh báo, đồng bộ ============
     notified_titles = set()
     for story_folder in story_folders:
+        need_autofix = False
+        metadata = None
         # Skip nếu truyện đã move sang completed
         genre_folders = [os.path.join(COMPLETED_FOLDER, d) for d in os.listdir(COMPLETED_FOLDER) if os.path.isdir(os.path.join(COMPLETED_FOLDER, d))]
         if any(os.path.join(gf, os.path.basename(story_folder)) == story_folder for gf in genre_folders):
