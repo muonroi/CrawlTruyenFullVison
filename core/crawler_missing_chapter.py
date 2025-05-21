@@ -195,8 +195,7 @@ async def check_and_crawl_missing_all_stories(adapter, home_page_url, site_key, 
                 current_category = metadata['categories'][0] if metadata.get('categories') and isinstance(metadata['categories'], list) and metadata['categories'] else {} #type:ignore
                 num_batches = get_auto_batch_count(fixed=10)
                 logger.info(f"Auto chọn {num_batches} batch cho truyện {metadata['title']} (site: {site_key}, proxy usable: {len(LOADED_PROXIES)})") #type:ignore
-                tasks.append(
-                    crawl_story_with_limit(
+                tasks.append(crawl_story_with_limit(
                         site_key, None, missing_chapters, metadata, current_category, #type:ignore
                         story_folder, crawl_state, num_batches=num_batches, state_file=state_file
                     )
@@ -205,6 +204,8 @@ async def check_and_crawl_missing_all_stories(adapter, home_page_url, site_key, 
     # ============ 2. Chờ crawl bù xong ============
     if tasks:
         await asyncio.gather(*tasks)
+    logger.info(f"[NEXT STORY] Done process for {metadata['title']}") #type:ignore
+
 
     # ============ 3. Quét lại & move, cảnh báo, đồng bộ ============
     notified_titles = set()
