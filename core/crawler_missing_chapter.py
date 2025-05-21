@@ -76,6 +76,9 @@ async def check_and_crawl_missing_all_stories(adapter, home_page_url, site_key, 
 
     # ============ 1. Tạo tasks crawl missing ============
     for story_folder in story_folders:
+        if not os.path.exists(story_folder):
+            logger.warning(f"[SKIP] Folder không tồn tại: {story_folder}")
+            continue
         need_autofix = False
         metadata = None
         if auto_fixed_titles:
@@ -203,6 +206,9 @@ async def check_and_crawl_missing_all_stories(adapter, home_page_url, site_key, 
                 current_category = metadata['categories'][0] if metadata.get('categories') and isinstance(metadata['categories'], list) and metadata['categories'] else {} #type:ignore
                 num_batches = get_auto_batch_count(fixed=10)
                 logger.info(f"Auto chọn {num_batches} batch cho truyện {metadata['title']} (site: {site_key}, proxy usable: {len(LOADED_PROXIES)})") #type:ignore
+                if not os.path.exists(story_folder):
+                    logger.warning(f"[SKIP][TASK] Không tồn tại folder, bỏ qua: {story_folder}")
+                    continue
                 tasks.append(asyncio.create_task(
                     crawl_story_with_limit(
                         site_key, None, missing_chapters, metadata, current_category,
@@ -480,6 +486,9 @@ async def fix_metadata_with_retry(metadata, metadata_path, story_folder, site_ke
 
 
 def autofix_metadata(story_folder, site_key=None):
+    if not os.path.exists(story_folder):
+        logger.warning(f"[AUTO-FIX] Không tồn tại folder để autofix: {story_folder}")
+        return {}
     folder_name = os.path.basename(story_folder)
     chapter_count = recount_chapters(story_folder)
     guessed_url = f"{BASE_URLS.get(site_key, '').rstrip('/')}/{folder_name}" if site_key else None
