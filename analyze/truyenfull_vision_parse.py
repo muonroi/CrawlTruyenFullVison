@@ -5,12 +5,15 @@ from typing import List, Tuple, Optional, Dict, Any
 from bs4 import BeautifulSoup
 from urllib.parse import urljoin, urlparse
 
+import httpx
+
 from utils.html_parser import extract_chapter_content, get_total_pages_category
 from utils.logger import logger
 from scraper import make_request
 from config.config import (
     BASE_URLS,
     MAX_STORIES_PER_GENRE_PAGE,
+    get_random_headers,
 )
 import re
 import asyncio
@@ -131,7 +134,7 @@ async def get_story_details(story_url: str, story_title_for_log: str) -> Dict[st
         logger.warning(f"Không tìm thấy tổng số chương hoặc số nhỏ, paginate để đếm chính xác số chương!")
         from adapters.truyenfull_adapter import TruyenFullAdapter
         # Dùng hàm crawl chapter list (nó sẽ tự động phân trang), LƯU Ý: truyền max_pages=None để lấy hết!
-        chapters = await get_chapters_from_story(story_url, story_title_for_log, max_pages=None)
+        chapters = await get_chapters_from_story(story_url, story_title_for_log)
         num_chapters = len(chapters)
 
     details["total_chapters_on_site"] = num_chapters
@@ -254,70 +257,54 @@ async def get_all_stories_from_genre(
 
 async def get_chapters_from_story(
     story_url: str, story_title: str,
-    max_pages: Optional[int] = None,         # Không giới hạn mặc định
-    total_chapters_on_site: Optional[int] = None  # Số chương thật sự trên site (từ metadata)
+    total_chapters_on_site: Optional[int] = None,  # Số chương thật sự trên site (từ metadata)
+    site_key: str
 ) -> List[Dict[str, str]]:
     logger.info(f"Truyện '{story_title}': Lấy chương từ {story_url}")
-    loop = asyncio.get_event_loop()
     chapters: List[Dict[str, str]] = []
-    max_pages = None
-    # 1. Lấy trang đầu tiên
-    response = await loop.run_in_executor(None, make_request, story_url)
-    if not response or not getattr(response, 'text', None):
-        logger.error(f"Không nhận được phản hồi từ {story_url}")
-        return []
-    soup = BeautifulSoup(response.text, "html.parser")
-    cont = soup.find("div", id="list-chapter")
-    if not cont:
-        logger.warning("Không tìm thấy list-chapter")
-        return []
 
-    # 2. Lấy tổng số trang chương
-    total_pages = 1
-    total_page_input = cont.find("input", {"id": "total-page"})
-    if total_page_input:
-        try:
-            total_pages = int(total_page_input["value"])
-        except Exception:
-            total_pages = 1
-    if max_pages:
-        total_pages = min(total_pages, max_pages)
+    headers = await get_random_headers(site_key)
+    async with httpx.AsyncClient(headers=headers, timeout=20) as client:
+        # 1. Request trang đầu để lấy truyen-id, truyen-ascii, total-page
+        resp = await client.get(story_url)
+        soup = BeautifulSoup(resp.text, "html.parser")
+        truyen_id = soup.find("input", {"id": "truyen-id"})["value"]
+        truyen_ascii = soup.find("input", {"id": "truyen-ascii"})["value"]
+        truyen_name = story_title  # Hoặc lấy từ <title> nếu muốn
+        total_page = int(soup.find("input", {"id": "total-page"})["value"])
 
-    # 3. Crawl từng trang chương (dừng khi đã lấy đủ số chương thực tế nếu truyền vào)
-    for i in range(1, total_pages + 1):
-        if i == 1:
-            cur_soup = soup
-        else:
-            page_url = f"{story_url.rstrip('/')}/trang-{i}/"
-            logger.info(f"Lấy chương trang {i}: {page_url}")
-            resp = await loop.run_in_executor(None, make_request, page_url)
-            if not resp or not getattr(resp, 'text', None):
-                continue
-            cur_soup = BeautifulSoup(resp.text, "html.parser")
+        # 2. Lặp từng page để lấy danh sách chương qua AJAX
+        for page in range(1, total_page + 1):
+            params = {
+                "type": "list_chapter",
+                "tid": truyen_id,
+                "tascii": truyen_ascii,
+                "tname": truyen_name,
+                "page": page,
+                "totalp": total_page
+            }
+            ajax_url = "https://truyenfull.vision/ajax.php"
+            resp = await client.get(ajax_url, params=params)
+            data = resp.json()
+            chap_html = data.get("chap_list")
+            soup_chap = BeautifulSoup(chap_html, "html.parser")
+            for a in soup_chap.select("ul.list-chapter li a"):
+                chapters.append({
+                    "title": a.get("title") or a.get_text(strip=True),
+                    "url": a["href"]
+                })
+            # Nếu đã lấy đủ số chương metadata thì dừng (tránh request thừa)
+            if total_chapters_on_site and len(chapters) >= total_chapters_on_site:
+                logger.info(f"Đã lấy đủ {total_chapters_on_site} chương, dừng crawl trang chương.")
+                break
 
-        cur_cont = cur_soup.find("div", id="list-chapter")
-        if cur_cont:
-            for ul in cur_cont.find_all("ul", class_=re.compile(r"list-chapter")):#type: ignore
-                for li in ul.find_all("li"):#type: ignore
-                    a = li.find("a", href=True)#type: ignore
-                    if a:
-                        chapters.append({
-                            "url": a["href"],#type: ignore
-                            "title": a.get("title") or a.get_text(strip=True) #type: ignore
-                        }) #type: ignore
-        # Nếu đã lấy đủ số chương metadata thì dừng
-        if total_chapters_on_site and len(chapters) >= total_chapters_on_site:
-            logger.info(f"Đã lấy đủ {total_chapters_on_site} chương, dừng crawl trang chương.")
-            break
-
-    # 4. Xử lý trùng lặp và sắp xếp
+    # 3. Lọc trùng và sort lại theo số chương
     uniq, seen = [], set()
     for ch in chapters:
         if ch['url'] not in seen:
             uniq.append(ch)
             seen.add(ch['url'])
-
-    uniq.sort(key=lambda ch: float(re.search(r"(\d+)", ch['title']).group(1)) if re.search(r"(\d+)", ch['title']) else float('inf')) #type: ignore
+    uniq.sort(key=lambda ch: float(re.search(r"(\d+)", ch['title']).group(1)) if re.search(r"(\d+)", ch['title']) else float('inf'))
 
     # Cảnh báo nếu lấy được ít hơn số chương metadata
     if total_chapters_on_site and len(uniq) < total_chapters_on_site:
@@ -325,8 +312,6 @@ async def get_chapters_from_story(
 
     logger.info(f"Tìm thấy {len(uniq)} chương.")
     return uniq
-
-
 async def get_story_chapter_content(
     chapter_url: str, chapter_title: str
 ) -> Optional[str]:

@@ -199,7 +199,7 @@ async def recrawl_story_choose_site(message: types.Message):
     slug, folder, meta = state[1], state[2], state[3]
     try:
         adapter = get_adapter(site_key)
-        chapters = await adapter.get_chapter_list(meta["url"], meta["title"])
+        chapters = await adapter.get_chapter_list(meta["url"], meta["title"], total_chapters=meta.get("total_chapters_on_site", 0))
         from core.crawler_missing_chapter import crawl_missing_chapters_for_story
         await crawl_missing_chapters_for_story(site_key, None, chapters, meta, {}, folder, {}, 10)
         await message.reply(f"✅ Đã recrawl lại truyện '{meta['title']}' ({slug}) theo nguồn {site_key}!")
@@ -364,5 +364,5 @@ async def count_completed_by_genre(message: types.Message):
 
     reply = "\n".join(result_lines) if result_lines else "Chưa có truyện nào completed."
     await message.reply(reply, reply_markup=ReplyKeyboardRemove())
-
+ 
 

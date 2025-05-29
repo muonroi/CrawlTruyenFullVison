@@ -1,4 +1,5 @@
 import re
+import httpx
 from bs4 import BeautifulSoup
 from scraper import make_request
 from config.config import PATTERN_FILE, load_blacklist_patterns
@@ -147,38 +148,104 @@ async def get_all_stories_from_category_with_page_check(self, genre_name, genre_
     return all_stories, total_pages, pages_crawled
 
 
-async def get_chapters_from_story(self, story_url):
-    loop = asyncio.get_event_loop()
-    chapters = []
-    page_num = 1
-    seen = set()
-    while True:
-        current_url = story_url
-        if page_num > 1:
-            current_url = story_url.rstrip('/') + f"/page/{page_num}"
-        resp = await loop.run_in_executor(None, make_request, current_url)
-        if not resp:
-            break
-        soup = BeautifulSoup(resp.text, "html.parser")
-        found_chapters_on_page = False
-        for li_item in soup.select('ul.list-chapter li, ul.l-chapters li'):
-            a_tag = li_item.find('a')
-            if a_tag and a_tag.has_attr('href') and 'chuong-' in a_tag['href']: #type: ignore
-                chapter_title = a_tag.get_text(strip=True)
-                href = a_tag['href']#type: ignore
-                if href not in seen:
-                    chapters.append({
-                        "title": chapter_title,
-                        "url": href
-                    })
-                    seen.add(href)
-                found_chapters_on_page = True
-        if not found_chapters_on_page:
-            break
-        pagination = soup.select_one('ul.pagination')
-        if not pagination or not pagination.find("a", string=str(page_num + 1)):
-            break
-        page_num += 1
-    chapters.sort(key=lambda ch: float(re.search(r"(\d+)", ch['title']).group(1)) if re.search(r"(\d+)", ch['title']) else float('inf'))#type: ignore
-    return chapters
 
+import re
+from bs4 import BeautifulSoup
+import httpx
+
+
+async def get_chapters_from_story(self, story_url, story_title, total_chapters_on_site=None):
+    headers = {
+        "Origin": "https://metruyenfull.net",
+        "Referer": story_url,
+        "X-Requested-With": "XMLHttpRequest",
+        "Content-Type": "application/x-www-form-urlencoded; charset=UTF-8",
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/108.0.0.0 Safari/537.36"
+    }
+    ajax_url = "https://metruyenfull.net/wp-admin/admin-ajax.php"
+
+    async with httpx.AsyncClient(headers=headers) as client:
+        # 1. Lấy trang đầu để lấy ID truyện
+        print(f"Fetching initial page to get story ID: {story_url}")
+        resp = await client.get(story_url)
+        initial_soup = BeautifulSoup(resp.text, "html.parser")
+
+        truyen_id_input = initial_soup.find("input", {"id": "truyen-id"}) or initial_soup.find("input",
+                                                                                               {"id": "id_post"})
+        if not (truyen_id_input and truyen_id_input.get("value")):
+            raise Exception("Không lấy được id truyện!")
+        truyen_id = truyen_id_input["value"]
+        print(f"Found story ID: {truyen_id}")
+
+        # 2. Lấy tổng số trang từ key 'pagination' trong AJAX response
+        total_pages = 1
+        print("Making a decisive AJAX call to find total pages...")
+        try:
+            payload = {"action": "tw_ajax", "type": "pagination", "id": truyen_id, "page": 2}
+            resp = await client.post(ajax_url, data=payload)
+            resp.raise_for_status()
+
+            ajax_data = resp.json()
+
+            # Lấy chuỗi HTML của phần phân trang từ key 'pagination'
+            pagination_html = ajax_data.get('pagination', '')
+
+            if pagination_html:
+                pagination_soup = BeautifulSoup(pagination_html, 'html.parser')
+                total_page_input = pagination_soup.find("input", {"name": "total-page"})
+                if total_page_input and total_page_input.get("value", "").isdigit():
+                    total_pages = int(total_page_input["value"])
+                    print(f"✅ Success! Total pages found: {total_pages}")
+                else:
+                    print("⚠️ Could not find 'total-page' input in pagination HTML.")
+            else:
+                print("⚠️ AJAX response did not contain 'pagination' key.")
+
+        except Exception as e:
+            print(f"❌ Failed to determine total pages via AJAX. Assuming 1 page. Error: {e}")
+            total_pages = 1
+
+        # 3. Thu thập tất cả các chương
+        all_chapters = []
+        for page in range(1, total_pages + 1):
+            print(f"Fetching chapters from page {page}/{total_pages}...")
+            chapters_html = ''
+            if page == 1:
+                # Trang 1 lấy HTML từ lần tải đầu tiên
+                chapters_html = str(initial_soup)
+            else:
+                # Các trang sau gọi AJAX và lấy HTML từ key 'list_chap'
+                try:
+                    payload = {"action": "tw_ajax", "type": "pagination", "id": truyen_id, "page": page}
+                    resp = await client.post(ajax_url, data=payload)
+                    ajax_data = resp.json()
+                    chapters_html = ajax_data.get('list_chap', '')
+                except Exception as e:
+                    print(f"⚠️ Failed to fetch page {page}. Skipping. Error: {e}")
+                    continue
+
+            # Trích xuất chương từ HTML thu được
+            if chapters_html:
+                page_soup = BeautifulSoup(chapters_html, 'html.parser')
+                for li_item in page_soup.select('ul.list-chapter li'):
+                    a_tag = li_item.find('a')
+                    if a_tag and a_tag.has_attr('href'):
+                        all_chapters.append({"title": a_tag.get_text(strip=True), "url": a_tag['href']})
+
+        # 4. Xử lý trùng và sắp xếp
+        print("Deduplicating and sorting chapters...")
+        uniq = []
+        seen_urls = set()
+        for ch in all_chapters:
+            if ch['url'] not in seen_urls:
+                uniq.append(ch)
+                seen_urls.add(ch['url'])
+
+        def sort_key(chapter):
+            match = re.search(r"chương-(\d+)", chapter['title'], re.IGNORECASE) or re.search(r"(\d+)", chapter['title'])
+            return int(match.group(1)) if match else float('inf')
+
+        uniq.sort(key=sort_key)
+
+        print(f"Finished. Found {len(uniq)} unique chapters.")
+        return uniq

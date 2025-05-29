@@ -230,3 +230,4 @@ async def async_save_chapter_with_lock(filename, content):
     lock = FileLock(lockfile, timeout=60)
     with lock:
         await async_save_chapter_with_hash_check(filename, content)
+

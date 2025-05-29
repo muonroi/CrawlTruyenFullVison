@@ -13,5 +13,3 @@ async def send_telegram_notify(message: str):
         
 async def notify_genre_completed(genre_name):
     message = f"Tất cả truyện của thể loại '{genre_name}' đã crawl xong!"
-    await send_telegram_notify(message)
-
