@@ -9,7 +9,7 @@ from analyze.metruyenfull_parse import (
 )
 from config.config import BASE_URLS
 import asyncio
-from scraper import make_request
+from scraper import make_request 
 
 class MeTruyenFullAdapter(BaseSiteAdapter):
     SITE_KEY = "metruyenfull"
@@ -28,7 +28,7 @@ class MeTruyenFullAdapter(BaseSiteAdapter):
         return await get_story_metadata(self, story_url)
 
     async def get_chapter_list(self, story_url, story_title, max_pages=None, total_chapters=None):
-        return await get_chapters_from_story(self, story_url)
+        return await get_chapters_from_story(self, story_url, story_title, total_chapters_on_site=total_chapters)
 
     async def get_chapter_content(self, chapter_url, chapter_title):
         loop = asyncio.get_event_loop()

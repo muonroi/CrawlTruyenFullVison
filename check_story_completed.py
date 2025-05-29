@@ -1,97 +1,156 @@
 import os
 import json
 import shutil
-from utils.notifier import send_telegram_notify  # Đảm bảo import đúng như trong project bạn
 
-COMPLETED_FOLDER = "completed_stories"
-DATA_FOLDER = "truyen_data"
-REQUIRED_META_FIELDS = [
-    "title", "author", "description", "categories", "total_chapters_on_site", "cover"
-]
-
-def check_story_completed(story_folder):
+def check_story_can_move(story_folder):
     meta_path = os.path.join(story_folder, "metadata.json")
+    reasons = []
+
+    # 1. Kiểm tra metadata.json
     if not os.path.exists(meta_path):
-        return False, "MISSING_METADATA_JSON"
+        reasons.append("Thiếu metadata.json")
+        return False, reasons
+
+    # 2. Load metadata
     try:
         with open(meta_path, "r", encoding="utf-8") as f:
-            meta = json.load(f)
-    except Exception as e:
-        return False, f"METADATA_READ_ERROR: {e}"
+            metadata = json.load(f)
+    except Exception as ex:
+        reasons.append(f"Lỗi đọc metadata: {ex}")
+        return False, reasons
 
-    for field in REQUIRED_META_FIELDS:
-        if not meta.get(field):
-            return False, f"MISSING_FIELD_{field.upper()}"
-    total_chapters = meta.get("total_chapters_on_site", 0)
-    if not isinstance(total_chapters, int):
-        try:
-            total_chapters = int(total_chapters)
-        except Exception:
-            return False, "TOTAL_CHAPTERS_INVALID"
-    txt_files = [f for f in os.listdir(story_folder) if f.endswith('.txt')]
-    if len(txt_files) != total_chapters:
-        return False, f"CHAPTER_COUNT_MISMATCH (meta: {total_chapters}, txt: {len(txt_files)})"
+    # Sau khi load metadata, giờ mới kiểm tra có phải dict không
+    if not isinstance(metadata, dict):  # Kiểm tra metadata có phải là dict không
+        reasons.append("metadata.json không đúng định dạng dict/object")
+        return False, reasons
 
-    return True, "OK"
+    # 3. Kiểm tra các trường bắt buộc
+    required_fields = ['title', 'categories', 'total_chapters_on_site', 'author', 'description', 'cover']
+    for field in required_fields:
+        if not metadata.get(field):
+            reasons.append(f"Thiếu trường {field}")
 
-def move_to_data_folder(story_folder, genre_name):
-    story_name = os.path.basename(story_folder)
-    dest_folder = os.path.join(DATA_FOLDER, story_name)
-    if os.path.exists(dest_folder):
-        shutil.rmtree(dest_folder)
-    shutil.move(story_folder, dest_folder)
-    print(f"[MOVE] Đã chuyển truyện '{story_name}' từ completed_stories/{genre_name} về {DATA_FOLDER}/{story_name}")
+    # 4. Kiểm tra skip_crawl
+    if metadata.get("skip_crawl", False):
+        reasons.append("Đánh dấu skip_crawl")
 
-async def send_telegram_report(error_stories, ok_count, total):
-    if not error_stories:
-        await send_telegram_notify("✅ [Check Completed Stories] Tất cả truyện đã OK! Không phát hiện lỗi thiếu meta hoặc chương nào.")
-        return
-    msg_lines = [
-        f"⚠️ [Check Completed Stories] Có {len(error_stories)}/{total} truyện lỗi. {ok_count} truyện OK.",
-        "",
-        "Danh sách truyện lỗi:"
+    # 5. Kiểm tra số chương thực tế
+    try:
+        chapter_files = [f for f in os.listdir(story_folder) if f.endswith('.txt')]
+        chapter_count = len(chapter_files)
+    except Exception as ex:
+        reasons.append(f"Lỗi khi đếm file chương: {ex}")
+        return False, reasons
+
+    total_chapters = metadata.get("total_chapters_on_site", 0)
+    if chapter_count < total_chapters:
+        reasons.append(f"Thiếu chương: {chapter_count}/{total_chapters}")
+
+    if reasons:
+        return False, reasons
+    else:
+        return True, ["Đủ điều kiện move"]
+
+
+def scan_flat_folder(data_folder):
+    """Scan truyện ở folder 1 cấp (truyen_data)"""
+    print(f"\n--- Kiểm tra truyện trong {data_folder} ---")
+    story_folders = [
+        os.path.join(data_folder, name)
+        for name in os.listdir(data_folder)
+        if os.path.isdir(os.path.join(data_folder, name))
     ]
-    max_show = 25
-    for idx, item in enumerate(error_stories[:max_show]):
-        msg_lines.append(f"{idx+1}. [{item['genre']}] {item['story']} — {item['message']}")
-    if len(error_stories) > max_show:
-        msg_lines.append(f"... Và {len(error_stories) - max_show} truyện lỗi khác (xem report_check_completed.json)")
-    await send_telegram_notify('\n'.join(msg_lines))
+    results = []
+    for folder in story_folders:
+        ok, reasons = check_story_can_move(folder)
+        name = os.path.basename(folder)
+        results.append((name, ok, reasons))
+    return results
 
-def main():
-    import asyncio
+def scan_nested_folder(parent_folder):
+    print(f"\n--- Kiểm tra truyện trong {parent_folder} (theo thể loại) ---")
+    all_results = []
+    genres = os.listdir(parent_folder)
+    print("Các thể loại tìm thấy:", genres)
+    for genre in genres:
+        genre_path = os.path.join(parent_folder, genre)
+        if os.path.isdir(genre_path):
+            print(f"  Thể loại: {genre}")
+            for story in os.listdir(genre_path):
+                story_folder = os.path.join(genre_path, story)
+                if os.path.isdir(story_folder):
+                    print(f"    Truyện: {story}")
+                    ok, reasons = check_story_can_move(story_folder)
+                    name = f"{genre}/{story}"
+                    all_results.append((name, ok, reasons))
+    return all_results
 
-    report = []
-    error_stories = []
-    ok_count = 0
-    genre_folders = [os.path.join(COMPLETED_FOLDER, d) for d in os.listdir(COMPLETED_FOLDER) if os.path.isdir(os.path.join(COMPLETED_FOLDER, d))]
-    for genre_folder in genre_folders:
-        story_folders = [os.path.join(genre_folder, s) for s in os.listdir(genre_folder) if os.path.isdir(os.path.join(genre_folder, s))]
-        for story_folder in story_folders:
-            ok, msg = check_story_completed(story_folder)
-            story_name = os.path.basename(story_folder)
-            genre_name = os.path.basename(genre_folder)
-            item = {
-                "genre": genre_name,
-                "story": story_name,
-                "path": story_folder,
-                "status": "OK" if ok else "ERROR",
-                "message": msg
-            }
-            if not ok:
-                move_to_data_folder(story_folder, genre_name)
-                error_stories.append(item)
-            else:
-                ok_count += 1
-            print(f"[{item['status']}] {genre_name}/{story_name}: {msg}")
-            report.append(item)
 
-    # Xuất report ra file
-    with open("report_check_completed.json", "w", encoding="utf-8") as f:
-        json.dump(report, f, ensure_ascii=False, indent=4)
+def print_report(results, folder_label):
+    total = len(results)
+    # Sắp xếp OK trước, NO sau
+    results_sorted = sorted(results, key=lambda x: not x[1])  # OK = True -> 0, NO = False -> 1
 
-    # Gửi báo cáo qua Telegram (async)
-    asyncio.run(send_telegram_report(error_stories, ok_count, len(report)))
+    print(f"\n--- TỔNG KẾT ({folder_label}) ---")
+    print(f"Tổng số truyện: {total}")
+
+    print("\n== ĐỦ ĐIỀU KIỆN MOVE ==")
+    for name, ok, reasons in results_sorted:
+        if ok:
+            print(f"[OK]  {name}: Có thể move qua completed")
+
+    print("\n== CHƯA ĐỦ ĐIỀU KIỆN ==")
+    for name, ok, reasons in results_sorted:
+        if not ok:
+            print(f"[NO]  {name}: {'; '.join(reasons)}")
+
+    can_move = sum(1 for _, ok, _ in results if ok)
+    cant_move = sum(1 for _, ok, _ in results if not ok)
+    print(f"\nSố truyện đủ điều kiện: {can_move}")
+    print(f"Số truyện chưa đủ: {cant_move}")
+
+
+def move_no_stories_to_data_folder(results, completed_folder, data_folder):
+    count = 0
+    for name, ok, reasons in results:
+        if not ok:
+            # name dạng "theloai/truyen"
+            try:
+                genre, story = name.split('/', 1)
+            except ValueError:
+                print(f"[LỖI] Không tách được thể loại/truyện từ tên: {name}")
+                continue
+            src_folder = os.path.join(completed_folder, genre, story)
+            dest_folder = os.path.join(data_folder, story)
+            if not os.path.isdir(src_folder):
+                print(f"[SKIP] Không tìm thấy thư mục: {src_folder}")
+                continue
+            if os.path.exists(dest_folder):
+                print(f"[SKIP] {dest_folder} đã tồn tại, không move!")
+                continue
+            try:
+                shutil.move(src_folder, dest_folder)
+                print(f"[MOVE] {name} → truyen_data/{story}: {'; '.join(reasons)}")
+                count += 1
+            except Exception as ex:
+                print(f"[LỖI MOVE] {name}: {ex}")
+    print(f"\n== ĐÃ MOVE {count} TRUYỆN CHƯA ĐỦ VỀ truyen_data ==")
 
 if __name__ == "__main__":
-    main()
+    # Folder 1 cấp
+    truyen_data_results = scan_flat_folder("./truyen_data")
+    print_report(truyen_data_results, "truyen_data")
+    can_move_truyen_data = sum(1 for _, ok, _ in truyen_data_results if ok)
+    cant_move_truyen_data = sum(1 for _, ok, _ in truyen_data_results if not ok)
+    print(f"\n== Tổng kết truyen_data ==")
+    print(f"Số truyện đủ điều kiện: {can_move_truyen_data}")
+    print(f"Số truyện chưa đủ: {cant_move_truyen_data}")
+
+    # # Folder nhiều cấp (theo thể loại)
+    # completed_results = scan_nested_folder("./completed_stories")
+    # print_report(completed_results, "completed_stories")
+    # can_move_completed = sum(1 for _, ok, _ in completed_results if ok)
+    # cant_move_completed = sum(1 for _, ok, _ in completed_results if not ok)
+    # print(f"\n== Tổng kết completed_stories ==")
+    # print(f"Số truyện đủ điều kiện: {can_move_completed}")
+    # print(f"Số truyện chưa đủ: {cant_move_completed}")
