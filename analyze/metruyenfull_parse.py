@@ -2,7 +2,7 @@ import re
 import httpx
 from bs4 import BeautifulSoup
 from scraper import make_request
-from config.config import PATTERN_FILE, load_blacklist_patterns
+from config.config import PATTERN_FILE, get_random_headers, load_blacklist_patterns
 from utils.logger import logger
 from utils.html_parser import get_total_pages_metruyen_category, parse_stories_from_category_page
 PATTERNS, CONTAINS_LIST = load_blacklist_patterns(PATTERN_FILE)
@@ -154,14 +154,8 @@ from bs4 import BeautifulSoup
 import httpx
 
 
-async def get_chapters_from_story(self, story_url, story_title, total_chapters_on_site=None):
-    headers = {
-        "Origin": "https://metruyenfull.net",
-        "Referer": story_url,
-        "X-Requested-With": "XMLHttpRequest",
-        "Content-Type": "application/x-www-form-urlencoded; charset=UTF-8",
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/108.0.0.0 Safari/537.36"
-    }
+async def get_chapters_from_story(self, story_url, story_title, total_chapters_on_site=None, site_key=None):
+    headers =  await get_random_headers(site_key)
     ajax_url = "https://metruyenfull.net/wp-admin/admin-ajax.php"
 
     async with httpx.AsyncClient(headers=headers) as client:

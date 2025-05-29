@@ -42,7 +42,7 @@ async def check_and_update_all_completed_stories(all_sites):
                 adapter = get_adapter(site_key)
                 print(f"[{slug}] Check chương mới từ nguồn {site_key} ...")
                 total_chapters = metadata.get("total_chapters_on_site") or 0
-                chapters = await adapter.get_chapter_list(url, title, total_chapters=total_chapters)
+                chapters = await adapter.get_chapter_list(url, title,site_key, total_chapters=total_chapters)
                 total_existing = count_txt_files(folder)
                 if len(chapters) > total_existing:
                     print(f"  Có chương mới ({len(chapters)}/{total_existing}) từ {site_key}. Đang bổ sung ...")

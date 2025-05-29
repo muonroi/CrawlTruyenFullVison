@@ -27,8 +27,8 @@ class TruyenFullAdapter(BaseSiteAdapter):
     async def get_story_details(self, story_url, story_title):
         return await get_story_details(story_url, story_title)
 
-    async def get_chapter_list(self, story_url, story_title, max_pages=None, total_chapters=None):
-        return await get_chapters_from_story(story_url, story_title, total_chapters_on_site=total_chapters)
+    async def get_chapter_list(self, story_url, story_title, site_key, max_pages=None, total_chapters=None):
+        return await get_chapters_from_story(story_url, story_title, total_chapters_on_site=total_chapters, site_key=site_key)
 
     async def get_chapter_content(self, chapter_url, chapter_title):
         return await get_story_chapter_content(chapter_url, chapter_title)

@@ -32,7 +32,7 @@ async def get_real_total_chapters(site_key, metadata):
     story_title = metadata.get("title")
     if not story_url or not story_title:
         return 0
-    chapters = await adapter.get_chapter_list(story_url, story_title)
+    chapters = await adapter.get_chapter_list(story_url, story_title,site_key)
     return len(chapters)
 
 
@@ -186,7 +186,7 @@ async def check_and_crawl_missing_all_stories(adapter, home_page_url, site_key, 
                     continue
                 adapter = get_adapter(site_key)
                 try:
-                    chapters = await adapter.get_chapter_list(url, metadata['title']) #type:ignore
+                    chapters = await adapter.get_chapter_list(url, metadata['title'],site_key) #type:ignore
                 except Exception as ex:
                     logger.error(f"  [ERROR] Không lấy được chapter list từ {site_key}: {ex}")
                     continue
