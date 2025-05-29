@@ -7,6 +7,7 @@ from urllib.parse import urljoin, urlparse
 
 import httpx
 
+from utils.batch_utils import smart_delay
 from utils.html_parser import extract_chapter_content, get_total_pages_category
 from utils.logger import logger
 from scraper import make_request
@@ -255,10 +256,14 @@ async def get_all_stories_from_genre(
     logger.info(f"Tổng có {len(all_stories)} truyện.")
     return all_stories
 
+def get_input_value(soup, input_id, default=None):
+    tag = soup.find("input", {"id": input_id})
+    return tag["value"] if tag and tag.has_attr("value") else default
+
 async def get_chapters_from_story(
     story_url: str, story_title: str,
     total_chapters_on_site: Optional[int] = None,  # Số chương thật sự trên site (từ metadata)
-    site_key: str
+    site_key: str = "truyenfull"
 ) -> List[Dict[str, str]]:
     logger.info(f"Truyện '{story_title}': Lấy chương từ {story_url}")
     chapters: List[Dict[str, str]] = []
@@ -268,10 +273,19 @@ async def get_chapters_from_story(
         # 1. Request trang đầu để lấy truyen-id, truyen-ascii, total-page
         resp = await client.get(story_url)
         soup = BeautifulSoup(resp.text, "html.parser")
-        truyen_id = soup.find("input", {"id": "truyen-id"})["value"]
-        truyen_ascii = soup.find("input", {"id": "truyen-ascii"})["value"]
-        truyen_name = story_title  # Hoặc lấy từ <title> nếu muốn
-        total_page = int(soup.find("input", {"id": "total-page"})["value"])
+        def get_input(soup, key):
+            tag = soup.find("input", {"id": key})
+            return tag["value"] if tag and tag.has_attr("value") else None
+
+        truyen_id = get_input(soup, "truyen-id")
+        truyen_ascii = get_input(soup, "truyen-ascii")
+        total_page = get_input(soup, "total-page")
+        if not (truyen_id and truyen_ascii and total_page):
+            logger.error("Không lấy được đủ thông tin (truyen-id, truyen-ascii, total-page)")
+            return []
+
+        truyen_name = story_title  # Bạn có thể dùng <title> nếu muốn, ở đây giữ nguyên title truyền vào
+        total_page = int(total_page)
 
         # 2. Lặp từng page để lấy danh sách chương qua AJAX
         for page in range(1, total_page + 1):
@@ -284,9 +298,19 @@ async def get_chapters_from_story(
                 "totalp": total_page
             }
             ajax_url = "https://truyenfull.vision/ajax.php"
-            resp = await client.get(ajax_url, params=params)
-            data = resp.json()
+            try:
+                resp = await client.get(ajax_url, params=params)
+                if resp.status_code != 200:
+                    logger.warning(f"AJAX page {page}/{total_page} fail, status {resp.status_code}")
+                    continue
+                data = resp.json()
+            except Exception as ex:
+                logger.error(f"Lỗi khi gọi AJAX page {page}: {ex}")
+                continue
             chap_html = data.get("chap_list")
+            if not chap_html:
+                logger.warning(f"Không có chap_list trong AJAX page {page}")
+                continue
             soup_chap = BeautifulSoup(chap_html, "html.parser")
             for a in soup_chap.select("ul.list-chapter li a"):
                 chapters.append({
@@ -297,6 +321,7 @@ async def get_chapters_from_story(
             if total_chapters_on_site and len(chapters) >= total_chapters_on_site:
                 logger.info(f"Đã lấy đủ {total_chapters_on_site} chương, dừng crawl trang chương.")
                 break
+            await smart_delay()
 
     # 3. Lọc trùng và sort lại theo số chương
     uniq, seen = [], set()
@@ -312,6 +337,7 @@ async def get_chapters_from_story(
 
     logger.info(f"Tìm thấy {len(uniq)} chương.")
     return uniq
+
 async def get_story_chapter_content(
     chapter_url: str, chapter_title: str
 ) -> Optional[str]:

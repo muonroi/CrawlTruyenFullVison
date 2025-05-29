@@ -127,7 +127,7 @@ async def get_story_chapter_content(chapter_url, chapter_title):
     text = content_div.get_text(separator="\n", strip=True)
     return text
 
-async def get_chapter_list(self, story_url, story_title, max_pages=None, total_chapters=None):
+async def get_chapter_list(self, story_url, story_title, max_pages=None, total_chapters=None, site_key=None):
     import re
     from bs4 import BeautifulSoup
     from scraper import make_request

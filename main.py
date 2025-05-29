@@ -61,7 +61,7 @@ async def crawl_all_sources_until_full(
             if not url:
                 continue
             # Dùng adapter phù hợp cho từng nguồn nếu multi-site, còn 1 site thì giữ nguyên
-            chapters = await adapter.get_chapter_list(url, story_data_item['title'], total_chapters) # type: ignore
+            chapters = await adapter.get_chapter_list(url, story_data_item['title'], site_key, total_chapters=total_chapters) # type: ignore
             await crawl_missing_chapters_for_story(
                 site_key, session, chapters, story_data_item, current_discovery_genre_data, story_folder_path, crawl_state,
                 num_batches=num_batches, state_file=state_file

@@ -18,7 +18,7 @@ class BaseSiteAdapter(ABC):
         pass
 
     @abstractmethod
-    async def get_chapter_list(self, story_url, story_title, max_pages=None, total_chapters=None):
+    async def get_chapter_list(self, story_url, story_title, site_key, max_pages=None, total_chapters=None):
         pass
 
     @abstractmethod
