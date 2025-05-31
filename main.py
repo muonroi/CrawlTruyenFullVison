@@ -6,13 +6,12 @@ import sys
 import time
 import aiohttp
 import os
-from urllib.parse import urlparse
 from typing import Dict, Any, List, Tuple
-from aiogram import Bot, Dispatcher, types, F, Router
+from aiogram import  Router
 from adapters.base_site_adapter import BaseSiteAdapter
 from adapters.factory import get_adapter
 from utils.batch_utils import smart_delay, split_batches
-from utils.chapter_utils import async_download_and_save_chapter, count_txt_files, process_chapter_batch, slugify_title
+from utils.chapter_utils import async_download_and_save_chapter, count_txt_files, extract_real_chapter_number, get_chapter_filename, process_chapter_batch, slugify_title
 from utils.io_utils import  create_proxy_template_if_not_exists, ensure_directory_exists, log_failed_genre, safe_write_file
 from utils.logger import logger
 from config.config import FAILED_GENRES_FILE, GENRE_ASYNC_LIMIT, GENRE_BATCH_SIZE, LOADED_PROXIES, RETRY_GENRE_ROUND_LIMIT, RETRY_SLEEP_SECONDS, get_state_file
@@ -26,7 +25,6 @@ from config.config import (
 from config.proxy_provider import  load_proxies, shuffle_proxies
 from scraper import initialize_scraper
 from utils.meta_utils import add_missing_story, backup_crawl_state, sanitize_filename, save_story_metadata_file
-from utils.notifier import send_telegram_notify 
 from utils.state_utils import clear_specific_state_keys, load_crawl_state, merge_all_missing_workers_to_main, save_crawl_state
 
 router = Router()
@@ -97,6 +95,12 @@ async def crawl_missing_chapters_for_story(
     total_chapters = story_data_item.get('total_chapters_on_site', len(chapters))
     retry_count = 0
 
+    def split_batches(items, num_batches):
+        if not items or num_batches <= 0:
+            return []
+        k, m = divmod(len(items), num_batches)
+        return [items[i*k+min(i, m):(i+1)*k+min(i+1, m)] for i in range(num_batches)]
+
     while True:
         saved_files = get_saved_chapters_files(story_folder_path)
         if len(saved_files) >= total_chapters:
@@ -106,7 +110,7 @@ async def crawl_missing_chapters_for_story(
         # Xác định các chương thiếu thực tế dựa trên danh sách chương
         missing_chapters = []
         for idx, ch in enumerate(chapters):
-            fname_only = f"{idx+1:04d}_{sanitize_filename(ch['title']) or 'untitled'}.txt"
+            fname_only = get_chapter_filename(ch['title'], idx)
             if fname_only not in saved_files:
                 missing_chapters.append((idx, ch, fname_only))
 
@@ -117,9 +121,10 @@ async def crawl_missing_chapters_for_story(
             f"Truyện '{story_data_item['title']}' còn thiếu {len(missing_chapters)} chương (retry: {retry_count + 1})"
         )
 
-        # Chia batch và crawl song song như cũ
-        num_batches_now = min(num_batches, max(1, len(missing_chapters)))
+        # Tính số batch dựa trên số chương còn thiếu, mỗi batch tối đa 120 chương
+        num_batches_now = max(1, (len(missing_chapters) + 119) // 120)
         batches = split_batches(missing_chapters, num_batches_now)
+        logger.info(f"Crawl {len(missing_chapters)} chương với {num_batches_now} batch (mỗi batch tối đa 120 chương)")
 
         async def crawl_batch(batch, batch_idx):
             successful, failed = set(), []
@@ -127,7 +132,7 @@ async def crawl_missing_chapters_for_story(
             tasks = []
             for i, (idx, ch, fname_only) in enumerate(batch):
                 full_path = os.path.join(story_folder_path, fname_only)
-                logger.info(f"[Batch {batch_idx}] Đang crawl chương {idx+1}: {ch['title']}")
+                logger.info(f"[Batch {batch_idx}/{num_batches_now}] Đang crawl chương {idx+1}: {ch['title']}")
 
                 async def wrapped(ch=ch, idx=idx, fname_only=fname_only, full_path=full_path):
                     async with sem:
@@ -139,7 +144,7 @@ async def crawl_missing_chapters_for_story(
                                     f"{idx+1}/{len(chapters)}", crawl_state, successful, failed, idx,
                                     site_key=site_key, state_file=state_file
                                 ),
-                                timeout=120
+                                timeout=300  # Tăng timeout lên 300 giây
                             )
                         except Exception as ex:
                             logger.error(f"[Batch {batch_idx}] Lỗi khi crawl chương {idx+1}: {ch['title']} - {ex}")
@@ -155,8 +160,11 @@ async def crawl_missing_chapters_for_story(
                 await save_crawl_state(crawl_state, state_file)
             return successful, failed
 
-        batch_tasks = [crawl_batch(batch, i+1) for i, batch in enumerate(batches) if batch]
-        await asyncio.gather(*batch_tasks, return_exceptions=True)
+        # Thực thi từng batch tuần tự thay vì song song
+        for batch_idx, batch in enumerate(batches):
+            if not batch:
+                continue
+            await crawl_batch(batch, batch_idx + 1)
 
         retry_count += 1
         await smart_delay()  # Để tránh spam request quá nhanh
@@ -166,7 +174,6 @@ async def crawl_missing_chapters_for_story(
             logger.error(
                 f"[ALERT] Truyện '{story_data_item['title']}' còn các chương sau mãi chưa crawl được: {[f for _,_,f in missing_chapters]}"
             )
-
 
 async def initialize_and_log_setup_with_state(site_key) -> Tuple[str, Dict[str, Any]]:
     await ensure_directory_exists(DATA_FOLDER)
@@ -252,7 +259,7 @@ async def process_all_chapters_for_story(
                     idx = int(name.split('_')[0]) - 1 if name and '_' in name else 0
                 except Exception:
                     idx = 0
-            fname_only = f"{idx+1:04d}_{sanitize_filename(ch['title']) or 'untitled'}.txt"
+            fname_only = get_chapter_filename(ch['title'], idx)
             full_path = os.path.join(story_folder_path, fname_only)
             retry_tasks.append(asyncio.create_task(
                 async_download_and_save_chapter(

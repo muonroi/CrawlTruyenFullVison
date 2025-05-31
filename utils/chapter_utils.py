@@ -177,8 +177,10 @@ async def process_chapter_batch(
     for idx, ch in enumerate(batch_chapters):
         if ch['url'] in already_crawled:
             continue
-        fname_only = f"{ch['idx']+1:04d}_{sanitize_filename(ch['title']) or 'untitled'}.txt"
+
+        fname_only = get_chapter_filename(ch['title'], ch['idx'])
         full_path = os.path.join(story_folder_path, fname_only)
+
         await async_download_and_save_chapter(
             ch, story_data_item, current_discovery_genre_data,
             full_path, fname_only, f"Batch {batch_idx+1}/{total_batch}", f"{ch['idx']+1}",
@@ -231,3 +233,28 @@ async def async_save_chapter_with_lock(filename, content):
     with lock:
         await async_save_chapter_with_hash_check(filename, content)
 
+
+def extract_real_chapter_number(title: str) -> int | None:
+    """
+    Trích xuất số chương thực tế từ tiêu đề chương.
+    Hỗ trợ các định dạng: Chương 123, Chapter 456, 001. Tên chương, ...
+    """
+    if not title:
+        return None
+
+    match = re.search(r'(?:chương|chapter|chap|ch)\s*[:\-]?\s*(\d{1,5})', title, re.IGNORECASE)
+    if match:
+        return int(match.group(1))
+
+    match = re.match(r'^\s*(\d{1,5})[\.\-\s]', title)
+    if match:
+        return int(match.group(1))
+
+    return None
+
+def get_chapter_filename(title: str, real_num: int) -> str:
+    """
+    Tạo tên file chương chuẩn: 0001_Tên chương.txt
+    """
+    clean_title = sanitize_filename(title) or "untitled"
+    return f"{real_num:04d}_{clean_title}.txt"
