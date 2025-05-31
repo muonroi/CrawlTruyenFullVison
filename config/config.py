@@ -11,10 +11,9 @@ load_dotenv()
 # -------------- [Cấu hình CƠ BẢN] --------------
 BASE_URLS = {
     "truyenfull": "https://truyenfull.vision",
-    "metruyenfull": "https://metruyenfull.net",
-    "vivutruyen": "https://vivutruyen.com",
-    "truyenyy": "https://truyenyy.co",
+    "metruyenfull": "https://metruyenfull.net"
 }
+  # "vivutruyen": "https://vivutruyen.com"
 
 REQUEST_DELAY = float(os.getenv("REQUEST_DELAY", "5"))  # Giây delay giữa các request
 DATA_FOLDER = os.getenv("DATA_FOLDER", "truyen_data")

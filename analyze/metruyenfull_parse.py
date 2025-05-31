@@ -98,7 +98,7 @@ async def get_story_metadata(self, story_url):
     # Fallback
     if not num_chapters or num_chapters < 100:
         logger.warning(f"Không lấy được tổng số chương chuẩn, sẽ crawl paginate đếm số chương cho {story_url}")
-        chapters = await get_chapters_from_story(self, story_url)
+        chapters = await get_chapters_from_story(self, story_url, title, total_chapters_on_site=num_chapters, site_key=self.SITE_KEY)
         num_chapters = len(chapters)
 
     # Cover

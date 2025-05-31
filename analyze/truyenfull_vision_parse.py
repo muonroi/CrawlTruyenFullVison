@@ -135,7 +135,7 @@ async def get_story_details(story_url: str, story_title_for_log: str) -> Dict[st
         logger.warning(f"Không tìm thấy tổng số chương hoặc số nhỏ, paginate để đếm chính xác số chương!")
         from adapters.truyenfull_adapter import TruyenFullAdapter
         # Dùng hàm crawl chapter list (nó sẽ tự động phân trang), LƯU Ý: truyền max_pages=None để lấy hết!
-        chapters = await get_chapters_from_story(story_url, story_title_for_log)
+        chapters = await get_chapters_from_story(story_url,story_title_for_log,site_key="truyenfull")
         num_chapters = len(chapters)
 
     details["total_chapters_on_site"] = num_chapters
