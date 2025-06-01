@@ -2,7 +2,7 @@ import re
 from typing import List
 from bs4 import BeautifulSoup
 
-from config.config import  HEADER_RE, PATTERN_FILE
+from config.config import  HEADER_RE, PATTERN_FILE, SITE_SELECTORS
 from scraper import make_request
 from utils.logger import logger
 from utils.cleaner import clean_chapter_content
@@ -10,33 +10,32 @@ from utils.io_utils import filter_lines_by_patterns, load_patterns
 
 BLACKLIST_PATTERNS = load_patterns(PATTERN_FILE)
 
-def extract_chapter_content(html: str, patterns: List[re.Pattern]=BLACKLIST_PATTERNS) -> str:
+def extract_chapter_content(html: str, site_key: str, patterns: List[re.Pattern] = BLACKLIST_PATTERNS) -> str:
     soup = BeautifulSoup(html, "html.parser")
-    chapter_div = soup.find("div", id="chapter-c")
+    # --- Lấy selector function từ map ---
+    selector_fn = SITE_SELECTORS.get(site_key)
+    chapter_div = selector_fn(soup) if selector_fn else None
+
     if not chapter_div:
         with open('debug_empty_chapter.html', 'w', encoding='utf-8') as f:
             f.write(html)
-        logger.warning(f"Không tìm thấy Div Nội dung chương trống, đã lưu response vào debug_empty_chapter.html")
+        logger.warning(f"[{site_key}] Không tìm thấy nội dung chương, đã lưu response vào debug_empty_chapter.html")
         return ""
     
-    # Đừng xóa thẳng tay nếu chưa chắc clean
     clean_chapter_content(chapter_div)
 
-    # Log text sau clean_chapter_content
     text = chapter_div.get_text(separator="\n")
-
     lines = [line.strip() for line in text.splitlines() if line.strip()]
-
     cleaned_lines = filter_lines_by_patterns(lines, patterns)
-
     content = clean_header("\n".join(cleaned_lines)).strip()
 
     if not content:
-        logger.warning("Nội dung chương trống sau khi lọc, đã lưu response vào debug_empty_chapter.html")
+        logger.warning(f"[{site_key}] Nội dung chương trống sau khi lọc, đã lưu response vào debug_empty_chapter.html")
         with open('debug_empty_chapter.html', 'w', encoding='utf-8') as f:
             f.write(html)
         return ""
     return content
+
 
 def clean_header(text: str):
     lines = text.splitlines()

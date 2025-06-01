@@ -10,7 +10,7 @@ from aiogram.types import ReplyKeyboardMarkup, KeyboardButton, ReplyKeyboardRemo
 from aiogram import  types, F, Router
 from clean_garbage import clean_error_jsons
 from config.config import BASE_URLS, TELEGRAM_CHAT_ID
-from core.crawler_missing_chapter import check_and_crawl_missing_all_stories, loop_once_multi_sites
+from workers.crawler_single_missing_chapter import check_and_crawl_missing_all_stories, loop_once_multi_sites
 from main import retry_failed_genres, run_crawler
 from retry_failed_chapters import retry_queue
 from utils.logger import logger
@@ -200,7 +200,7 @@ async def recrawl_story_choose_site(message: types.Message):
     try:
         adapter = get_adapter(site_key)
         chapters = await adapter.get_chapter_list(meta["url"], meta["title"], site_key,total_chapters=meta.get("total_chapters_on_site", 0))
-        from core.crawler_missing_chapter import crawl_missing_chapters_for_story
+        from workers.crawler_single_missing_chapter import crawl_missing_chapters_for_story
         await crawl_missing_chapters_for_story(site_key, None, chapters, meta, {}, folder, {}, 10)
         await message.reply(f"✅ Đã recrawl lại truyện '{meta['title']}' ({slug}) theo nguồn {site_key}!")
     except Exception as ex:
@@ -300,7 +300,7 @@ async def crawl_missing_for_site(message: types.Message):
     site_key = message.text.replace("Missing chapter - ", "") #type:ignore
     adapter = get_adapter(site_key)
     await message.reply(f"Bắt đầu crawl missing chapter cho site: {site_key}", reply_markup=ReplyKeyboardRemove())
-    await check_and_crawl_missing_all_stories(adapter, BASE_URLS[site_key], site_key)
+    await check_and_crawl_missing_all_stories(adapter, BASE_URLS[site_key], site_key) 
 
 # ---- Crawl FULL cho 1 site (chạy như main.py CLI) ----
 @telegram_router.message(lambda message: message.text.startswith("Full crawl - "))

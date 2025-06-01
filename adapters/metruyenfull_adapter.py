@@ -1,4 +1,3 @@
-from bs4 import BeautifulSoup
 from adapters.base_site_adapter import BaseSiteAdapter
 from analyze.metruyenfull_parse import (
     get_all_categories,
@@ -9,7 +8,8 @@ from analyze.metruyenfull_parse import (
 )
 from config.config import BASE_URLS
 import asyncio
-from scraper import make_request 
+from scraper import make_request
+from utils.html_parser import extract_chapter_content 
 
 class MeTruyenFullAdapter(BaseSiteAdapter):
     SITE_KEY = "metruyenfull"
@@ -30,22 +30,16 @@ class MeTruyenFullAdapter(BaseSiteAdapter):
     async def get_chapter_list(self, story_url, story_title,site_key, max_pages=None, total_chapters=None):
         return await get_chapters_from_story(self, story_url, story_title, total_chapters_on_site=total_chapters, site_key=site_key)
 
-    async def get_chapter_content(self, chapter_url, chapter_title):
+    async def get_chapter_content(self, chapter_url, chapter_title, site_key):
         loop = asyncio.get_event_loop()
         def _get_content(chapter_url):
             resp = make_request(chapter_url)
             if not resp:
                 return ""
             html = resp.text
-            return asyncio.run(self.extract_chapter_content(html))  # Sử dụng hàm extract riêng của class
+            return extract_chapter_content(html,site_key)
         return await loop.run_in_executor(None, _get_content, chapter_url)
 
     async def get_all_stories_from_genre_with_page_check(self, genre_name, genre_url, max_pages=None):
         return await get_all_stories_from_category_with_page_check(self, genre_name, genre_url, max_pages)
     
-    async def extract_chapter_content(self, html: str) -> str:
-        soup = BeautifulSoup(html, "html.parser")
-        chapter_div = soup.find("div", id="chapter-c") or soup.find("div", class_="chapter-c")
-        if not chapter_div:
-            return ""
-        return chapter_div.get_text(separator="\n")

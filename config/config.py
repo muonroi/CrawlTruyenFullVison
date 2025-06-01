@@ -5,16 +5,13 @@ import re
 from dotenv import load_dotenv
 from config.useragent_list import STATIC_USER_AGENTS  # bạn tạo file này bên dưới
 
-# Load env (ưu tiên .env > biến hệ thống)
 load_dotenv()
 
-# -------------- [Cấu hình CƠ BẢN] --------------
 BASE_URLS = {
     "truyenfull": "https://truyenfull.vision",
-    "metruyenfull": "https://metruyenfull.net"
+    "metruyenfull": "https://metruyenfull.net",
+    "truyenyy": "https://truyenyy.co",
 }
-  # "vivutruyen": "https://vivutruyen.com"
-
 REQUEST_DELAY = float(os.getenv("REQUEST_DELAY", "5"))  # Giây delay giữa các request
 DATA_FOLDER = os.getenv("DATA_FOLDER", "truyen_data")
 COMPLETED_FOLDER = os.getenv("COMPLETED_FOLDER", "completed_stories")
@@ -52,9 +49,12 @@ TIMEOUT_REQUEST = int(os.getenv("TIMEOUT_REQUEST", 30))
 RETRY_ATTEMPTS = int(os.getenv("RETRY_ATTEMPTS", 3))
 DELAY_ON_RETRY = float(os.getenv("DELAY_ON_RETRY", 2.5))
 # -------------- [Files & State] --------------
-STATE_FILE = os.getenv("STATE_FILE", "crawl_state.json")
-ERROR_CHAPTERS_FILE = os.getenv("ERROR_CHAPTERS_FILE", "error_chapters.json")
 PATTERN_FILE = os.getenv("PATTERN_FILE", "config/blacklist_patterns.txt")
+SITE_SELECTORS = {
+    "truyenfull": lambda soup: soup.find("div", id="chapter-c"),
+    "truyenyy": lambda soup: soup.select_one("article.flex.flex-col"),
+    "metruyenfull": lambda soup: soup.select_one("div.chapter-content"),
+}
 
 # -------------- [Regex patterns] --------------
 HEADER_PATTERNS = [
@@ -70,9 +70,18 @@ HEADER_RE = re.compile("|".join(HEADER_PATTERNS), re.IGNORECASE)
 _UA_OBJ = None
 _DISABLE_FAKE_UA = False
 
+# -------------- [Files & State] --------------
+STATE_FOLDER = "state"
+os.makedirs(STATE_FOLDER, exist_ok=True)
+os.makedirs("logs", exist_ok=True)
 
-def get_state_file(site_key):
-    return f"crawl_state_{site_key}.json"
+def get_state_file(site_key: str) -> str:
+    """
+    Trả về đường dẫn đầy đủ tới file crawl_state_{site_key}.json trong thư mục state/
+    """
+    return os.path.join(STATE_FOLDER, f"crawl_state_{site_key}.json")
+
+PATTERN_FILE = os.getenv("PATTERN_FILE", "config/blacklist_patterns.txt")
 
 def _init_user_agent():
     try:
