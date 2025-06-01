@@ -30,15 +30,8 @@ class TruyenFullAdapter(BaseSiteAdapter):
     async def get_chapter_list(self, story_url, story_title, site_key, max_pages=None, total_chapters=None):
         return await get_chapters_from_story(story_url, story_title, total_chapters_on_site=total_chapters, site_key=site_key)
 
-    async def get_chapter_content(self, chapter_url, chapter_title):
-        return await get_story_chapter_content(chapter_url, chapter_title)
+    async def get_chapter_content(self, chapter_url, chapter_title, site_key):
+        return await get_story_chapter_content(chapter_url, chapter_title,site_key)
     
     async def get_all_stories_from_genre_with_page_check(self, genre_name, genre_url, max_pages=None):
         return await get_all_stories_from_genre_with_page_check(genre_name, genre_url, max_pages)
-
-    async def extract_chapter_content(self, html: str) -> str:
-        soup = BeautifulSoup(html, "html.parser")
-        chapter_div = soup.find("div", id="chapter-c") or soup.find("div", class_="chapter-c")
-        if not chapter_div:
-            return ""
-        return chapter_div.get_text(separator="\n")

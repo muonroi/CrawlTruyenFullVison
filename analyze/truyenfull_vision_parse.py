@@ -339,7 +339,8 @@ async def get_chapters_from_story(
     return uniq
 
 async def get_story_chapter_content(
-    chapter_url: str, chapter_title: str
+    chapter_url: str, chapter_title: str,
+    site_key
 ) -> Optional[str]:
     logger.info(f"Đang tải nội dung chương '{chapter_title}': {chapter_url}")
     loop = asyncio.get_event_loop()
@@ -348,7 +349,7 @@ async def get_story_chapter_content(
         logger.error(f"Chương '{chapter_title}': Không nhận được phản hồi từ {chapter_url}")
         return None
     html = response.text
-    content = extract_chapter_content(html)
+    content = extract_chapter_content(html,site_key)
     if not content:
         logger.warning(f"Nội dung chương '{chapter_title}' trống sau khi clean header.")
         return None

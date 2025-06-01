@@ -60,7 +60,7 @@ async def retry_queue(filename='chapter_retry_queue.json', interval=900):
                 filename_path = item['filename']
 
                 print(f"Retry chương: {chapter_title} ({url}) ... của truyện: {story_title} (site: {site_key})")
-                content = await adapter.get_chapter_content(url, chapter_title)
+                content = await adapter.get_chapter_content(url, chapter_title, site_key)
                 if content:
                     retry_fail_count = 0
                     dir_path = os.path.dirname(filename_path)

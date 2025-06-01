@@ -89,7 +89,7 @@ async def async_download_and_save_chapter(
     url = chapter_info['url']
     logger.info(f"        {pass_description} - Chương {chapter_display_idx_log}: Đang tải '{chapter_info['title']}' ({url})")
     async with SEM:
-        content = await get_story_chapter_content(url, chapter_info['title'])
+        content = await get_story_chapter_content(url, chapter_info['title'], site_key)
 
     if content:
         try:
@@ -258,3 +258,21 @@ def get_chapter_filename(title: str, real_num: int) -> str:
     """
     clean_title = sanitize_filename(title) or "untitled"
     return f"{real_num:04d}_{clean_title}.txt"
+
+def export_chapter_metadata(story_folder, chapters):
+    chapter_list = []
+    for idx, ch in enumerate(chapters):
+        real_num = idx + 1
+        title = ch.get("title", "")
+        url = ch.get("url", "")
+        filename = get_chapter_filename(title, real_num)
+        chapter_list.append({
+            "index": real_num,
+            "title": title,
+            "url": url,
+            "file": filename
+        })
+    chapter_meta_path = os.path.join(story_folder, "chapter_metadata.json")
+    with open(chapter_meta_path, "w", encoding="utf-8") as f:
+        json.dump(chapter_list, f, ensure_ascii=False, indent=4)
+    print(f"[CHAPTER_META] Exported chapter_metadata.json ({len(chapter_list)} chương) for {os.path.basename(story_folder)}")

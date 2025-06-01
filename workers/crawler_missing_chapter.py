@@ -14,7 +14,7 @@ from scraper import initialize_scraper
 from utils.chapter_utils import count_txt_files, extract_real_chapter_number, get_chapter_filename
 from utils.domain_utils import get_adapter_from_url, get_site_key_from_url, is_url_for_site, resolve_site_key
 from utils.logger import logger
-from utils.async_utils import SEM
+from utils.async_utils import SEM, sync_chapter_with_yy_first
 from utils.io_utils import create_proxy_template_if_not_exists
 from utils.meta_utils import sanitize_filename
 from utils.notifier import send_telegram_notify
@@ -26,8 +26,6 @@ auto_fixed_titles = []
 
 MAX_CONCURRENT_STORIES = 3
 STORY_SEM = asyncio.Semaphore(MAX_CONCURRENT_STORIES)
-
-
 
 async def get_real_total_chapters(metadata):
     # Ưu tiên lấy từ sources nếu có
@@ -99,26 +97,39 @@ def check_and_fix_chapter_filename(story_folder: str, ch: dict, real_num: int, i
             break
 
 
-
 def get_missing_chapters(story_folder: str, chapters: list[dict]) -> list[dict]:
-    existing_nums = get_existing_real_chapter_numbers(story_folder)
+    """
+    So sánh file txt hiện có với danh sách từ chapter_metadata.json (ưu tiên),
+    nếu không có thì dùng chapters truyền vào (danh sách chapter từ web)
+    """
+    # Ưu tiên đọc từ chapter_metadata.json (nếu có)
+    chapter_meta_path = os.path.join(story_folder, "chapter_metadata.json")
+    chapter_items = None
+    if os.path.exists(chapter_meta_path):
+        with open(chapter_meta_path, "r", encoding="utf-8") as f:
+            chapter_items = json.load(f)
+    else:
+        chapter_items = chapters
+
+    existing_files = set([f for f in os.listdir(story_folder) if f.endswith('.txt')])
+
     missing = []
-
-    for idx, ch in enumerate(chapters):
-        title = ch.get('title', '') or ''
-        real_num = extract_real_chapter_number(title)
-        if not real_num:
-            real_num = idx + 1
-
-        check_and_fix_chapter_filename(story_folder, ch, real_num, idx)
-
-        fname_only = get_chapter_filename(title, real_num)
-        file_path = os.path.join(story_folder, fname_only)
-
-        if real_num not in existing_nums or not os.path.exists(file_path) or os.path.getsize(file_path) < 20:
-            missing.append({**ch, "real_num": real_num, "idx": idx})
-
+    for idx, ch in enumerate(chapter_items):
+        # Dùng đúng tên file quy chuẩn từ chapter_metadata.json
+        expected_file = ch.get("file")
+        if not expected_file:
+            # fallback nếu chapter_metadata chưa chuẩn hóa
+            real_num = ch.get("index", idx+1)
+            title = ch.get("title", "") or ""
+            expected_file = get_chapter_filename(title, real_num)
+        file_path = os.path.join(story_folder, expected_file)
+        if expected_file not in existing_files or not os.path.exists(file_path) or os.path.getsize(file_path) < 20:
+            # append đủ thông tin cho crawl lại
+            ch_for_missing = {**ch, "idx": idx}
+            missing.append(ch_for_missing)
     return missing
+
+
 
 def get_current_category(metadata):
     categories = autofix_category(metadata)
@@ -220,7 +231,7 @@ def normalize_source_list(metadata):
 
 async def check_and_crawl_missing_all_stories(adapter, home_page_url, site_key, force_unskip=False):
     state_file = get_missing_worker_state_file(site_key)
-    crawl_state = await load_crawl_state(state_file)
+    crawl_state = await load_crawl_state(state_file, site_key)
     adapter = get_adapter(site_key)
     all_genres = await adapter.get_stories_in_genre(home_page_url)
     genre_name_to_url = {g['name']: g['url'] for g in all_genres}
@@ -236,7 +247,7 @@ async def check_and_crawl_missing_all_stories(adapter, home_page_url, site_key, 
         for f in os.listdir(DATA_FOLDER)
         if os.path.isdir(os.path.join(DATA_FOLDER, cast(str, f)))
     ]
-    crawl_state = await load_crawl_state(state_file)
+    crawl_state = await load_crawl_state(state_file, site_key)
     tasks = []
 
     # ============ 1. Tạo tasks crawl missing ============
@@ -335,6 +346,9 @@ async def check_and_crawl_missing_all_stories(adapter, home_page_url, site_key, 
         # Auto fix metadata nếu thiếu (và skip nếu quá 3 lần)
         if not await fix_metadata_with_retry(metadata, metadata_path, story_folder, site_key=site_key, adapter=adapter):
             continue
+
+        # --- ĐỒNG BỘ CHƯƠNG THEO TRUYENYY TRƯỚC (if có source truyenyy) ---
+        await sync_chapter_with_yy_first(story_folder, metadata)
  
         total_chapters = metadata.get("total_chapters_on_site") #type:ignore
         crawled_files = count_txt_files(story_folder)
@@ -646,7 +660,7 @@ def autofix_metadata(story_folder, site_key=None):
         "skip_crawl": False,
         "site_key": site_key
     }
-    meta_path = os.path.join(story_folder, "metadata.json")
+    meta_path = os.path.join(story_folder, "metadata.json") 
     # Chỉ tạo file nếu chưa tồn tại
     if not os.path.exists(meta_path):
         with open(meta_path, "w", encoding="utf-8") as f:
@@ -715,4 +729,4 @@ async def crawl_missing_with_limit(
         ), timeout=60)
     logger.info(f"[DONE] Crawl missing for {metadata['title']} ...")
     return result
-
+  

@@ -5,17 +5,16 @@ import os
 import time
 from typing import Any, Dict, List
 import aiofiles
-from config.config import COMPLETED_FOLDER, DATA_FOLDER, STATE_FILE, get_state_file
+from config.config import COMPLETED_FOLDER, DATA_FOLDER, STATE_FOLDER, get_state_file
 from utils import logger
 from utils.io_utils import safe_write_file
 from utils.logger import logger
 
 CSTATE_LOCK = asyncio.Lock()
 
-async def load_crawl_state(state_file) -> Dict[str, Any]:
+async def load_crawl_state(state_file, site_key) -> Dict[str, Any]:
     if not state_file:
-        from config.config import STATE_FILE
-        state_file = STATE_FILE
+        state_file = get_state_file(site_key)
     loop = asyncio.get_event_loop()
     exists = await loop.run_in_executor(None, os.path.exists, state_file)
     if exists:
