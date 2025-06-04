@@ -279,7 +279,7 @@ async def process_story_item(
     try:
         # Lấy lại list chương từ web (ưu tiên nguồn chính)
         chapters = None
-        for src in story_data_item.get("sources", []):
+        for src in story_data_item.get("sources", []): 
             url = src.get("url")
             if not url:
                 continue
