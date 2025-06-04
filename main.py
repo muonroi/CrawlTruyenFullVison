@@ -12,7 +12,7 @@ from adapters.base_site_adapter import BaseSiteAdapter
 from adapters.factory import get_adapter
 from core.config_loader import apply_env_overrides
 from utils.batch_utils import get_optimal_batch_size, smart_delay, split_batches
-from utils.chapter_utils import crawl_missing_chapters_for_story,  export_chapter_metadata,  get_chapter_filename, get_saved_chapters_files, slugify_title
+from utils.chapter_utils import crawl_missing_chapters_for_story,  export_chapter_metadata_sync,  get_chapter_filename, get_saved_chapters_files, slugify_title
 from utils.domain_utils import get_site_key_from_url
 from utils.io_utils import  create_proxy_template_if_not_exists, ensure_directory_exists, log_failed_genre, safe_write_file
 from utils.logger import logger
@@ -287,7 +287,7 @@ async def process_story_item(
             if chapters and len(chapters) > 0:
                 break
         if chapters and len(chapters) > 0:
-            export_chapter_metadata(story_global_folder_path, chapters)
+            export_chapter_metadata_sync(story_global_folder_path, chapters)
         else:
             logger.warning(f"[CHAPTER_META] Không lấy được danh sách chương khi export metadata cho {story_data_item.get('title')}")
     except Exception as ex:

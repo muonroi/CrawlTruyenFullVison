@@ -9,7 +9,7 @@ from typing import cast
 from adapters.factory import get_adapter
 from config.config import BASE_URLS, COMPLETED_FOLDER, DATA_FOLDER, LOADED_PROXIES, PROXIES_FILE, PROXIES_FOLDER
 from config.proxy_provider import load_proxies
-from scraper import initialize_scraper
+from scraper import initialize_scraper 
 from utils.chapter_utils import SEM, count_txt_files, crawl_missing_chapters_for_story, export_chapter_metadata_sync, extract_real_chapter_number, get_chapter_filename
 from utils.domain_utils import get_adapter_from_url, get_site_key_from_url, is_url_for_site, resolve_site_key
 from utils.logger import logger
@@ -20,7 +20,7 @@ from filelock import FileLock
 auto_fixed_titles = []
 MAX_CONCURRENT_STORIES = 3
 STORY_SEM = asyncio.Semaphore(MAX_CONCURRENT_STORIES)
-
+ 
 def remove_chapter_number_from_title(title):
     # Tách đầu "Chương xx: " hoặc "Chap xx - ", "Chapter xx - " ... (các biến thể phổ biến)
     new_title = re.sub(
@@ -270,7 +270,7 @@ def normalize_source_list(metadata):
 async def check_and_crawl_missing_all_stories(adapter, home_page_url, site_key, force_unskip=False):
     state_file = get_missing_worker_state_file(site_key)
     crawl_state = await load_crawl_state(state_file, site_key)
-    adapter = get_adapter(site_key)
+    adapter = get_adapter(site_key) 
     all_genres = await adapter.get_stories_in_genre(home_page_url)
     genre_name_to_url = {g['name']: g['url'] for g in all_genres if isinstance(g, dict) and 'name' in g and 'url' in g}
     if not all_genres:
