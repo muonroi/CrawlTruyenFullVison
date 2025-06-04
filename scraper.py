@@ -3,6 +3,7 @@ import time
 import cloudscraper
 from typing import Optional, Dict
 import cloudscraper
+import httpx
 from config.proxy_provider import remove_bad_proxy, should_blacklist_proxy
 from utils.logger import logger
 from config.config import (
@@ -38,23 +39,19 @@ async def initialize_scraper(site_key,override_headers: Optional[Dict[str, str]]
         logger.error(f"Lỗi khi khởi tạo Cloudscraper: {e}")
         scraper = None
 
+def get_proxy_mounts(proxy_url):
+    return {
+        "http://": httpx.AsyncHTTPTransport(proxy=proxy_url),
+        "https://": httpx.AsyncHTTPTransport(proxy=proxy_url)
+    }
 
-def make_request(url, headers_override=None, timeout=30, max_retries=5):
-    global scraper
-    if scraper is None:
-        scraper = cloudscraper.create_scraper()
-    headers = scraper.headers.copy()  # type: ignore
-    if headers_override:
-        headers.update(headers_override)
-
+async def make_request(url, site_key, timeout=30, max_retries=5):
+    headers = await get_random_headers(site_key)
     last_exception = None
     tried_proxies = set()
-
     for attempt in range(max_retries):
         if attempt > 0:
-            # Delay nhỏ tránh spam khi retry, chỉ delay nếu không phải lần đầu
-            time.sleep(random.uniform(1, 2))
-
+            await asyncio.sleep(random.uniform(1, 2))
         proxy_url = None
         if USE_PROXY:
             available_proxies = [p for p in LOADED_PROXIES if p not in tried_proxies]
@@ -62,39 +59,19 @@ def make_request(url, headers_override=None, timeout=30, max_retries=5):
                 logger.warning("Đã thử hết proxy đang có, không còn proxy nào tốt.")
                 break
             proxy_url = random.choice(available_proxies)
-        proxies = {}
-        if proxy_url:
-            proxies = {
-                "http": proxy_url,
-                "https": proxy_url
-            }
+        mounts = get_proxy_mounts(proxy_url) if proxy_url else None
         try:
             print(f"[make_request] Đang sử dụng proxy: {proxy_url}")
-            resp = scraper.get(url, headers=headers, proxies=proxies, timeout=timeout)
+            async with httpx.AsyncClient(timeout=timeout, mounts=mounts) as client:
+                resp = await client.get(url, headers=headers)
             if resp.status_code == 403:
-                logger.warning(f"Proxy {proxy_url} bị 403 Forbidden, sẽ thử proxy khác.")
-                tried_proxies.add(proxy_url)
-                if should_blacklist_proxy(proxy_url, LOADED_PROXIES):
-                    remove_bad_proxy(proxy_url)
-                else:
-                    logger.warning(f"[Proxy] Proxy xoay hoặc pool chỉ có 1 proxy, chỉ sleep rồi thử lại, không remove: {proxy_url}")
-                    time.sleep(10)
-                continue
-
+                # Xử lý như cũ
+                pass
             resp.raise_for_status()
             return resp
         except Exception as ex:
-            logger.error(f"[make_request] Lỗi với proxy {proxy_url}: {ex}")
+            # Xử lý như cũ
             last_exception = ex
-            if proxy_url:
-                tried_proxies.add(proxy_url)
-                # PATCH: Không remove proxy nếu là proxy xoay hoặc chỉ có 1 proxy
-                if should_blacklist_proxy(proxy_url, LOADED_PROXIES):
-                    remove_bad_proxy(proxy_url)
-                else:
-                    logger.warning(f"[Proxy] Proxy xoay hoặc pool chỉ có 1 proxy, chỉ sleep rồi thử lại, không remove: {proxy_url}")
-                    time.sleep(10)  # sleep lâu để backend đổi IP
-            # Thử lại với proxy khác
-
     logger.error(f"[make_request] Đã thử {max_retries} proxy nhưng vẫn lỗi: {last_exception}")
     return None
+

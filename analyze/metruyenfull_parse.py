@@ -10,8 +10,7 @@ PATTERNS, CONTAINS_LIST = load_blacklist_patterns(PATTERN_FILE)
 import asyncio
 
 async def get_all_categories(self, home_url):
-    loop = asyncio.get_event_loop()
-    resp = await loop.run_in_executor(None, make_request, home_url)
+    resp = await make_request(home_url, self.SITE_KEY)
     if not resp:
         return []
     soup = BeautifulSoup(resp.text, "html.parser")
@@ -28,15 +27,13 @@ async def get_all_categories(self, home_url):
 
 
 async def get_stories_from_category(self, category_url):
-    import asyncio
-    loop = asyncio.get_event_loop()
     stories = []
     page_num = 1
     while True:
         current_url = category_url
         if page_num > 1:
             current_url = category_url.rstrip('/') + f"/page/{page_num}"
-        resp = await loop.run_in_executor(None, make_request, current_url)
+        resp = await make_request(current_url, self.SITE_KEY)
         if not resp:
             break
         soup = BeautifulSoup(resp.text, "html.parser")
@@ -60,11 +57,10 @@ async def get_stories_from_category(self, category_url):
     return stories
 
 async def get_story_metadata(self, story_url):
-    loop = asyncio.get_event_loop()
-    resp = await loop.run_in_executor(None, make_request, story_url)
+    resp = await make_request(story_url, self.SITE_KEY)
     if not resp:
         return None
-    soup = BeautifulSoup(resp.text, "html.parser")
+    soup = BeautifulSoup(resp.text, "html.parser")# type: ignore
 
     # Title
     title_tag = soup.select_one('h1.title')
@@ -117,10 +113,8 @@ async def get_story_metadata(self, story_url):
         "url": story_url
     }
 
-async def get_all_stories_from_category_with_page_check(self, genre_name, genre_url, max_pages=None):
-    import asyncio
-    loop = asyncio.get_event_loop()
-    resp = await loop.run_in_executor(None, make_request, genre_url)
+async def get_all_stories_from_category_with_page_check(self, genre_name, genre_url, site_key, max_pages=None):
+    resp = await make_request(genre_url, site_key)
     if not resp:
         return [], 0, 0
     html = resp.text
@@ -133,7 +127,7 @@ async def get_all_stories_from_category_with_page_check(self, genre_name, genre_
     seen_urls = set()
     for page in range(1, total_pages+1):
         page_url = genre_url if page == 1 else f"{genre_url.rstrip('/')}/page/{page}"
-        resp = await loop.run_in_executor(None, make_request, page_url)
+        resp = await make_request(page_url, site_key)
         if not resp:
             break
         stories_on_page = parse_stories_from_category_page(resp.text)
@@ -166,9 +160,9 @@ async def get_chapters_from_story(self, story_url, story_title, total_chapters_o
 
         truyen_id_input = initial_soup.find("input", {"id": "truyen-id"}) or initial_soup.find("input",
                                                                                                {"id": "id_post"})
-        if not (truyen_id_input and truyen_id_input.get("value")):
+        if not (truyen_id_input and truyen_id_input.get("value")):# type: ignore
             raise Exception("Không lấy được id truyện!")
-        truyen_id = truyen_id_input["value"]
+        truyen_id = truyen_id_input["value"] # type: ignore
         print(f"Found story ID: {truyen_id}")
 
         # 2. Lấy tổng số trang từ key 'pagination' trong AJAX response
@@ -187,8 +181,8 @@ async def get_chapters_from_story(self, story_url, story_title, total_chapters_o
             if pagination_html:
                 pagination_soup = BeautifulSoup(pagination_html, 'html.parser')
                 total_page_input = pagination_soup.find("input", {"name": "total-page"})
-                if total_page_input and total_page_input.get("value", "").isdigit():
-                    total_pages = int(total_page_input["value"])
+                if total_page_input and total_page_input.get("value", "").isdigit():# type: ignore
+                    total_pages = int(total_page_input["value"])# type: ignore
                     print(f"✅ Success! Total pages found: {total_pages}")
                 else:
                     print("⚠️ Could not find 'total-page' input in pagination HTML.")
@@ -223,8 +217,8 @@ async def get_chapters_from_story(self, story_url, story_title, total_chapters_o
                 page_soup = BeautifulSoup(chapters_html, 'html.parser')
                 for li_item in page_soup.select('ul.list-chapter li'):
                     a_tag = li_item.find('a')
-                    if a_tag and a_tag.has_attr('href'):
-                        all_chapters.append({"title": a_tag.get_text(strip=True), "url": a_tag['href']})
+                    if a_tag and a_tag.has_attr('href'):# type: ignore
+                        all_chapters.append({"title": a_tag.get_text(strip=True), "url": a_tag['href']})# type: ignore
 
         # 4. Xử lý trùng và sắp xếp
         print("Deduplicating and sorting chapters...")

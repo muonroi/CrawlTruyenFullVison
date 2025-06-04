@@ -2,6 +2,8 @@ import os
 import json
 import asyncio
 from adapters.factory import get_adapter
+from utils.logger import logger
+from utils.cleaner import ensure_sources_priority
 from utils.domain_utils import get_site_key_from_url
 from utils.chapter_utils import slugify_title, get_chapter_filename
 from config.config import DATA_FOLDER, COMPLETED_FOLDER
@@ -37,10 +39,13 @@ def autofix_sources(meta, meta_path=None):
     site_key = meta.get("site_key") or (get_site_key_from_url(url) if url else None)
     if not meta.get("sources") and url and site_key:
         meta["sources"] = [{"url": url, "site_key": site_key}]
-        if meta_path:
-            with open(meta_path, "w", encoding="utf-8") as f:
-                json.dump(meta, f, ensure_ascii=False, indent=4)
-        print(f"[AUTO-FIX] Đã bổ sung sources cho {meta.get('title')}")
+    # Bổ sung priority cho tất cả nguồn
+    if "sources" in meta:
+        meta["sources"] = ensure_sources_priority(meta["sources"])
+    if meta_path:
+        with open(meta_path, "w", encoding="utf-8") as f:
+            json.dump(meta, f, ensure_ascii=False, indent=4)
+    logger.info(f"[AUTO-FIX] Đã bổ sung sources cho truyện: {meta.get('title')}")
     return meta
 
 def log_invalid_story(story_folder, meta, reason):

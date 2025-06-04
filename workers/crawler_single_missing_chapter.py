@@ -1,17 +1,59 @@
+
+from typing import Optional
+from adapters.factory import get_adapter
+from config.config import DATA_FOLDER, COMPLETED_FOLDER, PROXIES_FILE, PROXIES_FOLDER
+from config.proxy_provider import load_proxies
+from scraper import initialize_scraper
+from utils.chapter_utils import count_txt_files, slugify_title, crawl_missing_chapters_for_story, export_chapter_metadata_sync, extract_real_chapter_number, get_chapter_filename
+from utils.io_utils import create_proxy_template_if_not_exists
+from utils.logger import logger
+from utils.cleaner import ensure_sources_priority
+from utils.domain_utils import get_site_key_from_url
+from utils.state_utils import get_missing_worker_state_file, load_crawl_state
 import os
+import re
 import sys
 import json
 import asyncio
 import shutil
-from typing import Optional
-from utils.domain_utils import get_site_key_from_url
-from adapters.factory import get_adapter
-from config.config import DATA_FOLDER, COMPLETED_FOLDER
-from utils.chapter_utils import slugify_title, count_txt_files, extract_real_chapter_number, get_chapter_filename
-from utils.logger import logger
-from utils.state_utils import get_missing_worker_state_file, load_crawl_state
-from utils.meta_utils import sanitize_filename
-from filelock import FileLock
+
+def remove_chapter_number_from_title(title):
+    # Tách đầu "Chương xx: " hoặc "Chap xx - ", "Chapter xx - " ... (các biến thể phổ biến)
+    new_title = re.sub( 
+        r"^(chương|chapter|chap|ch)\s*\d+\s*[:\-\.]?\s*", "",
+        title,
+        flags=re.IGNORECASE
+    )
+    return new_title.strip()
+
+def get_actual_chapters_for_export(story_folder):
+    """
+    Quét thư mục lấy danh sách file chương thực tế,
+    tách số chương (index), title, tên file cho chuẩn metadata.
+    """
+    chapters = []
+    files = [f for f in os.listdir(story_folder) if f.endswith('.txt')]
+    files.sort()  # Đảm bảo theo thứ tự tăng dần
+
+    for fname in files:
+        # Định dạng 0001_Tên chương.txt hoặc 0001.Tên chương.txt
+        m = re.match(r"(\d{4})[_\.](.*)\.txt", fname)
+        if m:
+            index = int(m.group(1))
+            raw_title = m.group(2).strip()
+            title = remove_chapter_number_from_title(raw_title)
+        else:
+            # Nếu không đúng định dạng, fallback
+            index = len(chapters) + 1
+            raw_title = fname[:-4]  # bỏ .txt
+            title = remove_chapter_number_from_title(raw_title)
+        chapters.append({
+            "index": index,
+            "title": title,
+            "file": fname,
+            "url": "" 
+        })
+    return chapters
 
 # --- Auto-fix sources nếu thiếu ---
 def autofix_sources(meta, meta_path=None):
@@ -19,32 +61,86 @@ def autofix_sources(meta, meta_path=None):
     site_key = meta.get("site_key") or (get_site_key_from_url(url) if url else None)
     if not meta.get("sources") and url and site_key:
         meta["sources"] = [{"url": url, "site_key": site_key}]
-        if meta_path:
-            with open(meta_path, "w", encoding="utf-8") as f:
-                json.dump(meta, f, ensure_ascii=False, indent=4)
-        logger.info(f"[AUTO-FIX] Đã bổ sung sources cho truyện: {meta.get('title')}")
+    # Bổ sung priority cho tất cả nguồn
+    if "sources" in meta:
+        meta["sources"] = ensure_sources_priority(meta["sources"])
+    if meta_path:
+        with open(meta_path, "w", encoding="utf-8") as f:
+            json.dump(meta, f, ensure_ascii=False, indent=4)
+    logger.info(f"[AUTO-FIX] Đã bổ sung sources cho truyện: {meta.get('title')}")
     return meta
 
+def autofix_metadata(folder, site_key=None):
+    if not os.path.exists(folder):
+        os.makedirs(folder, exist_ok=True)
+    folder_name = os.path.basename(folder)
+    meta_path = os.path.join(folder, "metadata.json")
+    meta = {
+        "title": folder_name.replace("-", " ").replace("_", " ").title().strip(),
+        "url": "", 
+        "total_chapters_on_site": 0,
+        "description": "",
+        "author": "",
+        "cover": "",
+        "categories": [],
+        "sources": [],
+        "skip_crawl": False,
+        "site_key": site_key
+    }
+    # Nếu có url đầu vào thì set vào meta luôn cho chuẩn
+    if site_key and site_key in meta:
+        meta['site_key'] = site_key
+    if not os.path.exists(meta_path):
+        with open(meta_path, "w", encoding="utf-8") as f:
+            json.dump(meta, f, ensure_ascii=False, indent=4)
+        logger.info(f"[AUTO-FIX] Đã tạo metadata cho '{meta['title']}' (0 chương)")
+    return meta
+
+
 async def crawl_single_story_worker(story_url: Optional[str]=None, title: Optional[str]=None):
+    await create_proxy_template_if_not_exists(PROXIES_FILE, PROXIES_FOLDER)
+    await load_proxies(PROXIES_FILE)
+
     assert story_url or title, "Cần truyền url hoặc title!"
     # Xác định slug và folder
-    slug = slugify_title(os.path.basename(story_url.rstrip("/"))) if story_url else slugify_title(title)
+    slug = slugify_title(os.path.basename(story_url.rstrip("/"))) if story_url else slugify_title(title)#type: ignore
     folder = os.path.join(DATA_FOLDER, slug)
     meta_path = os.path.join(folder, "metadata.json")
     # Nếu chưa có folder → tạo mới
     if not os.path.exists(folder):
         os.makedirs(folder, exist_ok=True)
-    # Nếu chưa có metadata, crawl mới
+    # Nếu chưa có metadata hoặc metadata lỗi thì tạo auto-fix
+    meta = None
     if not os.path.exists(meta_path):
-        if not story_url:
-            raise Exception("Không tìm thấy truyện. Nếu truyền theo tên thì phải đã từng crawl!")
-        site_key = get_site_key_from_url(story_url)
-        adapter = get_adapter(site_key)
-        details = await adapter.get_story_details(story_url, slug.replace("-", " "))
-        details["site_key"] = site_key
-        autofix_sources(details)
-        with open(meta_path, "w", encoding="utf-8") as f:
-            json.dump(details, f, ensure_ascii=False, indent=4)
+        site_key = get_site_key_from_url(story_url) if story_url else None
+        await initialize_scraper(site_key)
+        meta = autofix_metadata(folder, site_key)
+        # Nếu có url truyền vào thì bổ sung luôn cho meta
+        if story_url:
+            meta['url'] = story_url
+            with open(meta_path, "w", encoding="utf-8") as f:
+                json.dump(meta, f, ensure_ascii=False, indent=4)
+    else:
+        try:
+            with open(meta_path, "r", encoding="utf-8") as f:
+                meta = json.load(f)
+            fields = ["title", "url", "total_chapters_on_site", "categories", "site_key"]
+            if not all(meta.get(f) for f in fields):
+                logger.warning("[AUTO-FIX] metadata.json thiếu trường, sẽ autofix lại.")
+                site_key = get_site_key_from_url(story_url) if story_url else meta.get("site_key")
+                meta = autofix_metadata(folder, site_key)
+                if story_url:
+                    meta['url'] = story_url
+                    with open(meta_path, "w", encoding="utf-8") as f:
+                        json.dump(meta, f, ensure_ascii=False, indent=4)
+        except Exception as ex:
+            logger.warning(f"[AUTO-FIX] metadata.json lỗi/parsing fail ({ex}), sẽ autofix lại.")
+            site_key = get_site_key_from_url(story_url) if story_url else None
+            meta = autofix_metadata(folder, site_key)
+            if story_url:
+                meta['url'] = story_url
+                with open(meta_path, "w", encoding="utf-8") as f:
+                    json.dump(meta, f, ensure_ascii=False, indent=4)
 
     # --- Luôn reload metadata và autofix sources ---
     with open(meta_path, "r", encoding="utf-8") as f:
@@ -65,18 +161,21 @@ async def crawl_single_story_worker(story_url: Optional[str]=None, title: Option
             json.dump(meta, f, ensure_ascii=False, indent=4)
         logger.info(f"[SYNC] Metadata đã được cập nhật lại từ web!")
 
-    # --- Lấy lại chapter list mới nhất từ đúng sources ---
-    from utils.domain_utils import get_adapter_from_url
     chapters = None
     for source in meta["sources"]:
         url = source.get("url")
         src_site_key = source.get("site_key") or meta.get("site_key")
         adapter_src = get_adapter(src_site_key)
-        chapters = await adapter_src.get_chapter_list(url, meta.get("title"), src_site_key)
-        if chapters and len(chapters) > 0:
-            break
+        try:
+            chapters = await adapter_src.get_chapter_list(url, meta.get("title"), src_site_key)
+            if chapters and len(chapters) > 0:
+                break
+        except Exception as ex:
+            logger.warning(f"[SOURCE] Lỗi lấy chapter list từ {src_site_key}: {ex}")
     if not chapters or len(chapters) == 0:
-        raise Exception("Không lấy được danh sách chương từ bất kỳ nguồn nào!")
+        logger.error("[CRAWL] Không lấy được danh sách chương từ bất kỳ nguồn nào!")
+        return 
+
 
     # --- Check và rename lại file chương theo đúng thứ tự/tên title ---
     existing_files = [f for f in os.listdir(folder) if f.endswith('.txt')]
@@ -84,18 +183,25 @@ async def crawl_single_story_worker(story_url: Optional[str]=None, title: Option
         real_num = extract_real_chapter_number(ch.get('title', '')) or (idx+1)
         expected_name = get_chapter_filename(ch.get("title", ""), real_num)
         prefix = f"{real_num:04d}_"
+        found = None
         for fname in existing_files:
             if fname.startswith(prefix) and fname != expected_name:
-                os.rename(os.path.join(folder, fname), os.path.join(folder, expected_name))
-                logger.info(f"[RENAME] {fname} -> {expected_name}")
+                old_path = os.path.join(folder, fname)
+                new_path = os.path.join(folder, expected_name)
+                if os.path.exists(old_path) and not os.path.exists(new_path):
+                    os.rename(old_path, new_path)
+                    logger.info(f"[RENAME] {fname} -> {expected_name}")
+                break
+    
+    # Xóa các file chương có index = 0 (sau khi rename)
+    for fname in os.listdir(folder):
+        if fname.startswith("0000_") and fname.endswith(".txt"):
+            os.remove(os.path.join(folder, fname))
+            logger.info(f"[REMOVE] Xoá file chương lỗi index 0: {fname}")
 
     # --- Load crawl state và check chương missing ---
     state_file = get_missing_worker_state_file(site_key)
-    crawl_state = await load_crawl_state(state_file)
-
-    # --- Crawl bù missing theo batch/retry ---
-    from main import crawl_missing_chapters_for_story
-    from utils.async_utils import SEM
+    crawl_state = await load_crawl_state(state_file, site_key)
 
     async def crawl_missing_until_complete(site_key, chapters_from_web, meta, folder, crawl_state, state_file, max_retry=3):
         retry = 0
@@ -145,6 +251,11 @@ async def crawl_single_story_worker(story_url: Optional[str]=None, title: Option
     num_txt = count_txt_files(folder)
     real_total = len(chapters)
     logger.info(f"[CHECK] {meta.get('title')} - txt: {num_txt} / web: {real_total}")
+
+    # --- Export lại chapter_metadata.json ---
+    chapters_for_export = get_actual_chapters_for_export(folder)
+    export_chapter_metadata_sync(folder, chapters_for_export)
+    logger.info(f"[META] Đã cập nhật lại chapter_metadata.json ({len(chapters_for_export)} chương)")
 
     # --- Move sang completed nếu đủ ---
     if num_txt >= real_total and real_total > 0:

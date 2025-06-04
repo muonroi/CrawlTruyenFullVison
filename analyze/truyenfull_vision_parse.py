@@ -22,7 +22,7 @@ from typing import Dict, Any, List
 from urllib.parse import urljoin
 from bs4 import BeautifulSoup
 
-async def get_story_details(story_url: str, story_title_for_log: str) -> Dict[str, Any]:
+async def get_story_details(self,story_url: str, story_title_for_log: str) -> Dict[str, Any]:
     logger.info(f"Truyện '{story_title_for_log}': Đang lấy thông tin chi tiết từ {story_url}")
     details = {
         "title": None,
@@ -36,8 +36,7 @@ async def get_story_details(story_url: str, story_title_for_log: str) -> Dict[st
         "rating_count": None,
         "total_chapters_on_site": None
     }
-    loop = asyncio.get_event_loop()
-    response = await loop.run_in_executor(None, make_request, story_url)
+    response = await make_request(story_url, self.SITE_KEY)
     if not response or not getattr(response, 'text', None):
         logger.error(f"Truyện '{story_title_for_log}': Không nhận được phản hồi hoặc nội dung rỗng từ {story_url}")
         return details
@@ -164,10 +163,9 @@ async def get_story_details(story_url: str, story_title_for_log: str) -> Dict[st
     return details
 
 
-async def get_all_genres(homepage_url: str) -> List[Dict[str, str]]:
+async def get_all_genres(self,homepage_url: str) -> List[Dict[str, str]]:
     logger.info(f"Đang lấy danh sách thể loại từ: {homepage_url}")
-    loop = asyncio.get_event_loop()
-    response = await loop.run_in_executor(None, make_request, homepage_url)
+    response = await make_request(homepage_url, self.SITE_KEY)
     if not response or not getattr(response, 'text', None):
         logger.error(f"Không nhận được phản hồi từ {homepage_url}")
         return []
@@ -192,14 +190,13 @@ async def get_all_genres(homepage_url: str) -> List[Dict[str, str]]:
     logger.info(f"Tìm thấy {len(unique)} thể loại.")
     return unique
 
-async def get_stories_from_genre_page(genre_page_url: str) -> Tuple[List[Dict[str, Any]], Optional[str]]:
+async def get_stories_from_genre_page(self, genre_page_url: str) -> Tuple[List[Dict[str, Any]], Optional[str]]:
     logger.info(f"Đang lấy truyện từ trang: {genre_page_url}")
-    loop = asyncio.get_event_loop()
-    response = await loop.run_in_executor(None, make_request, genre_page_url)
+    response = await make_request(genre_page_url, self.SITE_KEY)
     if not response or not getattr(response, 'text', None):
         logger.error(f"Không nhận được phản hồi từ {genre_page_url}")
         return [], None
-    soup = BeautifulSoup(response.text, "html.parser")
+    soup = BeautifulSoup(response.text, "html.parser")#type: ignore
     stories: List[Dict[str, Any]] = []
 
     # Parse từng truyện (mỗi .row trong .list.list-truyen.col-xs-12)
@@ -245,7 +242,7 @@ async def get_all_stories_from_genre(
     while current_url and current_url not in visited and (max_pages_to_crawl is None or page < max_pages_to_crawl):
         visited.add(current_url); page += 1
         logger.info(f"Trang {page} của '{genre_name}': {current_url}")
-        sts, nxt = await get_stories_from_genre_page(current_url)
+        sts, nxt = await get_stories_from_genre_page(current_url) #type: ignore
         for s in sts:
             if s['url'] not in {x['url'] for x in all_stories}:
                 all_stories.append(s)
@@ -285,7 +282,7 @@ async def get_chapters_from_story(
             return []
 
         truyen_name = story_title  # Bạn có thể dùng <title> nếu muốn, ở đây giữ nguyên title truyền vào
-        total_page = int(total_page)
+        total_page = int(total_page)#type: ignore
 
         # 2. Lặp từng page để lấy danh sách chương qua AJAX
         for page in range(1, total_page + 1):
@@ -316,7 +313,7 @@ async def get_chapters_from_story(
                 chapters.append({
                     "title": a.get("title") or a.get_text(strip=True),
                     "url": a["href"]
-                })
+                })#type: ignore
             # Nếu đã lấy đủ số chương metadata thì dừng (tránh request thừa)
             if total_chapters_on_site and len(chapters) >= total_chapters_on_site:
                 logger.info(f"Đã lấy đủ {total_chapters_on_site} chương, dừng crawl trang chương.")
@@ -329,7 +326,7 @@ async def get_chapters_from_story(
         if ch['url'] not in seen:
             uniq.append(ch)
             seen.add(ch['url'])
-    uniq.sort(key=lambda ch: float(re.search(r"(\d+)", ch['title']).group(1)) if re.search(r"(\d+)", ch['title']) else float('inf'))
+    uniq.sort(key=lambda ch: float(re.search(r"(\d+)", ch['title']).group(1)) if re.search(r"(\d+)", ch['title']) else float('inf')) #type: ignore
 
     # Cảnh báo nếu lấy được ít hơn số chương metadata
     if total_chapters_on_site and len(uniq) < total_chapters_on_site:
@@ -344,7 +341,7 @@ async def get_story_chapter_content(
 ) -> Optional[str]:
     logger.info(f"Đang tải nội dung chương '{chapter_title}': {chapter_url}")
     loop = asyncio.get_event_loop()
-    response = await loop.run_in_executor(None, make_request, chapter_url)
+    response = await make_request(chapter_url, site_key)
     if not response or not getattr(response, 'text', None):
         logger.error(f"Chương '{chapter_title}': Không nhận được phản hồi từ {chapter_url}")
         return None
@@ -355,13 +352,13 @@ async def get_story_chapter_content(
         return None
     return content or None
 
-async def get_all_stories_from_genre_with_page_check(genre_name, genre_url, max_pages=None):
+async def get_all_stories_from_genre_with_page_check(genre_name, genre_url, site_key,max_pages=None):
     """
     Crawl tất cả truyện trong 1 thể loại (category) của truyenfull.vision
     Không phụ thuộc next_page_url, crawl từng page dựa vào pattern url và total_pages lấy từ phân trang.
     Dùng make_request (đồng bộ) để đồng bộ với các hàm cũ.
     """
-    resp = make_request(genre_url)
+    resp = await make_request(genre_url, site_key)
     if not resp or not getattr(resp, 'text', None):
         logger.error(f"Không nhận được phản hồi từ {genre_url}")
         return [], 0, 0
@@ -378,13 +375,13 @@ async def get_all_stories_from_genre_with_page_check(genre_name, genre_url, max_
     for page in range(1, total_pages + 1):
         page_url = genre_url if page == 1 else f"{genre_url.rstrip('/')}/trang-{page}/"
         logger.info(f"[Crawl] Page {page}: {page_url}")
-        resp = make_request(page_url)
+        resp = await make_request(page_url, site_key)
         if not resp or not getattr(resp, 'text', None):
             logger.warning(f"Không nhận được phản hồi từ {page_url}")
             break
         html = resp.text
         # Parse stories trên page này
-        stories, _ = await get_stories_from_genre_page(page_url)
+        stories, _ = await get_stories_from_genre_page(page_url) #type: ignore
         if not stories:
             logger.warning(f"Không tìm thấy truyện nào ở {page_url}, dừng crawl category.")
             break
