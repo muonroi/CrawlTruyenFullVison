@@ -52,7 +52,7 @@ async def sync_chapter_with_yy_first_batch(story_folder, metadata):
             fname = get_chapter_filename(ch.get("title", ""), real_num)
             fpath = os.path.join(story_folder, fname)
             yy_content = await yy_adapter.get_chapter_content(ch["url"], ch["title"], "truyenyy")
-            if not yy_content or not yy_content.strip():
+            if not yy_content or not yy_content.strip(): #type: ignore
                 continue
 
             # Xóa hết mọi file cũ cùng số chương (ngoại trừ file chuẩn hóa sắp ghi)
@@ -64,7 +64,7 @@ async def sync_chapter_with_yy_first_batch(story_folder, metadata):
 
             # Ghi đè file chuẩn hóa (dù có hay không)
             with open(fpath, "w", encoding="utf-8") as f:
-                f.write(yy_content)
+                f.write(yy_content)#type: ignore
             logger.info(f"[SYNC-YY] Overwrite/tao moi chương {fname} từ truyenyy")
     except Exception as e:
         logger.warning(f"[SYNC-YY] Lỗi khi đồng bộ chương với truyenyy: {e}")

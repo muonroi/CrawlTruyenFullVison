@@ -8,8 +8,10 @@ import re
 from filelock import FileLock
 from unidecode import unidecode
 import aiofiles
+from adapters.factory import get_adapter
 from config.config import ASYNC_SEMAPHORE_LIMIT, LOCK, get_state_file
 from analyze.truyenfull_vision_parse import get_story_chapter_content
+from utils.domain_utils import get_adapter_from_url
 from utils.html_parser import clean_header
 from utils.io_utils import  safe_write_file, safe_write_json
 from utils.logger import logger
@@ -349,42 +351,126 @@ def extract_real_chapter_number(title: str) -> int | None:
 
 def get_chapter_filename(title: str, real_num: int) -> str:
     """
-    Tạo tên file chương chuẩn: 0001_Tên chương.txt
+    Tạo tên file chương chuẩn: 0001_ten-chuong.txt (không dấu, cách bằng -)
     """
-    clean_title = sanitize_filename(title) or "untitled"
+    from unidecode import unidecode
+    s = unidecode(title)
+    s = re.sub(r'[^\w\s-]', '', s.lower())
+    s = re.sub(r'\s+', '-', s)
+    clean_title = s.strip('-_') or "untitled"
     return f"{real_num:04d}_{clean_title}.txt"
 
 
-def export_chapter_metadata_sync(story_folder, chapters):
+def export_chapter_metadata_sync(story_folder, chapters) -> List[Dict[str, Any]]:
     """
-    Xuất lại file chapter_metadata.json khi đã crawl/sync xong.
-    Kiểm tra file thực tế trong thư mục, nếu lệch tên thì rename.
+    Xuất lại file chapter_metadata.json. Nếu thiếu file chương tương ứng thì đánh dấu missing để crawl lại.
+    Trả về danh sách chương missing để xử lý sau.
     """
     files = [f for f in os.listdir(story_folder) if f.endswith('.txt')]
     files_set = set(files)
+    valid_chapters = []
+    missing_chapters = []
+
     for idx, ch in enumerate(chapters):
-        real_num = ch.get("index", idx+1)
+        real_num = ch.get("index", idx + 1)
         title = ch.get("title", "")
+        url = ch.get("url", "")
         expected_name = get_chapter_filename(title, real_num)
-        if expected_name not in files_set:
-            # Find file theo prefix số chương
+        expected_path = os.path.join(story_folder, expected_name)
+
+        if expected_name not in files_set or not os.path.exists(expected_path):
+            # Tìm theo prefix số chương
             prefix = f"{real_num:04d}_"
-            found = None
-            for f in files:
-                if f.startswith(prefix):
-                    found = f
-                    break
+            found = next((f for f in files if f.startswith(prefix)), None)
             if found and found != expected_name:
-                os.rename(os.path.join(story_folder, found), os.path.join(story_folder, expected_name))
+                os.rename(os.path.join(story_folder, found), expected_path)
                 logger.info(f"[RENAME][META] {found} -> {expected_name}")
                 files_set.remove(found)
                 files_set.add(expected_name)
-        # update lại tên file chuẩn vào chapter meta
-        ch["file"] = expected_name
+            elif not found:
+                missing_chapters.append({
+                    "index": real_num,
+                    "title": title,
+                    "url": url
+                })
+                continue  # bỏ qua không thêm vào valid
 
-    # Export file chuẩn sau khi đồng bộ tên file
+        ch["file"] = expected_name
+        ch["index"] = real_num
+        valid_chapters.append(ch)
+
+    # Lưu lại metadata chuẩn
     chapter_meta_path = os.path.join(story_folder, "chapter_metadata.json")
     with open(chapter_meta_path, "w", encoding="utf-8") as f:
-        json.dump(chapters, f, ensure_ascii=False, indent=4)
-    logger.info(f"[META] Exported chapter_metadata.json ({len(chapters)} chương) for {os.path.basename(story_folder)}")
+        json.dump(valid_chapters, f, ensure_ascii=False, indent=4)
+    logger.info(f"[META] Exported chapter_metadata.json ({len(valid_chapters)} chương) for {os.path.basename(story_folder)}")
 
+    # Nếu có missing, ghi ra file để trigger crawl lại
+    if missing_chapters:
+        missing_path = os.path.join(story_folder, "missing_from_metadata.json")
+        with open(missing_path, "w", encoding="utf-8") as f:
+            json.dump(missing_chapters, f, ensure_ascii=False, indent=2)
+        logger.warning(f"[MISSING][META] Phát hiện {len(missing_chapters)} chương bị thiếu file, đã ghi vào: {missing_path}")
+
+    return missing_chapters
+
+
+
+def remove_chapter_number_from_title(title):
+    # Tách đầu "Chương xx: " hoặc "Chap xx - ", "Chapter xx - " ... (các biến thể phổ biến)
+    new_title = re.sub(
+        r"^(chương|chapter|chap|ch)\s*\d+\s*[:\-\.]?\s*", "",
+        title,
+        flags=re.IGNORECASE
+    )
+    return new_title.strip()
+
+def get_actual_chapters_for_export(story_folder):
+    """
+    Quét thư mục lấy danh sách file chương thực tế,
+    tách số chương (index), title, tên file cho chuẩn metadata.
+    """
+    chapters = []
+    files = [f for f in os.listdir(story_folder) if f.endswith('.txt')]
+    files.sort()  # Đảm bảo theo thứ tự tăng dần
+
+    for fname in files:
+        # Định dạng 0001_Tên chương.txt hoặc 0001.Tên chương.txt
+        m = re.match(r"(\d{4})[_\.](.*)\.txt", fname)
+        if m:
+            index = int(m.group(1))
+            raw_title = m.group(2).strip()
+            title = remove_chapter_number_from_title(raw_title)
+        else:
+            # Nếu không đúng định dạng, fallback
+            index = len(chapters) + 1
+            raw_title = fname[:-4]  # bỏ .txt
+            title = remove_chapter_number_from_title(raw_title)
+        chapters.append({
+            "index": index,
+            "title": title,
+            "file": fname,
+            "url": ""  # Nếu lấy được thì bổ sung thêm, còn không để rỗng
+        })
+    return chapters
+
+async def get_real_total_chapters(metadata):
+    # Ưu tiên lấy từ sources nếu có
+    if metadata.get("sources"):
+        for source in metadata["sources"]:
+            url = source.get("url")
+            adapter, site_key = get_adapter_from_url(url)
+            if not adapter or not url:
+                continue
+            chapters = await adapter.get_chapter_list(url, metadata.get("title"), site_key)
+            if chapters and len(chapters) > 0:
+                return len(chapters)
+    # Nếu không có sources, fallback dùng url + site_key hiện tại trong metadata
+    url = metadata.get("url")
+    site_key = metadata.get("site_key")
+    if url and site_key:
+        adapter = get_adapter(site_key)
+        chapters = await adapter.get_chapter_list(url, metadata.get("title"), site_key)
+        if chapters:
+            return len(chapters)
+    return 0

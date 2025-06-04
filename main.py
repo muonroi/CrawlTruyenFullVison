@@ -27,6 +27,8 @@ from scraper import initialize_scraper
 from utils.meta_utils import add_missing_story, backup_crawl_state, sanitize_filename, save_story_metadata_file
 from utils.state_utils import clear_specific_state_keys, load_crawl_state, merge_all_missing_workers_to_main, save_crawl_state
 from workers.crawler_missing_chapter import check_and_crawl_missing_all_stories
+from workers.crawler_single_missing_chapter import crawl_single_story_worker
+from workers.missing_chapter_worker import crawl_all_missing_stories
 
 router = Router()
 is_crawling = False
@@ -437,6 +439,8 @@ async def run_missing(site_key: str):
     adapter = get_adapter(site_key)
     await check_and_crawl_missing_all_stories(adapter, homepage_url, site_key=site_key)
 
+
+
 async def run_single_story(title: str, site_key: Optional[str] = None, genre_name: Optional[str] = None):
     from main import crawl_single_story_by_title
     logger.info(f"[SINGLE] Crawl truyện '{title}' (site: {site_key or 'auto-detect'})...")
@@ -493,10 +497,17 @@ async def run_single_site(site_key: str, env_overrides: Optional[Dict[str, str]]
         await retry_failed_genres(get_adapter(site_key), site_key, settings, shuffle_proxies)
     elif crawl_mode == "missing_only":
         await run_missing(site_key)
+        await crawl_all_missing_stories()
+    elif crawl_mode == "missing_single":
+        url = next((arg.split('=')[1] for arg in sys.argv if arg.startswith('--url=')), None)
+        title = next((arg.split('=')[1] for arg in sys.argv if arg.startswith('--title=')), None)
+        await crawl_single_story_worker(story_url=url, title=title)
+        await crawl_all_missing_stories()
     else:
         await run_genres(site_key, settings)
         await retry_failed_genres(get_adapter(site_key), site_key, settings, shuffle_proxies)
         await run_missing(site_key)
+        await crawl_all_missing_stories()
 
 if __name__ == '__main__':
     mode = os.getenv("MODE") or (sys.argv[1] if len(sys.argv) > 1 else None)
