@@ -461,7 +461,8 @@ async def check_and_crawl_missing_all_stories(adapter, home_page_url, site_key, 
     # ============ 2. Chờ crawl bù xong ============
     if tasks:
         await asyncio.gather(*tasks)
-    logger.info(f"[NEXT STORY] Done process for {metadata['title']}") #type:ignore
+    if 'metadata' in locals() and metadata and metadata.get("title"):
+        logger.info(f"[NEXT STORY] Done process for {metadata['title']}")
 
 
     # ============ 3. Quét lại & move, cảnh báo, đồng bộ ============
