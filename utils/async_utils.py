@@ -6,12 +6,15 @@ from config.config import ASYNC_SEMAPHORE_LIMIT
 from utils.logger import logger
 from utils.chapter_utils import extract_real_chapter_number, get_chapter_filename
 
+def find_all_old_files_by_real_num(story_folder, real_num):
+    # Trả về tất cả file có số chương đúng
+    matched = []
+    for fname in os.listdir(story_folder):
+        if fname.startswith(f"{real_num:04d}_") or fname.startswith(f"{real_num:04d}."):
+            matched.append(os.path.join(story_folder, fname))
+    return matched
 
-SEM = asyncio.Semaphore(ASYNC_SEMAPHORE_LIMIT)
-
-
-
-async def sync_chapter_with_yy_first(story_folder, metadata):
+async def sync_chapter_with_yy_first_batch(story_folder, metadata):
     yy_source = None
     for src in metadata.get("sources", []):
         if isinstance(src, dict) and (src.get("site_key") == "truyenyy" or src.get("site") == "truyenyy"):
@@ -23,7 +26,7 @@ async def sync_chapter_with_yy_first(story_folder, metadata):
         # Sinh slug
         from utils.chapter_utils import slugify_title
         title = metadata.get("title", "")
-        slug = slugify_title(title)
+        slug = slugify_title(title) 
         yy_url = f"https://truyenyy.co/truyen/{slug}/"
         # Check xem truyện có thật không
         import aiohttp
@@ -51,18 +54,17 @@ async def sync_chapter_with_yy_first(story_folder, metadata):
             yy_content = await yy_adapter.get_chapter_content(ch["url"], ch["title"], "truyenyy")
             if not yy_content or not yy_content.strip():
                 continue
-            # Nếu chưa có file, tạo luôn từ yy
-            if not os.path.exists(fpath):
-                with open(fpath, "w", encoding="utf-8") as f:
-                    f.write(yy_content)
-                logger.info(f"[SYNC-YY] Tạo mới chương {fname} từ truyenyy")
-            else:
-                # Nếu file đã tồn tại, check nội dung. Nếu khác, thì overwrite từ yy
-                with open(fpath, "r", encoding="utf-8") as f:
-                    old_content = f.read()
-                if yy_content.strip() != old_content.strip():
-                    with open(fpath, "w", encoding="utf-8") as f:
-                        f.write(yy_content)
-                    logger.info(f"[SYNC-YY] Overwrite lại chương {fname} từ truyenyy")
+
+            # Xóa hết mọi file cũ cùng số chương (ngoại trừ file chuẩn hóa sắp ghi)
+            old_files = find_all_old_files_by_real_num(story_folder, real_num)
+            for old_f in old_files:
+                if os.path.abspath(old_f) != os.path.abspath(fpath):
+                    os.remove(old_f)
+                    logger.info(f"[SYNC-YY] Đã xóa file trùng số chương: {os.path.basename(old_f)}")
+
+            # Ghi đè file chuẩn hóa (dù có hay không)
+            with open(fpath, "w", encoding="utf-8") as f:
+                f.write(yy_content)
+            logger.info(f"[SYNC-YY] Overwrite/tao moi chương {fname} từ truyenyy")
     except Exception as e:
         logger.warning(f"[SYNC-YY] Lỗi khi đồng bộ chương với truyenyy: {e}")

@@ -19,7 +19,7 @@ class MeTruyenFullAdapter(BaseSiteAdapter):
         return await get_all_categories(self, self.BASE_URL)
 
     async def get_stories_in_genre(self, genre_url, page=1):
-        return await get_stories_from_category(self, genre_url)  # page không dùng, để tương thích
+        return await get_stories_from_category(self, genre_url) 
 
     async def get_all_stories_from_genre(self, genre_name, genre_url, max_pages=None):
         return await get_stories_from_category(self, genre_url)
@@ -32,14 +32,13 @@ class MeTruyenFullAdapter(BaseSiteAdapter):
 
     async def get_chapter_content(self, chapter_url, chapter_title, site_key):
         loop = asyncio.get_event_loop()
-        def _get_content(chapter_url):
-            resp = make_request(chapter_url)
+        async def _get_content(chapter_url):
+            resp = await make_request(chapter_url, site_key)
             if not resp:
                 return ""
             html = resp.text
-            return extract_chapter_content(html,site_key)
+            return extract_chapter_content(html, site_key)
         return await loop.run_in_executor(None, _get_content, chapter_url)
 
-    async def get_all_stories_from_genre_with_page_check(self, genre_name, genre_url, max_pages=None):
-        return await get_all_stories_from_category_with_page_check(self, genre_name, genre_url, max_pages)
-    
+    async def get_all_stories_from_genre_with_page_check(self, genre_name, genre_url, site_key, max_pages=None):
+        return await get_all_stories_from_category_with_page_check(self, genre_name, genre_url, site_key, max_pages)

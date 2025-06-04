@@ -26,5 +26,5 @@ class BaseSiteAdapter(ABC):
         pass
 
     @abstractmethod
-    async def get_all_stories_from_genre_with_page_check(self, genre_name, genre_url, max_pages=None):
+    async def get_all_stories_from_genre_with_page_check(self, genre_name, genre_url, site_key,max_pages=None):
         pass

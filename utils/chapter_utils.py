@@ -1,3 +1,5 @@
+import asyncio
+import glob
 import hashlib
 import json
 import os
@@ -6,16 +8,109 @@ import re
 from filelock import FileLock
 from unidecode import unidecode
 import aiofiles
-from adapters.factory import get_adapter
-from config.config import LOCK, get_state_file
+from config.config import ASYNC_SEMAPHORE_LIMIT, LOCK, get_state_file
 from analyze.truyenfull_vision_parse import get_story_chapter_content
-from utils.async_utils import SEM
 from utils.html_parser import clean_header
 from utils.io_utils import  safe_write_file, safe_write_json
 from utils.logger import logger
-from utils.batch_utils import smart_delay
+from utils.batch_utils import get_optimal_batch_size, smart_delay, split_batches
 from utils.meta_utils import sanitize_filename
 from utils.state_utils import save_crawl_state
+
+SEM = asyncio.Semaphore(ASYNC_SEMAPHORE_LIMIT)
+
+BATCH_SEMAPHORE_LIMIT = 5
+
+
+def get_saved_chapters_files(story_folder_path: str) -> set:
+    """Trả về set tên file đã lưu trong folder truyện."""
+    if not os.path.exists(story_folder_path):
+        return set()
+    files = glob.glob(os.path.join(story_folder_path, "*.txt"))
+    return set(os.path.basename(f) for f in files)
+
+
+async def crawl_missing_chapters_for_story(
+    site_key, session, chapters, story_data_item, current_discovery_genre_data, story_folder_path, crawl_state,
+    num_batches=10, state_file=None
+):
+    total_chapters = story_data_item.get('total_chapters_on_site', len(chapters))
+    retry_count = 0
+
+    while True:
+        saved_files = get_saved_chapters_files(story_folder_path)
+        if len(saved_files) >= total_chapters:
+            logger.info(f"ĐÃ ĐỦ {len(saved_files)}/{total_chapters} chương cho '{story_data_item['title']}'")
+            break
+
+        # Xác định các chương thiếu thực tế dựa trên danh sách chương
+        missing_chapters = []
+        for idx, ch in enumerate(chapters):
+            fname_only = get_chapter_filename(ch['title'], idx)
+            if fname_only not in saved_files:
+                missing_chapters.append((idx, ch, fname_only))
+
+        if not missing_chapters:
+            break  # An toàn
+
+        logger.warning(
+            f"Truyện '{story_data_item['title']}' còn thiếu {len(missing_chapters)} chương (retry: {retry_count + 1})"
+        )
+
+        # Tính số batch dựa trên số chương còn thiếu, mỗi batch tối đa 120 chương
+        batch_size = int(os.getenv("BATCH_SIZE") or get_optimal_batch_size(len(missing_chapters)))
+        num_batches_now = max(1, (len(missing_chapters) + batch_size - 1) // batch_size)
+        batches = split_batches(missing_chapters, num_batches_now)
+        logger.info(f"Crawl {len(missing_chapters)} chương với {num_batches_now} batch (batch size={batch_size})")
+
+        async def crawl_batch(batch, batch_idx):
+            successful, failed = set(), []
+            sem = asyncio.Semaphore(BATCH_SEMAPHORE_LIMIT)
+            tasks = []
+            for i, (idx, ch, fname_only) in enumerate(batch):
+                full_path = os.path.join(story_folder_path, fname_only)
+                logger.info(f"[Batch {batch_idx}/{num_batches_now}] Đang crawl chương {idx+1}: {ch['title']}")
+
+                async def wrapped(ch=ch, idx=idx, fname_only=fname_only, full_path=full_path):
+                    async with sem:
+                        try:
+                            await asyncio.wait_for(
+                                async_download_and_save_chapter(
+                                    ch, story_data_item, current_discovery_genre_data,
+                                    full_path, fname_only, "Crawl bù missing",
+                                    f"{idx+1}/{len(chapters)}", crawl_state, successful, failed, idx,
+                                    site_key=site_key, state_file=state_file  # type: ignore
+                                ),
+                                timeout=300  # Tăng timeout lên 300 giây
+                            )
+                        except Exception as ex:
+                            logger.error(f"[Batch {batch_idx}] Lỗi khi crawl chương {idx+1}: {ch['title']} - {ex}")
+                            failed.append({
+                                'chapter_data': ch,
+                                'filename': full_path,
+                                'filename_only': fname_only,
+                                'original_idx': idx
+                            })
+                tasks.append(asyncio.create_task(wrapped()))
+            await asyncio.gather(*tasks, return_exceptions=True)
+            if state_file:
+                await save_crawl_state(crawl_state, state_file)
+            return successful, failed
+
+        # Thực thi từng batch tuần tự thay vì song song
+        for batch_idx, batch in enumerate(batches):
+            if not batch:
+                continue
+            await crawl_batch(batch, batch_idx + 1)
+
+        retry_count += 1
+        await smart_delay()  # Để tránh spam request quá nhanh
+
+        # Cứ mỗi 20 lần retry mà vẫn còn chương thiếu thì log kỹ lại để check dead chương
+        if retry_count % 20 == 0:
+            logger.error(
+                f"[ALERT] Truyện '{story_data_item['title']}' còn các chương sau mãi chưa crawl được: {[f for _,_,f in missing_chapters]}"
+            )
 
 
 async def async_save_chapter_with_hash_check(filename, content: str):
@@ -259,20 +354,37 @@ def get_chapter_filename(title: str, real_num: int) -> str:
     clean_title = sanitize_filename(title) or "untitled"
     return f"{real_num:04d}_{clean_title}.txt"
 
-def export_chapter_metadata(story_folder, chapters):
-    chapter_list = []
+
+def export_chapter_metadata_sync(story_folder, chapters):
+    """
+    Xuất lại file chapter_metadata.json khi đã crawl/sync xong.
+    Kiểm tra file thực tế trong thư mục, nếu lệch tên thì rename.
+    """
+    files = [f for f in os.listdir(story_folder) if f.endswith('.txt')]
+    files_set = set(files)
     for idx, ch in enumerate(chapters):
-        real_num = idx + 1
+        real_num = ch.get("index", idx+1)
         title = ch.get("title", "")
-        url = ch.get("url", "")
-        filename = get_chapter_filename(title, real_num)
-        chapter_list.append({
-            "index": real_num,
-            "title": title,
-            "url": url,
-            "file": filename
-        })
+        expected_name = get_chapter_filename(title, real_num)
+        if expected_name not in files_set:
+            # Find file theo prefix số chương
+            prefix = f"{real_num:04d}_"
+            found = None
+            for f in files:
+                if f.startswith(prefix):
+                    found = f
+                    break
+            if found and found != expected_name:
+                os.rename(os.path.join(story_folder, found), os.path.join(story_folder, expected_name))
+                logger.info(f"[RENAME][META] {found} -> {expected_name}")
+                files_set.remove(found)
+                files_set.add(expected_name)
+        # update lại tên file chuẩn vào chapter meta
+        ch["file"] = expected_name
+
+    # Export file chuẩn sau khi đồng bộ tên file
     chapter_meta_path = os.path.join(story_folder, "chapter_metadata.json")
     with open(chapter_meta_path, "w", encoding="utf-8") as f:
-        json.dump(chapter_list, f, ensure_ascii=False, indent=4)
-    print(f"[CHAPTER_META] Exported chapter_metadata.json ({len(chapter_list)} chương) for {os.path.basename(story_folder)}")
+        json.dump(chapters, f, ensure_ascii=False, indent=4)
+    logger.info(f"[META] Exported chapter_metadata.json ({len(chapters)} chương) for {os.path.basename(story_folder)}")
+

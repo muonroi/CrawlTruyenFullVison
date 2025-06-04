@@ -1,7 +1,5 @@
-from bs4 import BeautifulSoup, Comment
+from bs4 import Comment
 
-from utils.logger import logger
-from utils.io_utils import filter_lines_by_patterns
 
 # Step 1: Clean HTML tags
 def clean_chapter_content(chapter_div):
@@ -12,3 +10,16 @@ def clean_chapter_content(chapter_div):
     for element in chapter_div(text=lambda text: isinstance(text, Comment)):
         element.extract()
     return chapter_div
+
+def ensure_sources_priority(sources: list) -> list:
+    """Thêm priority mặc định vào các nguồn (nếu chưa có)."""
+    default_priority = {
+        "truyenyy": 1,
+        "truyenfull": 2,
+        "metruyenfull": 3,
+    }
+    for source in sources:
+        if "priority" not in source or source["priority"] is None:
+            sk = source.get("site_key", "").lower()
+            source["priority"] = default_priority.get(sk, 100)
+    return sources

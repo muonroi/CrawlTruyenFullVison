@@ -14,7 +14,7 @@ def build_category_list_url(genre_url, page=1):
     else:
         return f"{base}"
 
-async def get_all_stories_from_genre_with_page_check(self, genre_name, genre_url, max_pages=None):
+async def get_all_stories_from_genre_with_page_check(self, genre_name, genre_url,  site_key,max_pages=None):
     from urllib.parse import urljoin
     loop = asyncio.get_event_loop()
 
@@ -26,7 +26,7 @@ async def get_all_stories_from_genre_with_page_check(self, genre_name, genre_url
             return base
 
     first_page_url = build_category_list_url(genre_url, page=1)
-    resp = await loop.run_in_executor(None, make_request, first_page_url)
+    resp = await make_request(first_page_url, self.SITE_KEY)
     if not resp:
         return [], 0, 0
     html = resp.text
@@ -40,7 +40,7 @@ async def get_all_stories_from_genre_with_page_check(self, genre_name, genre_url
 
     for page in range(1, total_pages + 1):
         page_url = build_category_list_url(genre_url, page)
-        resp = await loop.run_in_executor(None, make_request, page_url)
+        resp = await make_request(page_url, self.SITE_KEY)
         if not resp:
             break
         soup = BeautifulSoup(resp.text, "html.parser")
@@ -49,25 +49,25 @@ async def get_all_stories_from_genre_with_page_check(self, genre_name, genre_url
             continue
         for li in ul.find_all("li", recursive=False):
             # 1. Lấy url + cover
-            a_img = li.select_one("a[href*='/truyen/']")
+            a_img = li.select_one("a[href*='/truyen/']") #type: ignore
             cover = None
             url = None
             if a_img:
-                url = urljoin(self.BASE_URL, a_img['href'])
+                url = urljoin(self.BASE_URL, a_img['href'])#type: ignore
                 img_tag = a_img.find("img")
-                if img_tag and img_tag.has_attr('src'):
-                    cover = img_tag['src']
+                if img_tag and img_tag.has_attr('src'):#type: ignore
+                    cover = img_tag['src']#type: ignore
 
             # 2. Lấy title
-            h3 = li.select_one("h3.font-title")
+            h3 = li.select_one("h3.font-title")#type: ignore
             title = h3.get_text(strip=True) if h3 else None
 
             # 3. Lấy author
-            author_p = li.select_one("p.text-xs.font-thin")
+            author_p = li.select_one("p.text-xs.font-thin")#type: ignore
             author = author_p.get_text(strip=True) if author_p else None
 
             # 4. Lấy số chương
-            chapter_p = li.select_one("div.rounded.border > p.text-xs")
+            chapter_p = li.select_one("div.rounded.border > p.text-xs")#type: ignore
             total_chapters = None
             if chapter_p:
                 match = re.search(r"(\d+)", chapter_p.get_text())
@@ -90,8 +90,7 @@ async def get_all_stories_from_genre_with_page_check(self, genre_name, genre_url
 
 
 async def get_all_genres(self, homepage_url):
-    loop = asyncio.get_event_loop()
-    resp = await loop.run_in_executor(None, make_request, homepage_url)
+    resp = await make_request(homepage_url, self.SITE_KEY)
     if not resp or not getattr(resp, 'text', None):
         logger.error(f"Không lấy được trang chủ {homepage_url}")
         return []
@@ -108,7 +107,7 @@ async def get_all_genres(self, homepage_url):
         # Loại bỏ số ở cuối và prefix YY nếu có
         name = re.sub(r"\d+$", "", raw_name).strip()
         name = re.sub(r"^YY", "", name).strip()
-        href = (a.get('href') or '').rstrip('/') + '/danh-sach'
+        href = (a.get('href') or '').rstrip('/') + '/danh-sach'#type: ignore
         full_url = urljoin(self.BASE_URL, href)
         genres.append({"name": name, "url": full_url})
     return genres
@@ -116,8 +115,7 @@ async def get_all_genres(self, homepage_url):
 async def get_stories_from_genre_page(self, genre_url, page=1):
     base = genre_url.rstrip('/')
     url = f"{base}?p={page}" if page > 1 else base
-    loop = asyncio.get_event_loop()
-    resp = await loop.run_in_executor(None, make_request, url)
+    resp = await make_request(url, self.SITE_KEY)
     if not resp or not getattr(resp, 'text', None):
         logger.error(f"Không lấy được trang {url}")
         return []
@@ -126,25 +124,25 @@ async def get_stories_from_genre_page(self, genre_url, page=1):
     if not ul:
         logger.error(f"[YY][CATEGORY] Không tìm thấy ul.flex.flex-col ở {url}")
         with open("debug_yy_cat.html", "w", encoding="utf-8") as f:
-            f.write(soup.prettify())
+            f.write(soup.prettify()) #type: ignore
         return []
     stories = []
     for li in ul.find_all("li", recursive=False):
-        a_tag = li.select_one("a[href*='/truyen/']")
-        h3 = li.select_one("h3.font-title")
+        a_tag = li.select_one("a[href*='/truyen/']")#type: ignore
+        h3 = li.select_one("h3.font-title")#type: ignore
         title = h3.get_text(strip=True) if h3 else ""
         if not a_tag or not title:
             logger.warning(f"[YY][CATEGORY] Không lấy được url/title cho 1 item ở {url}")
             continue
-        detail_url = urljoin(self.BASE_URL, a_tag['href'])
+        detail_url = urljoin(self.BASE_URL, a_tag['href'])#type: ignore
         # Lấy tên truyện
         h3 = a_tag.select_one("h3.font-title")
         title = h3.get_text(strip=True) if h3 else ""
         # Lấy tên tác giả
-        author_p = li.select_one("p.text-xs.font-thin")
+        author_p = li.select_one("p.text-xs.font-thin")#type: ignore
         author = author_p.get_text(strip=True) if author_p else None
         # Lấy số chương (nếu muốn)
-        chapter_p = li.select_one("div.rounded.border > p.text-xs")
+        chapter_p = li.select_one("div.rounded.border > p.text-xs")#type: ignore
         if chapter_p:
             import re
             chapter_match = re.search(r"(\d+)", chapter_p.get_text())
@@ -173,8 +171,7 @@ async def get_all_stories_from_genre(self, genre_name, genre_url, max_pages=None
     return all_stories
 
 async def get_story_details(self, story_url, story_title, site_key):
-    loop = asyncio.get_event_loop()
-    resp = await loop.run_in_executor(None, make_request, story_url)
+    resp = await make_request(story_url, site_key)
     if not resp or not getattr(resp, 'text', None):
         logger.error(f"Không lấy được chi tiết truyện {story_url}")
         return {}
@@ -214,16 +211,16 @@ async def get_story_details(self, story_url, story_title, site_key):
     cat_div = soup.select_one("div.flex.flex-wrap.gap-2.text-\\[12px\\].max-w-\\[640px\\]")
     if cat_div:
         for a in cat_div.find_all("a"):
-            href = a.get("href")
+            href = a.get("href")#type: ignore
             name = a.get_text(strip=True)
             if href and name:
-                categories.append({"name": name, "url": urljoin(self.BASE_URL, href)})
+                categories.append({"name": name, "url": urljoin(self.BASE_URL, href)})#type: ignore
     details["categories"] = categories
 
     # Số chương
     total_chapters = None
     for p in soup.select("p.text-base"):
-        if p.find("small") and "chương" in p.find("small").get_text(strip=True).lower():
+        if p.find("small") and "chương" in p.find("small").get_text(strip=True).lower():#type: ignore
             match = re.search(r"(\d+)", p.get_text())
             if match:
                 total_chapters = int(match.group(1))
@@ -236,13 +233,25 @@ async def get_story_details(self, story_url, story_title, site_key):
 
     # trạng thái, số chương
     for li in soup.select("div.lg\\:hidden ul.mt-2.text-start.flex-col > li"):
-        text = li.get_text(strip=True).lower()
-        if "trạng thái" in text or "status" in text:
-            details["status"] = li.get_text(strip=True)
-        elif "chương" in text or "chapter" in text:
-            match = re.search(r"(\d+)", li.get_text())
+        text = li.get_text(strip=True)
+        text_lower = text.lower()
+        if "trạng thái" in text_lower or "status" in text_lower:
+            # Tách phần value sau dấu : hoặc sau từ "trạng thái"
+            match = re.search(r"(?:trạng thái|status)\s*[:：]?\s*(.*)", text, re.IGNORECASE)
+            if match:
+                details["status"] = match.group(1).strip()
+            else:
+                # fallback: lấy phần sau dấu :
+                parts = text.split(":", 1)
+                if len(parts) > 1:
+                    details["status"] = parts[1].strip()
+                else:
+                    details["status"] = text  # fallback giữ nguyên
+        elif "chương" in text_lower or "chapter" in text_lower:
+            match = re.search(r"(\d+)", text)
             if match:
                 details["total_chapters_on_site"] = int(match.group(1))
+
 
     # Cover
     cover_img = soup.select_one("div.rounded-md.w-\\[160px\\].h-\\[240px\\].overflow-hidden img")
@@ -253,13 +262,8 @@ async def get_story_details(self, story_url, story_title, site_key):
         chapters = await get_chapters_from_story(self, story_url, story_title, site_key=site_key)
         details["total_chapters_on_site"] = len(chapters)
 
-    # Cuối cùng nếu total_chapters_on_site có giá trị
-    if not details.get("chapter_list") and details.get("total_chapters_on_site"):
-        # Chỉ lấy chapter_list khi đã có tổng số chương
-        chapters = await get_chapters_from_story(self, story_url, story_title, site_key=site_key)
-        if chapters:
-            details["chapter_list"] = chapters
     return details
+
 def parse_chapters_from_soup(soup, base_url):
     chapters = []
     for li in soup.select('ul.flex.flex-col.w-full.divide-y > li'):
@@ -281,9 +285,8 @@ async def get_chapters_from_story(self, story_url, story_title, max_pages=None, 
         else:
             return f"{base_url.rstrip('/')}/danh-sach-chuong?p={page}"
 
-    loop = asyncio.get_event_loop()
     first_url = build_chapter_list_url(story_url, 1)
-    resp = await loop.run_in_executor(None, make_request, first_url)
+    resp = await make_request(first_url, site_key)
     if not resp or not getattr(resp, 'text', None):
         return chapters
     soup = BeautifulSoup(resp.text, "html.parser")
@@ -300,7 +303,7 @@ async def get_chapters_from_story(self, story_url, story_title, max_pages=None, 
 
     for page in range(1, max_page + 1):
         url = build_chapter_list_url(story_url, page)
-        resp = await loop.run_in_executor(None, make_request, url)
+        resp = await make_request(url, site_key)
         if not resp or not getattr(resp, "text", None):
             continue
         soup = BeautifulSoup(resp.text, "html.parser")
@@ -314,8 +317,7 @@ async def get_story_chapter_content(
     site_key: str
 ) -> Optional[str]:
     logger.info(f"Đang tải nội dung chương '{chapter_title}': {chapter_url}")
-    loop = asyncio.get_event_loop()
-    response = await loop.run_in_executor(None, make_request, chapter_url)
+    response = await make_request(chapter_url, site_key)
     if not response or not getattr(response, 'text', None):
         logger.error(f"Chương '{chapter_title}': Không nhận được phản hồi từ {chapter_url}")
         return None

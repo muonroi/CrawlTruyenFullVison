@@ -9,23 +9,55 @@ from typing import cast
 from adapters.factory import get_adapter
 from config.config import BASE_URLS, COMPLETED_FOLDER, DATA_FOLDER, LOADED_PROXIES, PROXIES_FILE, PROXIES_FOLDER
 from config.proxy_provider import load_proxies
-from main import crawl_missing_chapters_for_story
 from scraper import initialize_scraper
-from utils.chapter_utils import count_txt_files, extract_real_chapter_number, get_chapter_filename
+from utils.chapter_utils import SEM, count_txt_files, crawl_missing_chapters_for_story, export_chapter_metadata_sync, extract_real_chapter_number, get_chapter_filename
 from utils.domain_utils import get_adapter_from_url, get_site_key_from_url, is_url_for_site, resolve_site_key
 from utils.logger import logger
-from utils.async_utils import SEM, sync_chapter_with_yy_first
 from utils.io_utils import create_proxy_template_if_not_exists
-from utils.meta_utils import sanitize_filename
 from utils.notifier import send_telegram_notify
 from utils.state_utils import get_missing_worker_state_file, load_crawl_state
 from filelock import FileLock
-
-
 auto_fixed_titles = []
-
 MAX_CONCURRENT_STORIES = 3
 STORY_SEM = asyncio.Semaphore(MAX_CONCURRENT_STORIES)
+
+def remove_chapter_number_from_title(title):
+    # Tách đầu "Chương xx: " hoặc "Chap xx - ", "Chapter xx - " ... (các biến thể phổ biến)
+    new_title = re.sub(
+        r"^(chương|chapter|chap|ch)\s*\d+\s*[:\-\.]?\s*", "",
+        title,
+        flags=re.IGNORECASE
+    )
+    return new_title.strip()
+
+def get_actual_chapters_for_export(story_folder):
+    """
+    Quét thư mục lấy danh sách file chương thực tế,
+    tách số chương (index), title, tên file cho chuẩn metadata.
+    """
+    chapters = []
+    files = [f for f in os.listdir(story_folder) if f.endswith('.txt')]
+    files.sort()  # Đảm bảo theo thứ tự tăng dần
+
+    for fname in files:
+        # Định dạng 0001_Tên chương.txt hoặc 0001.Tên chương.txt
+        m = re.match(r"(\d{4})[_\.](.*)\.txt", fname)
+        if m:
+            index = int(m.group(1))
+            raw_title = m.group(2).strip()
+            title = remove_chapter_number_from_title(raw_title)
+        else:
+            # Nếu không đúng định dạng, fallback
+            index = len(chapters) + 1
+            raw_title = fname[:-4]  # bỏ .txt
+            title = remove_chapter_number_from_title(raw_title)
+        chapters.append({
+            "index": index,
+            "title": title,
+            "file": fname,
+            "url": ""  # Nếu lấy được thì bổ sung thêm, còn không để rỗng
+        })
+    return chapters
 
 async def get_real_total_chapters(metadata):
     # Ưu tiên lấy từ sources nếu có
@@ -59,6 +91,8 @@ def get_existing_real_chapter_numbers(story_folder):
     return nums
 
 def update_metadata_from_details(metadata: dict, details: dict) -> bool:
+    if not details:
+        return False
     changed = False
     for k, v in details.items():
         if v is not None and v != "" and metadata.get(k) != v:
@@ -167,6 +201,8 @@ async def crawl_missing_until_complete(
 
         if not missing_chapters:
             logger.info(f"[COMPLETE] Đã đủ tất cả chương cho '{metadata['title']}'")
+            chapters_for_export = get_actual_chapters_for_export(story_folder)
+            export_chapter_metadata_sync(story_folder, chapters_for_export)
             return True
         logger.info(f"[RETRY] {len(missing_chapters)} chương còn thiếu, bắt đầu crawl lần {retry+1}/{max_retry}")
         # Tính số batch dựa trên số chương còn thiếu, mỗi batch tối đa 120 chương
@@ -183,6 +219,8 @@ async def crawl_missing_until_complete(
             return True
         retry += 1
     logger.warning(f"[FAILED] Sau {max_retry} lần retry vẫn còn thiếu {len(missing_chapters)} chương cho '{metadata['title']}'")
+    chapters_for_export = get_actual_chapters_for_export(story_folder)
+    export_chapter_metadata_sync(story_folder, chapters_for_export)
     return False
 def autofix_category(metadata):
     """
@@ -220,7 +258,7 @@ def normalize_source_list(metadata):
         source_seen.add((url, site_key))
 
     # Ưu tiên thêm url chính nếu chưa có
-    main_url = metadata.get("url")
+    main_url = metadata.get("url") 
     main_key = metadata.get("site_key")
     if main_url and main_key and is_url_for_site(main_url, main_key):
         if (main_url, main_key) not in source_seen:
@@ -234,7 +272,11 @@ async def check_and_crawl_missing_all_stories(adapter, home_page_url, site_key, 
     crawl_state = await load_crawl_state(state_file, site_key)
     adapter = get_adapter(site_key)
     all_genres = await adapter.get_stories_in_genre(home_page_url)
-    genre_name_to_url = {g['name']: g['url'] for g in all_genres}
+    genre_name_to_url = {g['name']: g['url'] for g in all_genres if isinstance(g, dict) and 'name' in g and 'url' in g}
+    if not all_genres:
+        logger.error(f"[{site_key}] Không lấy được danh sách thể loại (all_genres rỗng) từ {home_page_url}!")
+        return
+
     genre_complete_checked = set()
     os.makedirs(COMPLETED_FOLDER, exist_ok=True)
     await create_proxy_template_if_not_exists(PROXIES_FILE, PROXIES_FOLDER)
@@ -347,16 +389,13 @@ async def check_and_crawl_missing_all_stories(adapter, home_page_url, site_key, 
         if not await fix_metadata_with_retry(metadata, metadata_path, story_folder, site_key=site_key, adapter=adapter):
             continue
 
-        # --- ĐỒNG BỘ CHƯƠNG THEO TRUYENYY TRƯỚC (if có source truyenyy) ---
-        await sync_chapter_with_yy_first(story_folder, metadata)
- 
         total_chapters = metadata.get("total_chapters_on_site") #type:ignore
         crawled_files = count_txt_files(story_folder)
         if crawled_files < total_chapters: #type:ignore
             # Trước khi crawl missing, luôn update lại metadata từ web!
             logger.info(f"[RECHECK] Đang cập nhật lại metadata từ web cho '{metadata['title']}' trước khi crawl missing...") #type:ignore
             new_details = await adapter.get_story_details(metadata.get('url'), metadata.get('title')) #type:ignore
-            if update_metadata_from_details(metadata, new_details):
+            if update_metadata_from_details(metadata, new_details): #type:ignore
                 with open(metadata_path, "w", encoding="utf-8") as f:
                     json.dump(metadata, f, ensure_ascii=False, indent=4)
                 logger.info(f"[RECHECK] Metadata đã được cập nhật lại từ web!")
@@ -370,12 +409,12 @@ async def check_and_crawl_missing_all_stories(adapter, home_page_url, site_key, 
 
             for source in source_list:
                 url = source.get("url")
-                src_site_key = source.get("site_key") or metadata.get("site_key")
+                src_site_key = source.get("site_key") or metadata.get("site_key")#type:ignore
                 if not src_site_key or not url:
                     continue
                 adapter = get_adapter(src_site_key)
                 try:
-                    chapters = await adapter.get_chapter_list(url, metadata['title'], src_site_key)
+                    chapters = await adapter.get_chapter_list(url, metadata['title'], src_site_key)#type:ignore
                     current_category = get_current_category(metadata)  # <- Dùng hàm helper
                     crawl_done = await crawl_missing_until_complete(
                         src_site_key, None, chapters, metadata, current_category,
@@ -393,7 +432,7 @@ async def check_and_crawl_missing_all_stories(adapter, home_page_url, site_key, 
                             dest_folder = os.path.join(dest_genre_folder, os.path.basename(story_folder))
                             if not os.path.exists(dest_folder):
                                 shutil.move(story_folder, dest_folder)
-                                logger.info(f"[INFO] Đã chuyển truyện '{metadata['title']}' sang {dest_genre_folder}")
+                                logger.info(f"[INFO] Đã chuyển truyện '{metadata['title']}' sang {dest_genre_folder}")#type:ignore
                         break
                 except Exception as ex:
                     logger.error(f"  [ERROR] Không lấy được chapter list từ {src_site_key}: {ex}")
@@ -412,7 +451,7 @@ async def check_and_crawl_missing_all_stories(adapter, home_page_url, site_key, 
                     continue
                 tasks.append(asyncio.create_task(
                     crawl_story_with_limit(
-                        src_site_key, None, missing_chapters, metadata, current_category,
+                        src_site_key, None, missing_chapters, metadata, current_category,#type:ignore
                         story_folder, crawl_state, num_batches=num_batches, state_file=state_file
                     )
                 ))
@@ -455,7 +494,7 @@ async def check_and_crawl_missing_all_stories(adapter, home_page_url, site_key, 
                         with open(meta_path, "w", encoding="utf-8") as f:
                             json.dump(metadata, f, ensure_ascii=False, indent=4)
 
-        real_total = await get_real_total_chapters(site_key, metadata)
+        real_total = await get_real_total_chapters(site_key, metadata)#type:ignore
         chapter_count = recount_chapters(story_folder)
 
         # Luôn cập nhật lại metadata cho đúng số chương thực tế từ web
@@ -498,7 +537,7 @@ async def check_and_crawl_missing_all_stories(adapter, home_page_url, site_key, 
         if not meta_ok:
             logger.info(f"[SKIP] '{story_folder}' thiếu trường quan trọng, sẽ cố gắng lấy lại metadata...")
             details = await adapter.get_story_details(metadata.get("url"), metadata.get("title"))
-            if update_metadata_from_details(metadata, details):
+            if update_metadata_from_details(metadata, details):#type:ignore
                 meta_ok = all(metadata.get(f) for f in fields_required)
                 if meta_ok:
                     logger.info(f"[FIXED] Đã bổ sung metadata đủ cho '{metadata.get('title')}'")
@@ -588,7 +627,7 @@ async def fix_metadata_with_retry(metadata, metadata_path, story_folder, site_ke
         slug = os.path.basename(story_folder)
         guessed_url = f"{base_url}/{slug}"
         try:
-            resp = await asyncio.get_event_loop().run_in_executor(None, make_request, guessed_url)
+            resp = await make_request(guessed_url, site_key)
             if resp and getattr(resp, "status_code", None) == 200:
                 url = guessed_url
                 metadata["url"] = url
@@ -609,8 +648,9 @@ async def fix_metadata_with_retry(metadata, metadata_path, story_folder, site_ke
     retry_count = metadata.get("meta_retry_count", 0)
     while retry_count < 3 and (not total_chapters or total_chapters < 1):
         logger.info(f"[META] Đang lấy metadata lần {retry_count+1} từ web...")
-        adapter = get_adapter(site_key)
+        adapter = get_adapter(site_key) #type:ignore
         details = await adapter.get_story_details(url, title)
+        update_metadata_from_details(metadata, details)
         retry_count += 1
         metadata["meta_retry_count"] = retry_count
 
@@ -690,7 +730,7 @@ async def crawl_story_with_limit(
     story_folder: str,
     crawl_state: dict,
     num_batches: int = 10,
-    state_file: str = None
+    state_file: str = None # type: ignore
 ):
     await STORY_SEM.acquire()
     try:
@@ -703,6 +743,7 @@ async def crawl_story_with_limit(
                 site_key, session, batch, metadata, current_category,
                 story_folder, crawl_state, 1, state_file=state_file
             )
+        # =====================================================
     finally:
         STORY_SEM.release()
     logger.info(f"[DONE-CRAWL-STORY-WITH-LIMIT] {metadata.get('title')}")
