@@ -18,11 +18,11 @@ class TruyenFullAdapter(BaseSiteAdapter):
     async def get_genres(self):
         return await get_all_genres(self,self.BASE_URL)
 
-    async def get_stories_in_genre(self, genre_url, page=1):
-        return await get_stories_from_genre_page(self, genre_url)
+    async def get_stories_in_genre(self, genre_page_url, page):
+        return await get_stories_from_genre_page(genre_page_url, self.SITE_KEY)
 
     async def get_all_stories_from_genre(self, genre_name, genre_url, max_pages=None):
-        return await get_all_stories_from_genre(genre_name, genre_url, max_pages)
+        return await get_all_stories_from_genre(genre_name, genre_url,self.SITE_KEY, max_pages)
 
     async def get_story_details(self, story_url, story_title):
         return await get_story_details(self, story_url, story_title)

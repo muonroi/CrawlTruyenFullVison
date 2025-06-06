@@ -163,7 +163,7 @@ async def get_all_stories_from_genre(self, genre_name, genre_url, max_pages=None
     while True:
         if max_pages is not None and page > max_pages:
             break
-        stories = await self.get_stories_from_genre_page(genre_url, page)
+        stories = await get_stories_from_genre_page(self,genre_url, page)
         if not stories:
             break
         all_stories.extend(stories)

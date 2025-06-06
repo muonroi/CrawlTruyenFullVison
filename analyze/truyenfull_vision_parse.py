@@ -190,9 +190,9 @@ async def get_all_genres(self,homepage_url: str) -> List[Dict[str, str]]:
     logger.info(f"Tìm thấy {len(unique)} thể loại.")
     return unique
 
-async def get_stories_from_genre_page(self, genre_page_url: str) -> Tuple[List[Dict[str, Any]], Optional[str]]:
+async def get_stories_from_genre_page(genre_page_url: str, site_key) -> Tuple[List[Dict[str, Any]], Optional[str]]:
     logger.info(f"Đang lấy truyện từ trang: {genre_page_url}")
-    response = await make_request(genre_page_url, self.SITE_KEY)
+    response = await make_request(genre_page_url, site_key)
     if not response or not getattr(response, 'text', None):
         logger.error(f"Không nhận được phản hồi từ {genre_page_url}")
         return [], None
@@ -235,6 +235,7 @@ async def get_stories_from_genre_page(self, genre_page_url: str) -> Tuple[List[D
 
 async def get_all_stories_from_genre(
     genre_name: str, genre_url: str,
+    site_key: str = "truyenfull",
     max_pages_to_crawl: Optional[int] = MAX_STORIES_PER_GENRE_PAGE
 ) -> List[Dict[str, Any]]:
     all_stories, visited, page = [], set(), 0
@@ -242,7 +243,7 @@ async def get_all_stories_from_genre(
     while current_url and current_url not in visited and (max_pages_to_crawl is None or page < max_pages_to_crawl):
         visited.add(current_url); page += 1
         logger.info(f"Trang {page} của '{genre_name}': {current_url}")
-        sts, nxt = await get_stories_from_genre_page(current_url) #type: ignore
+        sts, nxt = await get_stories_from_genre_page(current_url, site_key)
         for s in sts:
             if s['url'] not in {x['url'] for x in all_stories}:
                 all_stories.append(s)
@@ -381,7 +382,7 @@ async def get_all_stories_from_genre_with_page_check(genre_name, genre_url, site
             break
         html = resp.text
         # Parse stories trên page này
-        stories, _ = await get_stories_from_genre_page(page_url) #type: ignore
+        stories, _ = await get_stories_from_genre_page(genre_page_url=page_url, site_key=site_key)
         if not stories:
             logger.warning(f"Không tìm thấy truyện nào ở {page_url}, dừng crawl category.")
             break

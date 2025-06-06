@@ -212,7 +212,7 @@ async def check_and_crawl_missing_all_stories(adapter, home_page_url, site_key, 
     state_file = get_missing_worker_state_file(site_key)
     crawl_state = await load_crawl_state(state_file, site_key)
     adapter = get_adapter(site_key) 
-    all_genres = await adapter.get_stories_in_genre(home_page_url)
+    all_genres = await adapter.get_stories_in_genre(home_page_url,1)
     genre_name_to_url = {g['name']: g['url'] for g in all_genres if isinstance(g, dict) and 'name' in g and 'url' in g}
     if not all_genres:
         logger.error(f"[{site_key}] Không lấy được danh sách thể loại (all_genres rỗng) từ {home_page_url}!")

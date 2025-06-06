@@ -112,7 +112,7 @@ async def healthcheck_adapter(site_key: str):
             logger.error(f"[HEALTHCHECK] {site_key}: Lấy genres FAIL hoặc rỗng!")
             return False
         genre = genres[0]
-        stories = await adapter.get_stories_in_genre(genre['url'])
+        stories = await adapter.get_stories_in_genre(genre['title'],genre['url'], )
         if not stories or len(stories) == 0:
             logger.error(f"[HEALTHCHECK] {site_key}: Lấy stories FAIL hoặc rỗng!")
             return False
