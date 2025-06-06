@@ -10,6 +10,7 @@ from aiogram import  Router
 from pydantic import BaseModel
 from adapters.base_site_adapter import BaseSiteAdapter
 from adapters.factory import get_adapter
+from config.proxy_provider import load_proxies
 from core.config_loader import apply_env_overrides
 from utils.batch_utils import get_optimal_batch_size, smart_delay, split_batches
 from utils.chapter_utils import crawl_missing_chapters_for_story,  export_chapter_metadata_sync,  get_chapter_filename, get_saved_chapters_files, slugify_title
@@ -131,6 +132,7 @@ async def crawl_all_sources_until_full(
 async def initialize_and_log_setup_with_state(site_key) -> Tuple[str, Dict[str, Any]]:
     await ensure_directory_exists(DATA_FOLDER)
     await create_proxy_template_if_not_exists(PROXIES_FILE, PROXIES_FOLDER)
+    await load_proxies(PROXIES_FILE)
     await initialize_scraper(site_key)
     homepage_url = BASE_URLS[site_key].rstrip('/') + '/'
     state_file = get_state_file(site_key)
