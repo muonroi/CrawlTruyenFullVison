@@ -425,15 +425,15 @@ async def retry_failed_genres(adapter, site_key, settings: WorkerSettings, shuff
             logger.info("Tất cả genre fail đã retry thành công.")
             break
 
-async def run_genres(site_key: str, settings: WorkerSettings):
+async def run_genres(site_key: str, settings: WorkerSettings, crawl_state: Optional[Dict[str, Any]] = None):
     logger.info(f"[GENRE] Bắt đầu crawl thể loại cho site: {site_key}")
     await initialize_scraper(site_key)
     adapter = get_adapter(site_key)
     genres = await adapter.get_genres()
-    await run_crawler(adapter, site_key, genres, settings)
+    await run_crawler(adapter, site_key, genres, settings, crawl_state)
 
-async def run_missing(site_key: str):
-    homepage_url = BASE_URLS[site_key].rstrip('/') + '/'
+async def run_missing(site_key: str, homepage_url: Optional[str] = None):
+    homepage_url = homepage_url or BASE_URLS[site_key].rstrip('/') + '/'
     logger.info("[MISSING] Bắt đầu crawl chương thiếu...")
     await initialize_scraper(site_key)
     adapter = get_adapter(site_key)
@@ -446,9 +446,9 @@ async def run_single_story(title: str, site_key: Optional[str] = None, genre_nam
     logger.info(f"[SINGLE] Crawl truyện '{title}' (site: {site_key or 'auto-detect'})...")
     await crawl_single_story_by_title(title, site_key, genre_name)
 
-async def run_crawler(adapter, site_key, genres, settings: WorkerSettings):
+async def run_crawler(adapter, site_key, genres, settings: WorkerSettings, crawl_state: Optional[Dict[str, Any]] = None):
     state_file = get_state_file(site_key)
-    crawl_state = await load_crawl_state(state_file, site_key)
+    crawl_state = crawl_state or await load_crawl_state(state_file, site_key)
     total_genres = len(genres)
     genres_done = 0
 
@@ -482,6 +482,7 @@ async def run_single_site(site_key: str, env_overrides: Optional[Dict[str, str]]
 
     logger.info(f"[MAIN] Đang chạy crawler cho site: {site_key} với mode={crawl_mode}")
     merge_all_missing_workers_to_main(site_key)
+    homepage_url, crawl_state = await initialize_and_log_setup_with_state(site_key)
 
     settings = WorkerSettings(
         genre_batch_size=int(os.getenv("GENRE_BATCH_SIZE", 3)),
@@ -493,10 +494,10 @@ async def run_single_site(site_key: str, env_overrides: Optional[Dict[str, str]]
     )
 
     if crawl_mode == "genres_only":
-        await run_genres(site_key, settings)
+        await run_genres(site_key, settings, crawl_state)
         await retry_failed_genres(get_adapter(site_key), site_key, settings, shuffle_proxies)
     elif crawl_mode == "missing_only":
-        await run_missing(site_key)
+        await run_missing(site_key, homepage_url)
         await crawl_all_missing_stories()
     elif crawl_mode == "missing_single":
         url = next((arg.split('=')[1] for arg in sys.argv if arg.startswith('--url=')), None)
@@ -504,9 +505,9 @@ async def run_single_site(site_key: str, env_overrides: Optional[Dict[str, str]]
         await crawl_single_story_worker(story_url=url, title=title)
         await crawl_all_missing_stories()
     else:
-        await run_genres(site_key, settings)
+        await run_genres(site_key, settings, crawl_state)
         await retry_failed_genres(get_adapter(site_key), site_key, settings, shuffle_proxies)
-        await run_missing(site_key)
+        await run_missing(site_key, homepage_url)
         await crawl_all_missing_stories()
 
 if __name__ == '__main__':
