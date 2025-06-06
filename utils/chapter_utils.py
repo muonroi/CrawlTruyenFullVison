@@ -163,10 +163,8 @@ async def queue_failed_chapter(chapter_data, filename='chapter_retry_queue.json'
     try:
         with open(path, "r", encoding="utf-8") as f:
             data = json.load(f)
-    except json.JSONDecodeError:
+    except (json.JSONDecodeError, FileNotFoundError):
         print(f"[ERROR] File {path} bị lỗi hoặc rỗng, sẽ tạo lại file mới.")
-        data = {}
-    else:
         data = []
     for item in data:
         if item.get("url") == chapter_data.get("url"):
