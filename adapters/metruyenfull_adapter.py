@@ -18,8 +18,8 @@ class MeTruyenFullAdapter(BaseSiteAdapter):
     async def get_genres(self):
         return await get_all_categories(self, self.BASE_URL)
 
-    async def get_stories_in_genre(self, genre_url, page=1):
-        return await get_stories_from_category(self, genre_url) 
+    async def get_stories_in_genre(self, genre_page_url, page):
+        return await get_stories_from_category(self, genre_page_url)
 
     async def get_all_stories_from_genre(self, genre_name, genre_url, max_pages=None):
         return await get_stories_from_category(self, genre_url)
