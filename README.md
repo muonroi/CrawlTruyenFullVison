@@ -91,7 +91,15 @@ python main.py metruyenfull
 -   *Nên sử dụng server, VPS có IP "sạch" hoặc sử dụng nguồn proxy chất lượng cao.
     Sử dụng crontab (Linux) hoặc Task Scheduler (Windows) để tự động chạy định kỳ, hoặc chạy trong screen/tmux để tránh mất trạng thái khi mất kết nối SSH.
     Thường xuyên theo dõi file log và thư mục backup.
-    Tùy chỉnh các thông số như batch_size, buffer_size, request_delay cho phù hợp với tài  nguyên của server và chính sách của các website nguồn.*
+Tùy chỉnh các thông số như batch_size, buffer_size, request_delay cho phù hợp với tài  nguyên của server và chính sách của các website nguồn.*
+
+## 🧪 Running tests
+
+Các kiểm thử được viết bằng `pytest`. Để chạy toàn bộ test, chỉ cần thực hiện:
+
+```bash
+pytest
+```
 
 **Liên hệ & Hỗ trợ**
 **Author**: `muonroi`
