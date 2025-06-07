@@ -95,9 +95,12 @@ Tùy chỉnh các thông số như batch_size, buffer_size, request_delay cho ph
 
 ## 🧪 Running tests
 
-Các kiểm thử được viết bằng `pytest`. Để chạy toàn bộ test, chỉ cần thực hiện:
+Các kiểm thử được viết bằng `pytest`. Trước khi chạy test, hãy cài đặt toàn bộ
+thư viện được khai báo trong `requirements.txt` (có thể thông qua file
+`requirements-dev.txt` mới, giúp thuận tiện cho môi trường phát triển):
 
 ```bash
+pip install -r requirements-dev.txt
 pytest
 ```
 
