@@ -48,7 +48,7 @@ async def crawl_missing_chapters_for_story(
         # Xác định các chương thiếu thực tế dựa trên danh sách chương
         missing_chapters = []
         for idx, ch in enumerate(chapters):
-            fname_only = get_chapter_filename(ch['title'], idx)
+            fname_only = get_chapter_filename(ch['title'], idx + 1)
             if fname_only not in saved_files:
                 missing_chapters.append((idx, ch, fname_only))
 
