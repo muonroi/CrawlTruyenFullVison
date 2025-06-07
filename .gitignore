@@ -33,3 +33,4 @@ __pycache__/*
 log/*
 .env
 debug_empty_chapter.html
+venv/
