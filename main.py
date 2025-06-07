@@ -298,7 +298,10 @@ async def process_story_item(
             with open(metadata_file, "w", encoding="utf-8") as f:
                 json.dump(metadata, f, ensure_ascii=False, indent=4)
     else:
-        details = metadata
+        details = metadata or {}
+
+    if details:
+        story_data_item.update(details)
 
     crawl_state["current_story_url"] = story_data_item["url"]
     if (
