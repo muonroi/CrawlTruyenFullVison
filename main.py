@@ -654,17 +654,12 @@ async def run_crawler(
 
 
 async def run_all_sites(crawl_mode: Optional[str] = None):
-    """Run crawler for all configured sites concurrently."""
-    tasks = []
+    """Run crawler for all configured sites sequentially."""
     for site_key in BASE_URLS.keys():
-        tasks.append(
-            asyncio.create_task(run_single_site(site_key, crawl_mode=crawl_mode))
-        )
-
-    results = await asyncio.gather(*tasks, return_exceptions=True)
-    for key, result in zip(BASE_URLS.keys(), results):
-        if isinstance(result, Exception):
-            logger.error(f"[MAIN] Site {key} failed: {result}")
+        try:
+            await run_single_site(site_key, crawl_mode=crawl_mode)
+        except Exception as e:
+            logger.error(f"[MAIN] Site {site_key} failed: {e}")
 
 
 async def run_single_site(
