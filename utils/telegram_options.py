@@ -201,7 +201,17 @@ async def recrawl_story_choose_site(message: types.Message):
         adapter = get_adapter(site_key)
         chapters = await adapter.get_chapter_list(meta["url"], meta["title"], site_key,total_chapters=meta.get("total_chapters_on_site", 0))
         from workers.crawler_single_missing_chapter import crawl_missing_chapters_for_story
-        await crawl_missing_chapters_for_story(site_key, None, chapters, meta, {}, folder, {}, 10)
+        await crawl_missing_chapters_for_story(
+            site_key,
+            None,
+            chapters,
+            meta,
+            {},
+            folder,
+            {},
+            10,
+            adapter=adapter,
+        )
         await message.reply(f"✅ Đã recrawl lại truyện '{meta['title']}' ({slug}) theo nguồn {site_key}!")
     except Exception as ex:
         await message.reply(f"❌ Lỗi recrawl: {ex}")

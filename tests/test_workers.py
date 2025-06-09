@@ -124,6 +124,7 @@ async def test_crawl_single_story_worker(tmp_path, monkeypatch):
         crawl_state,
         num_batches,
         state_file,
+        adapter=None,
     ):
         for ch in missing_chapters:
             fname = crawler_single_missing_chapter.get_chapter_filename(
