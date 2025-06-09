@@ -32,4 +32,4 @@ class TruyenYYAdapter(BaseSiteAdapter):
         return await get_story_chapter_content(self, chapter_url, chapter_title, site_key)
 
     async def get_all_stories_from_genre_with_page_check(self, genre_name, genre_url, site_key, max_pages=None):
-        return await get_all_stories_from_genre_with_page_check(self, genre_name, genre_url, max_pages)
+        return await get_all_stories_from_genre_with_page_check(self, genre_name, genre_url, site_key,max_pages)
