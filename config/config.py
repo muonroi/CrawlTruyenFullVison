@@ -63,6 +63,8 @@ MAX_CHAPTER_PAGES_TO_CRAWL = int(os.getenv("MAX_CHAPTER_PAGES_TO_CRAWL", 0)) or 
 ASYNC_SEMAPHORE_LIMIT = int(os.getenv("ASYNC_SEMAPHORE_LIMIT", 5))
 GENRE_ASYNC_LIMIT = int(os.getenv("GENRE_ASYNC_LIMIT", 3))
 GENRE_BATCH_SIZE = int(os.getenv("GENRE_BATCH_SIZE", 3))
+STORY_ASYNC_LIMIT = int(os.getenv("STORY_ASYNC_LIMIT", 3))
+STORY_BATCH_SIZE = int(os.getenv("STORY_BATCH_SIZE", 3))
 
 # ============ FILE PATH ============
 FAILED_GENRES_FILE = os.getenv("FAILED_GENRES_FILE", "failed_genres.json")
