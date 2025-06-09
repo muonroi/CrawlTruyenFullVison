@@ -267,7 +267,7 @@ async def get_story_details(self, story_url, story_title, site_key):
 def parse_chapters_from_soup(soup, base_url):
     from urllib.parse import urljoin
     chapters = []
-    for div in soup.select('div.flex.font-light.border-b-[1px]'):
+    for div in soup.select('div.flex.font-light'):
         # Tìm 2 thẻ <a> chứa link chương (cả số chương và tựa chương đều trỏ cùng link)
         chapter_links = div.find_all('a', href=True)
         if not chapter_links:
