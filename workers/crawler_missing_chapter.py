@@ -150,8 +150,16 @@ async def crawl_missing_until_complete(
         num_batches = max(1, (len(missing_chapters) + 119) // 120)  # Chia thành các batch 120 chương
         logger.info(f"Crawl {len(missing_chapters)} chương với {num_batches} batch (mỗi batch tối đa 120 chương)")
         await crawl_story_with_limit(
-            site_key, session, missing_chapters, metadata, current_category,
-            story_folder, crawl_state, num_batches=num_batches, state_file=state_file
+            site_key,
+            session,
+            missing_chapters,
+            metadata,
+            current_category,
+            story_folder,
+            crawl_state,
+            num_batches=num_batches,
+            state_file=state_file,
+            adapter=adapter,
         )
         # Kiểm tra lại sau khi crawl
         missing_chapters = get_missing_chapters(story_folder, chapters_from_web)
@@ -422,8 +430,16 @@ async def check_and_crawl_missing_all_stories(adapter, home_page_url, site_key, 
                     continue
                 tasks.append(asyncio.create_task(
                     crawl_story_with_limit(
-                        src_site_key, None, missing_chapters, metadata, current_category,#type:ignore
-                        story_folder, crawl_state, num_batches=num_batches, state_file=state_file
+                        src_site_key,
+                        None,
+                        missing_chapters,
+                        metadata,
+                        current_category,  # type:ignore
+                        story_folder,
+                        crawl_state,
+                        num_batches=num_batches,
+                        state_file=state_file,
+                        adapter=adapter,
                     )
                 ))
         logger.info(f"[NEXT] Kết thúc process cho story: {story_folder}")
@@ -695,14 +711,15 @@ def get_auto_batch_count(fixed=None, default=10, min_batch=1, max_batch=20, num_
 
 async def crawl_story_with_limit(
     site_key: str,
-    session, 
+    session,
     missing_chapters: list,
     metadata: dict,
     current_category: dict,
     story_folder: str,
     crawl_state: dict,
     num_batches: int = 10,
-    state_file: str = None # type: ignore
+    state_file: str = None,  # type: ignore
+    adapter=None,
 ):
     await STORY_SEM.acquire()
     try:
@@ -712,8 +729,16 @@ async def crawl_story_with_limit(
                 continue
             logger.info(f"[Batch {batch_idx+1}/{len(batches)}] Crawl {len(batch)} chương")
             await crawl_missing_with_limit(
-                site_key, session, batch, metadata, current_category,
-                story_folder, crawl_state, 1, state_file=state_file
+                site_key,
+                session,
+                batch,
+                metadata,
+                current_category,
+                story_folder,
+                crawl_state,
+                1,
+                state_file=state_file,
+                adapter=adapter,
             )
         # =====================================================
     finally:
@@ -729,17 +754,28 @@ async def crawl_missing_with_limit(
     story_folder: str,
     crawl_state: dict,
     num_batches: int = 10,
-    state_file: str = None # type: ignore
+    state_file: str = None,  # type: ignore
+    adapter=None,
 ):
     if not state_file:
         state_file = get_missing_worker_state_file(site_key)
     logger.info(f"[START] Crawl missing for {metadata['title']} ...")
     async with SEM:
-        result = await asyncio.wait_for(crawl_missing_chapters_for_story(
-            site_key, session, missing_chapters, metadata,
-            current_category, story_folder, crawl_state, num_batches,
-            state_file=state_file
-        ), timeout=60)
+        result = await asyncio.wait_for(
+            crawl_missing_chapters_for_story(
+                site_key,
+                session,
+                missing_chapters,
+                metadata,
+                current_category,
+                story_folder,
+                crawl_state,
+                num_batches,
+                state_file=state_file,
+                adapter=adapter,
+            ),
+            timeout=60,
+        )
     logger.info(f"[DONE] Crawl missing for {metadata['title']} ...")
     return result
   
