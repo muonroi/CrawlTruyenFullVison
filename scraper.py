@@ -69,7 +69,7 @@ async def make_request(url, site_key, timeout: int = 30, max_retries: int = 5):
 
         try:
             logger.debug(f"[make_request] {attempt}/{max_retries} via {proxy_url}")
-            async with httpx.AsyncClient(timeout=timeout, mounts=mounts) as client:
+            async with httpx.AsyncClient(timeout=timeout,follow_redirects=True, mounts=mounts) as client:
                 resp = await client.get(url, headers=headers)
             resp.raise_for_status()
             return resp

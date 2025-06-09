@@ -133,9 +133,12 @@ async def crawl_single_story_worker(story_url: Optional[str]=None, title: Option
                 break
         except Exception as ex:
             logger.warning(f"[SOURCE] Lỗi lấy chapter list từ {src_site_key}: {ex}")
+
     if not chapters or len(chapters) == 0:
-        logger.error("[CRAWL] Không lấy được danh sách chương từ bất kỳ nguồn nào!")
-        return 
+        logger.error(f"[CRAWL] Không lấy được danh sách chương từ bất kỳ nguồn nào! meta.sources = {meta['sources']}")
+        return
+    else:
+        logger.info(f"[CRAWL] Đã lấy được {len(chapters)} chương từ nguồn {src_site_key}")
 
 
     # --- Check và rename lại file chương theo đúng thứ tự/tên title ---
@@ -212,7 +215,7 @@ async def crawl_single_story_worker(story_url: Optional[str]=None, title: Option
             retry += 1
         logger.warning(f"[FAILED] Sau {max_retry} lần vẫn còn thiếu chương.")
         return False
-
+ 
     # --- Bắt đầu crawl bù ---
     await crawl_missing_until_complete(site_key, chapters, meta, folder, crawl_state, state_file, max_retry=3)
 

@@ -2,7 +2,9 @@
 .vs/
 # Bỏ qua thư mục chứa dữ liệu truyện đã crawl
 /truyen_data/
+/truyen_data_2/
 /completed_stories/
+*.pyc
 *.json
 /backup/
 # Các mục khác bạn có thể đã có hoặc muốn thêm:
@@ -34,3 +36,5 @@ log/*
 .env
 debug_empty_chapter.html
 venv/
+__pycache__/scraper.cpython-313.pyc
+__pycache__/scraper.cpython-313.pyc

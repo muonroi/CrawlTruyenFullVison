@@ -135,8 +135,8 @@ async def get_story_details(self,story_url: str, story_title_for_log: str) -> Di
         from adapters.truyenfull_adapter import TruyenFullAdapter
         # Dùng hàm crawl chapter list (nó sẽ tự động phân trang), LƯU Ý: truyền max_pages=None để lấy hết!
         chapters = await get_chapters_from_story(story_url,story_title_for_log,site_key="truyenfull")
-        num_chapters = len(chapters)
-
+        num_chapters = len(chapters) 
+ 
     details["total_chapters_on_site"] = num_chapters
 
     # 9. Sources (bổ sung luôn field cho metadata autofix)
