@@ -265,16 +265,44 @@ async def get_story_details(self, story_url, story_title, site_key):
     return details
 
 def parse_chapters_from_soup(soup, base_url):
+    from urllib.parse import urljoin
     chapters = []
-    for li in soup.select('ul.flex.flex-col.w-full.divide-y > li'):
-        a = li.select_one('a.flex.flex-row.items-center')
-        if not a:
+    for div in soup.select('div.flex.font-light.border-b-[1px]'):
+        # Tìm 2 thẻ <a> chứa link chương (cả số chương và tựa chương đều trỏ cùng link)
+        chapter_links = div.find_all('a', href=True)
+        if not chapter_links:
             continue
-        chapter_url = urljoin(base_url, a['href'])
-        title_tag = a.find('p', class_=['flex-1', 'font-[300]', 'line-clamp-2'])
-        chapter_title = title_tag.get_text(strip=True) if title_tag else "Unknown"
-        chapters.append({'url': chapter_url, 'title': chapter_title})
+
+        href = None
+        title = None
+
+        for a in chapter_links:
+            link = a['href']
+            if '/chuong-' in link:
+                href = urljoin(base_url, link)
+                span = a.find('span')
+                if span and span.get_text(strip=True):
+                    title = span.get_text(strip=True)
+        if not href:
+            continue
+
+        # Fallback nếu title bị thiếu
+        if not title or title.strip() == '':
+            # Thử lấy text từ phần Chương Số
+            alt_link = div.find('a', href=True)
+            if alt_link:
+                alt_text = alt_link.get_text(strip=True)
+                if alt_text:
+                    title = alt_text
+            if not title:
+                title = "Unknown"
+
+        chapters.append({
+            'url': href,
+            'title': title
+        })
     return chapters
+
 
 async def get_chapters_from_story(self, story_url, story_title, max_pages=None, total_chapters=None, site_key=None):
     chapters = []
