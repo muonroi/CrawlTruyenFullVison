@@ -193,8 +193,16 @@ async def crawl_single_story_worker(story_url: Optional[str]=None, title: Option
             num_batches = max(1, (len(missing_chapters)+119)//120)
             # Crawl theo batch (1 batch/lần để tối ưu)
             await crawl_missing_chapters_for_story(
-                site_key, None, missing_chapters, meta, meta.get("categories", [{}])[0] if meta.get("categories") else {},
-                folder, crawl_state, num_batches=num_batches, state_file=state_file
+                site_key,
+                None,
+                missing_chapters,
+                meta,
+                meta.get("categories", [{}])[0] if meta.get("categories") else {},
+                folder,
+                crawl_state,
+                num_batches=num_batches,
+                state_file=state_file,
+                adapter=adapter,
             )
             # Kiểm tra lại
             missing_chapters = get_missing_chapters(folder, chapters_from_web)
