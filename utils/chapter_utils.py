@@ -156,6 +156,31 @@ async def async_save_chapter_with_hash_check(filename, content: str):
         await safe_write_file(filename, content)
         logger.info(f"Chương '{filename}' mới đã được lưu.")
         return "new"
+
+
+def deduplicate_by_index(filename: str) -> None:
+    """Remove duplicate chapter files that share the same index prefix."""
+    base = os.path.basename(filename)
+    m = re.match(r"(\d{4})[_.]", base)
+    if not m:
+        return
+    prefix = m.group(1)
+    folder = os.path.dirname(filename)
+    pattern = os.path.join(folder, f"{prefix}*\.txt")
+    files = [f for f in glob.glob(pattern) if os.path.basename(f) != base]
+    if not files:
+        return
+    # Keep the largest file (more content) and remove the rest
+    files.append(filename)
+    best = max(files, key=lambda f: os.path.getsize(f))
+    for f in files:
+        if f != best and os.path.exists(f):
+            os.remove(f)
+            logger.info(f"[DEDUP] Đã xoá file chương trùng: {os.path.basename(f)}")
+    if best != filename and not os.path.exists(filename):
+        os.rename(best, filename)
+        logger.info(f"[DEDUP] Đổi tên {os.path.basename(best)} → {base}")
+
     
 
 
@@ -225,6 +250,7 @@ async def async_download_and_save_chapter(
 
             # Sử dụng hàm hash check
             save_result = await async_save_chapter_with_hash_check(chapter_filename_full_path, chapter_content)
+            deduplicate_by_index(chapter_filename_full_path)
             if save_result == "new":
                 logger.info(f"          Đã lưu ({pass_description}): {chapter_filename_only}")
             elif save_result == "unchanged":
