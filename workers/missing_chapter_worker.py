@@ -52,7 +52,8 @@ async def crawl_missing_from_metadata_worker(story_folder: str, site_key: Option
         story_folder=story_folder,
         crawl_state={},
         num_batches=1,
-        state_file=None
+        state_file=None,
+        adapter=adapter,
     )
     logger.info(f"[WORKER] Đã hoàn tất crawl lại missing cho '{metadata.get('title')}'")
 

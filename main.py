@@ -171,6 +171,7 @@ async def crawl_all_sources_until_full(
                 crawl_state,
                 num_batches=num_batches,
                 state_file=state_file,
+                adapter=adapter,
             )
             files_now = len(get_saved_chapters_files(story_folder_path))
             if files_now >= total_chapters:

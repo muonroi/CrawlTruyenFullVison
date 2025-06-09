@@ -10,7 +10,6 @@ from unidecode import unidecode
 import aiofiles
 from adapters.factory import get_adapter
 from config.config import ASYNC_SEMAPHORE_LIMIT, LOCK, get_state_file
-from analyze.truyenfull_vision_parse import get_story_chapter_content
 from utils.domain_utils import get_adapter_from_url
 from utils.html_parser import clean_header
 from utils.io_utils import  safe_write_file, safe_write_json
@@ -33,8 +32,16 @@ def get_saved_chapters_files(story_folder_path: str) -> set:
 
 
 async def crawl_missing_chapters_for_story(
-    site_key, session, chapters, story_data_item, current_discovery_genre_data, story_folder_path, crawl_state,
-    num_batches=10, state_file=None
+    site_key,
+    session,
+    chapters,
+    story_data_item,
+    current_discovery_genre_data,
+    story_folder_path,
+    crawl_state,
+    num_batches=10,
+    state_file=None,
+    adapter=None,
 ):
     total_chapters = story_data_item.get('total_chapters_on_site', len(chapters))
     retry_count = 0
@@ -78,10 +85,20 @@ async def crawl_missing_chapters_for_story(
                         try:
                             await asyncio.wait_for(
                                 async_download_and_save_chapter(
-                                    ch, story_data_item, current_discovery_genre_data,
-                                    full_path, fname_only, "Crawl bù missing",
-                                    f"{idx+1}/{len(chapters)}", crawl_state, successful, failed, idx,
-                                    site_key=site_key, state_file=state_file  # type: ignore
+                                    ch,
+                                    story_data_item,
+                                    current_discovery_genre_data,
+                                    full_path,
+                                    fname_only,
+                                    "Crawl bù missing",
+                                    f"{idx+1}/{len(chapters)}",
+                                    crawl_state,
+                                    successful,
+                                    failed,
+                                    idx,
+                                    site_key=site_key,
+                                    state_file=state_file,  # type: ignore
+                                    adapter=adapter,
                                 ),
                                 timeout=300  # Tăng timeout lên 300 giây
                             )
@@ -173,18 +190,27 @@ async def queue_failed_chapter(chapter_data, filename='chapter_retry_queue.json'
     await safe_write_json(filename,data)
 
 async def async_download_and_save_chapter(
-    chapter_info: Dict[str, Any], story_data_item: Dict[str, Any],
+    chapter_info: Dict[str, Any],
+    story_data_item: Dict[str, Any],
     current_discovery_genre_data: Dict[str, Any],
-    chapter_filename_full_path: str, chapter_filename_only: str,
-    pass_description: str, chapter_display_idx_log: str,
-    crawl_state: Dict[str, Any], successfully_saved: set, failed_list: List[Dict[str, Any]],original_idx: int = 0,
-    site_key: str="unknown",
-    state_file: str = None    # type: ignore
+    chapter_filename_full_path: str,
+    chapter_filename_only: str,
+    pass_description: str,
+    chapter_display_idx_log: str,
+    crawl_state: Dict[str, Any],
+    successfully_saved: set,
+    failed_list: List[Dict[str, Any]],
+    original_idx: int = 0,
+    site_key: str = "unknown",
+    state_file: str = None,    # type: ignore
+    adapter=None,
 ) -> None:
     url = chapter_info['url']
     logger.info(f"        {pass_description} - Chương {chapter_display_idx_log}: Đang tải '{chapter_info['title']}' ({url})")
     async with SEM:
-        content = await get_story_chapter_content(url, chapter_info['title'], site_key)
+        if adapter is None:
+            adapter = get_adapter(site_key)
+        content = await adapter.get_chapter_content(url, chapter_info['title'], site_key)
 
     if content:
         try:
@@ -277,9 +303,20 @@ async def process_chapter_batch(
         full_path = os.path.join(story_folder_path, fname_only)
 
         await async_download_and_save_chapter(
-            ch, story_data_item, current_discovery_genre_data,
-            full_path, fname_only, f"Batch {batch_idx+1}/{total_batch}", f"{ch['idx']+1}",
-            crawl_state, successful, failed, original_idx=ch['idx'], site_key=site_key, state_file=get_state_file(site_key)
+            ch,
+            story_data_item,
+            current_discovery_genre_data,
+            full_path,
+            fname_only,
+            f"Batch {batch_idx+1}/{total_batch}",
+            f"{ch['idx']+1}",
+            crawl_state,
+            successful,
+            failed,
+            original_idx=ch['idx'],
+            site_key=site_key,
+            state_file=get_state_file(site_key),
+            adapter=adapter,
         )
         await smart_delay()
     return successful, failed
