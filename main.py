@@ -28,7 +28,13 @@ from utils.io_utils import (
     safe_write_file,
 )
 from utils.logger import logger
-from config.config import GENRE_ASYNC_LIMIT, LOADED_PROXIES, get_state_file
+from config.config import (
+    GENRE_ASYNC_LIMIT,
+    STORY_ASYNC_LIMIT,
+    STORY_BATCH_SIZE,
+    LOADED_PROXIES,
+    get_state_file,
+)
 from config.config import (
     BASE_URLS,
     DATA_FOLDER,
@@ -61,6 +67,7 @@ from workers.missing_chapter_worker import crawl_all_missing_stories
 router = Router()
 is_crawling = False
 GENRE_SEM = asyncio.Semaphore(GENRE_ASYNC_LIMIT)
+STORY_SEM = asyncio.Semaphore(STORY_ASYNC_LIMIT)
 
 
 class WorkerSettings(BaseModel):
@@ -94,6 +101,23 @@ async def crawl_single_story_by_title(title, site_key, genre_name=None):
 async def process_genre_with_limit(session, genre, crawl_state, adapter, site_key):
     async with GENRE_SEM:
         await process_genre_item(session, genre, crawl_state, adapter, site_key)
+
+
+async def process_story_with_limit(
+    session: aiohttp.ClientSession,
+    story: Dict[str, Any],
+    genre_data: Dict[str, Any],
+    crawl_state: Dict[str, Any],
+    adapter: BaseSiteAdapter,
+    site_key: str,
+) -> bool:
+    async with STORY_SEM:
+        slug = slugify_title(story["title"])
+        folder = os.path.join(DATA_FOLDER, slug)
+        await ensure_directory_exists(folder)
+        return await process_story_item(
+            session, story, genre_data, folder, crawl_state, adapter, site_key
+        )
 
 
 def sort_sources(sources):
@@ -483,32 +507,57 @@ async def process_genre_item(
     completed_global = set(crawl_state.get("globally_completed_story_urls", []))
     start_idx = crawl_state.get("current_story_index_in_genre", 0)
 
+    stories_to_process: list[tuple[int, Dict[str, Any]]] = []
     for idx, story in enumerate(stories):
         if idx < start_idx:
             continue
         if MAX_STORIES_TOTAL_PER_GENRE and idx >= MAX_STORIES_TOTAL_PER_GENRE:
             break
-        slug = slugify_title(story["title"])
-        folder = os.path.join(DATA_FOLDER, slug)
-        await ensure_directory_exists(folder)
+        stories_to_process.append((idx, story))
 
-        if story["url"] in completed_global:
-            # update metadata only
-            details = await adapter.get_story_details(story["url"], story["title"])
-            await save_story_metadata_file(story, genre_data, folder, details, None)
-            crawl_state["current_story_index_in_genre"] = idx + 1
-            await save_crawl_state(crawl_state, state_file)
-            continue
+    if not stories_to_process:
+        return
 
-        crawl_state["current_story_index_in_genre"] = idx
-        await save_crawl_state(crawl_state, state_file)
-        done = await process_story_item(
-            session, story, genre_data, folder, crawl_state, adapter, site_key
-        )
-        if done:
-            completed_global.add(story["url"])
+    num_batches = max(
+        1,
+        (len(stories_to_process) + STORY_BATCH_SIZE - 1) // STORY_BATCH_SIZE,
+    )
+    batches = split_batches(stories_to_process, num_batches)
+
+    async def handle_story(idx, story):
+        async with STORY_SEM:
+            slug = slugify_title(story["title"])
+            folder = os.path.join(DATA_FOLDER, slug)
+            await ensure_directory_exists(folder)
+            if story["url"] in completed_global:
+                details = await adapter.get_story_details(story["url"], story["title"])
+                await save_story_metadata_file(story, genre_data, folder, details, None)
+                return True, story["url"], idx
+            local_state = crawl_state.copy()
+            local_state["current_story_index_in_genre"] = idx
+            result = await process_story_item(
+                session, story, genre_data, folder, local_state, adapter, site_key
+            )
+            return result, story["url"], idx
+
+    for batch in batches:
+        remaining = batch
+        while remaining:
+            tasks = [asyncio.create_task(handle_story(i, s)) for i, s in remaining]
+            results = await asyncio.gather(*tasks)
+            remaining = []
+            for done, url, idx in results:
+                if done:
+                    completed_global.add(url)
+                else:
+                    remaining.append((idx, next(st for j, st in batch if j == idx)))
+            if remaining:
+                logger.warning(
+                    f"[BATCH] {len(remaining)} truyện chưa đủ chương, sẽ thử lại trong batch hiện tại"
+                )
+                await smart_delay()
         crawl_state["globally_completed_story_urls"] = sorted(completed_global)
-        crawl_state["current_story_index_in_genre"] = idx + 1
+        crawl_state["current_story_index_in_genre"] = batch[-1][0] + 1
         await save_crawl_state(crawl_state, state_file)
 
     await clear_specific_state_keys(

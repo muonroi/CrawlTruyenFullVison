@@ -145,3 +145,40 @@ async def test_crawl_single_story_worker(tmp_path, monkeypatch):
     assert dest_folder.exists()
     files = list(dest_folder.glob("*.txt"))
     assert len(files) == 2
+
+
+def test_process_genre_item_batches(tmp_path, monkeypatch):
+    import types, sys
+    monkeypatch.setitem(sys.modules, "aiogram", types.SimpleNamespace(Router=object))
+    import main
+
+    genre = {"name": "g", "url": "http://g"}
+    stories = [{"title": f"s{i}", "url": f"u{i}"} for i in range(5)]
+
+    async def fake_get_all(name, url, sk, mp):
+        return stories, 1, 1
+
+    adapter = SimpleNamespace(
+        get_all_stories_from_genre_with_page_check=fake_get_all,
+        get_story_details=AsyncMock(return_value={}),
+    )
+
+    monkeypatch.setattr(main, "STORY_BATCH_SIZE", 2)
+    monkeypatch.setattr(main, "DATA_FOLDER", str(tmp_path))
+    monkeypatch.setattr(main, "slugify_title", lambda t: t)
+    monkeypatch.setattr(main, "ensure_directory_exists", AsyncMock())
+    monkeypatch.setattr(main, "save_story_metadata_file", AsyncMock())
+    monkeypatch.setattr(main, "save_crawl_state", AsyncMock())
+    monkeypatch.setattr(main, "clear_specific_state_keys", AsyncMock())
+
+    called = []
+
+    async def fake_process_story(session, story, g, folder, state, ad, sk):
+        called.append(story["title"])
+        return True
+
+    monkeypatch.setattr(main, "process_story_item", fake_process_story)
+
+    asyncio.run(main.process_genre_item(None, genre, {}, adapter, "dummy"))
+
+    assert called == [f"s{i}" for i in range(5)]
