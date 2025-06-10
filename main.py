@@ -70,13 +70,15 @@ GENRE_SEM = asyncio.Semaphore(GENRE_ASYNC_LIMIT)
 STORY_SEM = asyncio.Semaphore(STORY_ASYNC_LIMIT)
 
 
-class WorkerSettings(BaseModel):
-    genre_batch_size: int
-    genre_async_limit: int
-    proxies_file: str
-    failed_genres_file: str
-    retry_genre_round_limit: int
-    retry_sleep_seconds: int
+class WorkerSettings:
+    def __init__(self, genre_batch_size, genre_async_limit, proxies_file, failed_genres_file, retry_genre_round_limit, retry_sleep_seconds):
+        self.genre_batch_size = genre_batch_size
+        self.genre_async_limit = genre_async_limit
+        self.proxies_file = proxies_file
+        self.failed_genres_file = failed_genres_file
+        self.retry_genre_round_limit = retry_genre_round_limit
+        self.retry_sleep_seconds = retry_sleep_seconds
+
 
 
 async def crawl_single_story_by_title(title, site_key, genre_name=None):
