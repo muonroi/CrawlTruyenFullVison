@@ -37,7 +37,7 @@ class MeTruyenFullAdapter(BaseSiteAdapter):
             if not resp:
                 return ""
             html = resp.text
-            return extract_chapter_content(html, site_key)
+            return extract_chapter_content(html,chapter_title, site_key)
         return await loop.run_in_executor(None, _get_content, chapter_url)
 
     async def get_all_stories_from_genre_with_page_check(self, genre_name, genre_url, site_key, max_pages=None):

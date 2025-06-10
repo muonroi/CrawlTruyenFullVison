@@ -1,10 +1,9 @@
-import asyncio
 import json
 import os
 from adapters.factory import get_adapter
-from config.config import ASYNC_SEMAPHORE_LIMIT
 from utils.logger import logger
 from utils.chapter_utils import extract_real_chapter_number, get_chapter_filename
+from utils.chapter_utils import slugify_title
 
 def find_all_old_files_by_real_num(story_folder, real_num):
     # Trả về tất cả file có số chương đúng
@@ -24,7 +23,6 @@ async def sync_chapter_with_yy_first_batch(story_folder, metadata):
     # Nếu chưa có, tự động sinh url YY và check tồn tại
     if not yy_source:
         # Sinh slug
-        from utils.chapter_utils import slugify_title
         title = metadata.get("title", "")
         slug = slugify_title(title) 
         yy_url = f"https://truyenyy.co/truyen/{slug}/"
