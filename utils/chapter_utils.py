@@ -9,13 +9,11 @@ from filelock import FileLock
 from unidecode import unidecode
 import aiofiles
 from adapters.factory import get_adapter
-from config.config import ASYNC_SEMAPHORE_LIMIT, LOCK, get_state_file
+from config.config import ASYNC_SEMAPHORE_LIMIT, HEADER_RE, LOCK, get_state_file
 from utils.domain_utils import get_adapter_from_url
-from utils.html_parser import clean_header
 from utils.io_utils import  safe_write_file, safe_write_json
 from utils.logger import logger
 from utils.batch_utils import get_optimal_batch_size, smart_delay, split_batches
-from utils.meta_utils import sanitize_filename
 from utils.state_utils import save_crawl_state
 
 SEM = asyncio.Semaphore(ASYNC_SEMAPHORE_LIMIT)
@@ -132,7 +130,19 @@ async def crawl_missing_chapters_for_story(
                 f"[ALERT] Truyện '{story_data_item['title']}' còn các chương sau mãi chưa crawl được: {[f for _,_,f in missing_chapters]}"
             )
 
-
+def clean_header_only_chapter(text: str):
+    lines = text.splitlines()
+    out = []
+    skipping = True
+    for line in lines:
+        l = line.strip()
+        if not l:
+            continue
+        if skipping and HEADER_RE.match(l):
+            continue
+        skipping = False
+        out.append(line)
+    return "\n".join(out).strip()
 
 async def async_save_chapter_with_hash_check(filename, content: str):
     """
@@ -149,12 +159,12 @@ async def async_save_chapter_with_hash_check(filename, content: str):
             logger.debug(f"Chương '{filename}' đã tồn tại với nội dung giống hệt, bỏ qua ghi lại.")
             return "unchanged"
         else:
-            content = clean_header(content)
+            content = clean_header_only_chapter(content)
             await safe_write_file(filename, content)  
             logger.info(f"Chương '{filename}' đã được cập nhật do nội dung thay đổi.")
             return "updated"
     else:
-        content = clean_header(content)
+        content = clean_header_only_chapter(content)
         await safe_write_file(filename, content)
         logger.info(f"Chương '{filename}' mới đã được lưu.")
         return "new"
