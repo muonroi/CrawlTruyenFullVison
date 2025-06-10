@@ -1,6 +1,5 @@
 from urllib.parse import urlparse
 from config.config import BASE_URLS
-from adapters.factory import get_adapter
 
 def resolve_site_key(src, fallback_url=None, default_site_key=None):
     if isinstance(src, dict):
@@ -31,8 +30,8 @@ def is_url_for_site(url, site_key):
     base_host = urlparse(base).netloc.lower()
     return url_host == base_host
 
-def get_adapter_from_url(url):
+def get_adapter_from_url(url, adapter):
     key = get_site_key_from_url(url)
     if key:
-        return get_adapter(key), key
+        return adapter, key
     return None, None

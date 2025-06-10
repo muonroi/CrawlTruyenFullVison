@@ -529,7 +529,7 @@ async def get_real_total_chapters(metadata, adapter):
     if metadata.get("sources"):
         for source in metadata["sources"]:
             url = source.get("url")
-            adapter, site_key = get_adapter_from_url(url)
+            adapter, site_key = get_adapter_from_url(url,adapter)
             if not adapter or not url:
                 continue
             chapters = await adapter.get_chapter_list(url, metadata.get("title"), site_key)
