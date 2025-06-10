@@ -24,7 +24,6 @@ BATCH_SEMAPHORE_LIMIT = 5
 
 
 def get_saved_chapters_files(story_folder_path: str) -> set:
-    """Trả về set tên file đã lưu trong folder truyện."""
     if not os.path.exists(story_folder_path):
         return set()
     files = glob.glob(os.path.join(story_folder_path, "*.txt"))
@@ -45,28 +44,28 @@ async def crawl_missing_chapters_for_story(
 ):
     total_chapters = story_data_item.get('total_chapters_on_site', len(chapters))
     retry_count = 0
+    max_global_retry = 5  # tránh loop vô hạn
 
-    while True:
+    while retry_count < max_global_retry:
         saved_files = get_saved_chapters_files(story_folder_path)
         if len(saved_files) >= total_chapters:
             logger.info(f"ĐÃ ĐỦ {len(saved_files)}/{total_chapters} chương cho '{story_data_item['title']}'")
             break
 
-        # Xác định các chương thiếu thực tế dựa trên danh sách chương
         missing_chapters = []
         for idx, ch in enumerate(chapters):
             fname_only = get_chapter_filename(ch['title'], idx + 1)
-            if fname_only not in saved_files:
+            fpath = os.path.join(story_folder_path, fname_only)
+            if fname_only not in saved_files or not os.path.exists(fpath) or os.path.getsize(fpath) < 20:
                 missing_chapters.append((idx, ch, fname_only))
 
         if not missing_chapters:
-            break  # An toàn
+            break
 
         logger.warning(
             f"Truyện '{story_data_item['title']}' còn thiếu {len(missing_chapters)} chương (retry: {retry_count + 1})"
         )
 
-        # Tính số batch dựa trên số chương còn thiếu, mỗi batch tối đa 120 chương
         batch_size = int(os.getenv("BATCH_SIZE") or get_optimal_batch_size(len(missing_chapters)))
         num_batches_now = max(1, (len(missing_chapters) + batch_size - 1) // batch_size)
         batches = split_batches(missing_chapters, num_batches_now)
@@ -100,7 +99,7 @@ async def crawl_missing_chapters_for_story(
                                     state_file=state_file,  # type: ignore
                                     adapter=adapter,
                                 ),
-                                timeout=300  # Tăng timeout lên 300 giây
+                                timeout=300
                             )
                         except Exception as ex:
                             logger.error(f"[Batch {batch_idx}] Lỗi khi crawl chương {idx+1}: {ch['title']} - {ex}")
@@ -116,20 +115,23 @@ async def crawl_missing_chapters_for_story(
                 await save_crawl_state(crawl_state, state_file)
             return successful, failed
 
-        # Thực thi từng batch tuần tự thay vì song song
         for batch_idx, batch in enumerate(batches):
             if not batch:
                 continue
             await crawl_batch(batch, batch_idx + 1)
 
         retry_count += 1
-        await smart_delay()  # Để tránh spam request quá nhanh
+        await smart_delay()
 
-        # Cứ mỗi 20 lần retry mà vẫn còn chương thiếu thì log kỹ lại để check dead chương
+        if retry_count >= max_global_retry:
+            logger.error(f"[FATAL] Vượt quá retry cho truyện {story_data_item['title']}, sẽ bỏ qua.")
+            break
+
         if retry_count % 20 == 0:
             logger.error(
                 f"[ALERT] Truyện '{story_data_item['title']}' còn các chương sau mãi chưa crawl được: {[f for _,_,f in missing_chapters]}"
             )
+
 
 
 async def async_save_chapter_with_hash_check(filename, content: str):

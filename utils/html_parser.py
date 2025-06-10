@@ -17,9 +17,9 @@ def extract_chapter_content(html: str, site_key: str, patterns: List[re.Pattern]
     chapter_div = selector_fn(soup) if selector_fn else None
 
     if not chapter_div:
-        with open('debug_empty_chapter.html', 'w', encoding='utf-8') as f:
+        with open(f"debug_empty_chapter_{slugify_title(chapter_title)}.html", 'w', encoding='utf-8') as f:
             f.write(html)
-        logger.warning(f"[{site_key}] Không tìm thấy nội dung chương, đã lưu response vào debug_empty_chapter.html")
+        logger.warning(f"[{site_key}] Không tìm thấy nội dung chương, đã lưu response vào debug_empty_chapter_{slugify_title(chapter_title)}.html")
         return ""
     
     clean_chapter_content(chapter_div)
@@ -30,8 +30,8 @@ def extract_chapter_content(html: str, site_key: str, patterns: List[re.Pattern]
     content = clean_header("\n".join(cleaned_lines)).strip()
 
     if not content:
-        logger.warning(f"[{site_key}] Nội dung chương trống sau khi lọc, đã lưu response vào debug_empty_chapter.html")
-        with open('debug_empty_chapter.html', 'w', encoding='utf-8') as f:
+        logger.warning(f"[{site_key}] Nội dung chương trống sau khi lọc, đã lưu response vào debug_empty_chapter_{slugify_title(chapter_title)}.html")
+        with open(f'debug_empty_chapter_{slugify_title(chapter_title)}.html', 'w', encoding='utf-8') as f:
             f.write(html)
         return ""
     return content
