@@ -550,6 +550,7 @@ async def process_genre_item(
 
     for batch in batches:
         remaining = batch
+        retry_counts = {idx: 0 for idx, _ in batch}
         while remaining:
             tasks = [asyncio.create_task(handle_story(i, s)) for i, s in remaining]
             results = await asyncio.gather(*tasks)
@@ -558,6 +559,13 @@ async def process_genre_item(
                 if done:
                     completed_global.add(url)
                 else:
+                    retry_counts[idx] = retry_counts.get(idx, 0) + 1
+                    if retry_counts[idx] >= RETRY_STORY_ROUND_LIMIT:
+                        story_title = next(st['title'] for j, st in batch if j == idx)
+                        logger.error(
+                            f"[FATAL] Vượt quá retry cho truyện {story_title}, bỏ qua."
+                        )
+                        continue
                     remaining.append((idx, next(st for j, st in batch if j == idx)))
             if remaining:
                 logger.warning(
