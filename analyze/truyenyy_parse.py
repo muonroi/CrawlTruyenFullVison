@@ -267,8 +267,11 @@ async def get_story_details(self, story_url, story_title, site_key):
 def parse_chapters_from_soup(soup, base_url):
     from urllib.parse import urljoin
     chapters = []
-    for div in soup.select('div.flex.font-light'):
-        # Tìm 2 thẻ <a> chứa link chương (cả số chương và tựa chương đều trỏ cùng link)
+    nodes = soup.select('div.flex.font-light')
+    if not nodes:
+        nodes = soup.select('ul.flex.flex-col li')
+    for div in nodes:
+        # Tìm các thẻ <a> chứa link chương
         chapter_links = div.find_all('a', href=True)
         if not chapter_links:
             continue
@@ -278,11 +281,11 @@ def parse_chapters_from_soup(soup, base_url):
 
         for a in chapter_links:
             link = a['href']
-            if '/chuong-' in link:
+            if not href:
                 href = urljoin(base_url, link)
-                span = a.find('span')
-                if span and span.get_text(strip=True):
-                    title = span.get_text(strip=True)
+            span = a.find('span') or a.find('p')
+            if span and span.get_text(strip=True):
+                title = span.get_text(strip=True)
         if not href:
             continue
 
