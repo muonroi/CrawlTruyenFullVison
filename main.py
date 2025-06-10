@@ -31,7 +31,7 @@ from utils.logger import logger
 from config.config import (
     GENRE_ASYNC_LIMIT,
     STORY_ASYNC_LIMIT,
-    STORY_BATCH_SIZE,
+    STORY_BATCH_SIZE, 
     LOADED_PROXIES,
     get_state_file,
 )
@@ -63,13 +63,14 @@ from utils.state_utils import (
 from workers.crawler_missing_chapter import check_and_crawl_missing_all_stories
 from workers.crawler_single_missing_chapter import crawl_single_story_worker
 from workers.missing_chapter_worker import crawl_all_missing_stories
+from utils.chapter_utils import slugify_title
 
 router = Router()
 is_crawling = False
 GENRE_SEM = asyncio.Semaphore(GENRE_ASYNC_LIMIT)
-STORY_SEM = asyncio.Semaphore(STORY_ASYNC_LIMIT)
+STORY_SEM = asyncio.Semaphore(STORY_ASYNC_LIMIT) 
 
-
+    
 class WorkerSettings:
     def __init__(self, genre_batch_size, genre_async_limit, proxies_file, failed_genres_file, retry_genre_round_limit, retry_sleep_seconds):
         self.genre_batch_size = genre_batch_size
@@ -82,7 +83,6 @@ class WorkerSettings:
 
 
 async def crawl_single_story_by_title(title, site_key, genre_name=None):
-    from utils.chapter_utils import slugify_title
 
     slug = slugify_title(title)
     folder = os.path.join(DATA_FOLDER, slug)

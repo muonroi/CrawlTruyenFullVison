@@ -1,16 +1,15 @@
 import re
 from typing import List
 from bs4 import BeautifulSoup
-
 from config.config import  HEADER_RE, PATTERN_FILE, SITE_SELECTORS
-from scraper import make_request
+from utils.chapter_utils import slugify_title
 from utils.logger import logger
 from utils.cleaner import clean_chapter_content
 from utils.io_utils import filter_lines_by_patterns, load_patterns
 
 BLACKLIST_PATTERNS = load_patterns(PATTERN_FILE)
 
-def extract_chapter_content(html: str, site_key: str, patterns: List[re.Pattern] = BLACKLIST_PATTERNS) -> str:
+def extract_chapter_content(html: str, chapter_title: str, site_key: str, patterns: List[re.Pattern] = BLACKLIST_PATTERNS) -> str:
     soup = BeautifulSoup(html, "html.parser")
     # --- Lấy selector function từ map ---
     selector_fn = SITE_SELECTORS.get(site_key)

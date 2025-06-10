@@ -350,7 +350,7 @@ async def get_story_chapter_content(
         logger.error(f"Chương '{chapter_title}': Không nhận được phản hồi từ {chapter_url}")
         return None
     html = response.text
-    content = extract_chapter_content(html, site_key)
+    content = extract_chapter_content(html,chapter_title, site_key)
     if not content:
         # Ghi debug nếu cần
         with open("debug_truyenyy_empty_chapter.html", "w", encoding="utf-8") as f:
