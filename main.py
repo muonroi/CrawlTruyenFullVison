@@ -31,9 +31,10 @@ from utils.logger import logger
 from config.config import (
     GENRE_ASYNC_LIMIT,
     STORY_ASYNC_LIMIT,
-    STORY_BATCH_SIZE, 
+    STORY_BATCH_SIZE,
     LOADED_PROXIES,
     get_state_file,
+    RETRY_STORY_ROUND_LIMIT,
 )
 from config.config import (
     BASE_URLS,
@@ -215,6 +216,11 @@ async def crawl_all_sources_until_full(
                 f"[ALERT] Đã thử hết nguồn nhưng không crawl thêm được chương nào cho '{story_data_item['title']}'. Sẽ lặp lại."
             )
         retry_full += 1
+        if retry_full >= RETRY_STORY_ROUND_LIMIT:
+            logger.error(
+                f"[FATAL] Vượt quá retry cho truyện {story_data_item['title']}, sẽ bỏ qua."
+            )
+            break
         if retry_full % 20 == 0:
             logger.error(
                 f"[ALERT] Truyện '{story_data_item['title']}' còn thiếu {total_chapters - files_after} chương sau {retry_full} vòng thử tất cả nguồn."
