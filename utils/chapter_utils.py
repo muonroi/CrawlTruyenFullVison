@@ -8,7 +8,6 @@ import re
 from filelock import FileLock
 from unidecode import unidecode
 import aiofiles
-from adapters.factory import get_adapter
 from config.config import ASYNC_SEMAPHORE_LIMIT, HEADER_RE, LOCK, get_state_file
 from utils.domain_utils import get_adapter_from_url
 from utils.io_utils import  safe_write_file, safe_write_json
@@ -178,7 +177,7 @@ def deduplicate_by_index(filename: str) -> None:
         return
     prefix = m.group(1)
     folder = os.path.dirname(filename)
-    pattern = os.path.join(folder, f"{prefix}*\.txt")
+    pattern = os.path.join(folder, f"{prefix}*.txt")
     files = [f for f in glob.glob(pattern) if os.path.basename(f) != base]
     if not files:
         return
@@ -240,14 +239,12 @@ async def async_download_and_save_chapter(
     original_idx: int = 0,
     site_key: str = "unknown",
     state_file: str = None,    # type: ignore
-    adapter=None,
+    adapter=None,# type: ignore
 ) -> None:
     url = chapter_info['url']
     logger.info(f"        {pass_description} - Chương {chapter_display_idx_log}: Đang tải '{chapter_info['title']}' ({url})")
     async with SEM:
-        if adapter is None:
-            adapter = get_adapter(site_key)
-        content = await adapter.get_chapter_content(url, chapter_info['title'], site_key)
+        content = await adapter.get_chapter_content(url, chapter_info['title'], site_key)# type: ignore
 
     if content:
         try:
@@ -527,7 +524,7 @@ def get_actual_chapters_for_export(story_folder):
         })
     return chapters
 
-async def get_real_total_chapters(metadata):
+async def get_real_total_chapters(metadata, adapter):
     # Ưu tiên lấy từ sources nếu có
     if metadata.get("sources"):
         for source in metadata["sources"]:
@@ -542,8 +539,7 @@ async def get_real_total_chapters(metadata):
     url = metadata.get("url")
     site_key = metadata.get("site_key")
     if url and site_key:
-        adapter = get_adapter(site_key)
-        chapters = await adapter.get_chapter_list(url, metadata.get("title"), site_key)
+        chapters = await adapter.get_chapter_list(story_url=url, story_title=metadata.get("title"), site_key=site_key)
         if chapters:
             return len(chapters)
     return 0

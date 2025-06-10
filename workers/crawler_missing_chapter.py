@@ -11,7 +11,7 @@ from config.config import BASE_URLS, COMPLETED_FOLDER, DATA_FOLDER, LOADED_PROXI
 from config.proxy_provider import load_proxies
 from scraper import initialize_scraper 
 from utils.async_utils import sync_chapter_with_yy_first_batch
-from utils.chapter_utils import SEM, count_txt_files, crawl_missing_chapters_for_story, export_chapter_metadata_sync, extract_real_chapter_number, get_actual_chapters_for_export, get_chapter_filename
+from utils.chapter_utils import SEM, count_txt_files, crawl_missing_chapters_for_story, export_chapter_metadata_sync, extract_real_chapter_number, get_actual_chapters_for_export, get_chapter_filename, get_real_total_chapters
 from utils.domain_utils import  get_site_key_from_url, is_url_for_site, resolve_site_key
 from utils.logger import logger
 from utils.io_utils import create_proxy_template_if_not_exists
@@ -482,7 +482,7 @@ async def check_and_crawl_missing_all_stories(adapter, home_page_url, site_key, 
                         with open(meta_path, "w", encoding="utf-8") as f:
                             json.dump(metadata, f, ensure_ascii=False, indent=4)
 
-        real_total = await get_real_total_chapters(site_key, metadata)#type:ignore
+        real_total = await get_real_total_chapters(metadata, adapter)
         chapter_count = recount_chapters(story_folder)
 
         # Luôn cập nhật lại metadata cho đúng số chương thực tế từ web
