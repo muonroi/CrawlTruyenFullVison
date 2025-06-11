@@ -19,6 +19,23 @@ SEM = asyncio.Semaphore(ASYNC_SEMAPHORE_LIMIT)
 
 BATCH_SEMAPHORE_LIMIT = 5
 
+async def mark_dead_chapter(story_folder_path, ch_info):
+    dead_path = os.path.join(story_folder_path, "dead_chapters.json")
+    dead_list = []
+    if os.path.exists(dead_path):
+        with open(dead_path, "r", encoding="utf-8") as f:
+            dead_list = json.load(f)
+    # Đảm bảo không ghi trùng
+    if any(x.get("url") == ch_info.get("url") for x in dead_list):
+        return
+    dead_list.append({
+        "index": ch_info.get("index"),
+        "title": ch_info.get("title"),
+        "url": ch_info.get("url"),
+        "reason": ch_info.get("reason", ""),
+    })
+    with open(dead_path, "w", encoding="utf-8") as f:
+        json.dump(dead_list, f, ensure_ascii=False, indent=2)
 
 def get_saved_chapters_files(story_folder_path: str) -> set:
     if not os.path.exists(story_folder_path):
@@ -299,6 +316,16 @@ async def async_download_and_save_chapter(
                 'filename_only': chapter_filename_only,
                 'original_idx': original_idx
             })
+                # Đánh dấu dead nếu đã quá số lần retry (ví dụ: 3)
+            try:
+                await mark_dead_chapter(os.path.dirname(chapter_filename_full_path), {
+                    "index": original_idx,
+                    "title": chapter_info['title'],
+                    "url": chapter_info['url'],
+                    "reason": "empty content"
+                })
+            except Exception as ex:
+                logger.warning(f"Lỗi khi ghi dead_chapters.json: {ex}")
     else:
         logger.warning(f"          Không lấy được nội dung '{chapter_info['title']}'")
         await log_error_chapter({
@@ -374,11 +401,26 @@ def get_existing_chapter_nums(story_folder):
 
 def get_missing_chapters(chapters, existing_nums):
     # chapters: list từ web, existing_nums: set 0001, 0002...
+    dead_chapters_path = os.path.join(story_folder, "dead_chapters.json")
+    dead_urls = set()
+    if os.path.exists(dead_chapters_path):
+        with open(dead_chapters_path, "r", encoding="utf-8") as f:
+            dead = json.load(f)
+            dead_urls = set(x["url"] for x in dead if "url" in x)
     missing = []
-    for idx, ch in enumerate(chapters):
-        num = f"{idx+1:04d}"
-        if num not in existing_nums:
-            missing.append((idx, ch))
+    for idx, ch in enumerate(chapter_items):
+        expected_file = ch.get("file")
+        if not expected_file:
+            real_num = ch.get("index", idx+1)
+            title = ch.get("title", "") or ""
+            expected_file = get_chapter_filename(title, real_num)
+        file_path = os.path.join(story_folder, expected_file)
+        # THÊM:
+        if ch.get("url") in dead_urls:
+            continue  # Bỏ qua chương đã được đánh dấu dead
+        if expected_file not in existing_files or not os.path.exists(file_path) or os.path.getsize(file_path) < 20:
+            ch_for_missing = {**ch, "idx": idx}
+            missing.append(ch_for_missing)
     return missing
 
 def slugify_title(title: str) -> str:

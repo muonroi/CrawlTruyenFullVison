@@ -170,6 +170,17 @@ async def crawl_missing_until_complete(
     logger.warning(f"[FAILED] Sau {max_retry} lần retry vẫn còn thiếu {len(missing_chapters)} chương cho '{metadata['title']}'")
     chapters_for_export = get_actual_chapters_for_export(story_folder)
     export_chapter_metadata_sync(story_folder, chapters_for_export)
+    if retry >= max_retry:
+        logger.warning(f"[FATAL] Sau {max_retry} lần vẫn còn thiếu chương. Đánh dấu dead_chapters và bỏ qua.")
+        # Đánh dấu dead luôn cho các chương còn thiếu
+        for ch in missing_chapters:
+            await mark_dead_chapter(folder, {
+                "index": ch.get("real_num"),
+                "title": ch.get("title"),
+                "url": ch.get("url"),
+                "reason": "max_retry_reached"
+            })
+        return False
     return False
 def autofix_category(metadata):
     """
