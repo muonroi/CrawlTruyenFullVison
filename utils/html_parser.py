@@ -1,3 +1,4 @@
+import os
 import re
 from typing import List
 from bs4 import BeautifulSoup
@@ -9,30 +10,79 @@ from utils.io_utils import filter_lines_by_patterns, load_patterns
 
 BLACKLIST_PATTERNS = load_patterns(PATTERN_FILE)
 
-def extract_chapter_content(html: str, chapter_title: str, site_key: str, patterns: List[re.Pattern] = BLACKLIST_PATTERNS) -> str:
+def extract_chapter_content(
+    html: str, 
+    site_key: str, 
+    chapter_title: str = None, 
+    patterns: list = None
+) -> str:
+    from config.config import SITE_SELECTORS, PATTERN_FILE
+    from utils.cleaner import clean_chapter_content
+    from utils.io_utils import filter_lines_by_patterns, load_patterns
+    from utils.logger import logger
+    from utils.html_parser import clean_header
+
+    if patterns is None:
+        patterns = load_patterns(PATTERN_FILE)
+
+    # --- Parse HTML và lấy DIV chương ---
     soup = BeautifulSoup(html, "html.parser")
-    # --- Lấy selector function từ map ---
     selector_fn = SITE_SELECTORS.get(site_key)
     chapter_div = selector_fn(soup) if selector_fn else None
 
+    debug_prefix = f"[DEBUG][{site_key}][{chapter_title}]"
+
+    # Nếu selector fail
     if not chapter_div:
-        with open(f"debug_empty_chapter_{slugify_title(chapter_title)}.html", 'w', encoding='utf-8') as f:
-            f.write(html)
-        logger.warning(f"[{site_key}] Không tìm thấy nội dung chương, đã lưu response vào debug_empty_chapter_{slugify_title(chapter_title)}.html")
+        fname = f'debug_empty_chapter_{slugify_title(chapter_title) or "unknown"}.html'
+        if not os.path.exists(fname):
+            with open(fname, 'w', encoding='utf-8') as f:
+                f.write(html)
+        logger.error(f"{debug_prefix} Không tìm thấy selector DIV nội dung chương. Đã lưu HTML vào {fname}")
         return ""
-    
-    clean_chapter_content(chapter_div)
+
+    # --- Log raw HTML vừa parse ra ---
+    raw_text = chapter_div.get_text(separator="\n")
+    logger.info(f"{debug_prefix} Raw extracted from selector (first 500 chars):\n{raw_text[:500]}")
+
+    # --- Clean bổ sung nếu có ---
+    try:
+        clean_chapter_content(chapter_div)
+    except Exception as e:
+        logger.error(f"{debug_prefix} Lỗi khi chạy clean_chapter_content: {e}")
 
     text = chapter_div.get_text(separator="\n")
-    lines = [line.strip() for line in text.splitlines() if line.strip()]
-    cleaned_lines = filter_lines_by_patterns(lines, patterns)
-    content = clean_header("\n".join(cleaned_lines)).strip()
+    logger.info(f"{debug_prefix} After clean_chapter_content (first 500 chars):\n{text[:500]}")
 
+    # --- Lọc dòng trắng, strip ---
+    lines = [line.strip() for line in text.splitlines() if line.strip()]
+    logger.info(f"{debug_prefix} Số dòng sau strip: {len(lines)}")
+    if len(lines) < 3:
+        logger.warning(f"{debug_prefix} Sau clean còn rất ít dòng ({len(lines)}). Có thể mất nội dung.")
+
+    # --- Lọc bằng blacklist patterns ---
+    try:
+        cleaned_lines = filter_lines_by_patterns(lines, patterns)
+    except Exception as e:
+        logger.error(f"{debug_prefix} Lỗi khi filter_lines_by_patterns: {e}")
+        cleaned_lines = lines
+
+    logger.info(f"{debug_prefix} After filter_lines_by_patterns (first 10 lines):\n{cleaned_lines[:10]}")
+
+    # --- Clean header cuối cùng ---
+    content = clean_header("\n".join(cleaned_lines)).strip()
+    logger.info(f"{debug_prefix} After clean_header (first 500 chars):\n{content[:500]}")
+
+    # --- Kiểm tra kết quả cuối ---
     if not content:
-        logger.warning(f"[{site_key}] Nội dung chương trống sau khi lọc, đã lưu response vào debug_empty_chapter_{slugify_title(chapter_title)}.html")
-        with open(f'debug_empty_chapter_{slugify_title(chapter_title)}.html', 'w', encoding='utf-8') as f:
-            f.write(html)
+        fname = f'debug_empty_chapter_{slugify_title(chapter_title) or "unknown"}_after_filter.html'
+        if not os.path.exists(fname):
+            with open(fname, 'w', encoding='utf-8') as f:
+                f.write(html)
+        logger.error(f"{debug_prefix} Nội dung chương EMPTY sau khi filter/clean. Đã lưu HTML vào {fname}")
         return ""
+
+    # --- Có nội dung ---
     return content
 
 
