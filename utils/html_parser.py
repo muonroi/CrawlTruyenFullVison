@@ -55,16 +55,24 @@ def extract_chapter_content(
 
     selector_fn = SITE_SELECTORS.get(site_key)
     chapter_div = selector_fn(soup) if selector_fn else None
+
     if not chapter_div and site_key == "truyenfull":
         for div in soup.find_all('div'):
             div_id = div.get('id') or ''
             if 'chapter-c' in div_id.strip().lower().replace('\u200b', ''):
                 chapter_div = div
                 break
-    else:
-        raw_text = chapter_div.get_text(separator="\n")
 
-    # --- Log raw HTML vừa parse ra ---
+    # Đúng ra phải kiểm tra lại chapter_div trước khi xử lý tiếp:
+    if not chapter_div:
+        fname = f'debug_empty_chapter_{slugify_title(chapter_title) or "unknown"}.html'
+        if not os.path.exists(fname):
+            with open(fname, 'w', encoding='utf-8') as f:
+                f.write(html)
+        logger.error(f"{debug_prefix} Không tìm thấy selector DIV nội dung chương. Đã lưu HTML vào {fname}")
+        return ""
+
+    # Chỉ lúc này mới được get_text
     raw_text = chapter_div.get_text(separator="\n")
     logger.info(f"{debug_prefix} Raw extracted from selector (first 500 chars):\n{raw_text[:500]}")
 
