@@ -1,20 +1,22 @@
 import os
-import re
-from typing import List
 from bs4 import BeautifulSoup
-from config.config import  HEADER_RE, PATTERN_FILE, SITE_SELECTORS
+from config.config import  HEADER_RE, PATTERN_FILE
 from utils.chapter_utils import slugify_title
-from utils.logger import logger
-from utils.cleaner import clean_chapter_content
-from utils.io_utils import filter_lines_by_patterns, load_patterns
-
+from utils.io_utils import load_patterns
+from config.config import PATTERN_FILE
+from utils.io_utils import  load_patterns
 BLACKLIST_PATTERNS = load_patterns(PATTERN_FILE)
+ 
+import chardet
+import os
+from bs4 import BeautifulSoup
+from utils.chapter_utils import slugify_title
 
 def extract_chapter_content(
     html: str, 
     site_key: str, 
-    chapter_title: str = None, 
-    patterns: list = None
+    chapter_title: str = None, #type: ignore
+    patterns: list = None#type: ignore
 ) -> str:
     from config.config import SITE_SELECTORS, PATTERN_FILE
     from utils.cleaner import clean_chapter_content
@@ -25,12 +27,28 @@ def extract_chapter_content(
     if patterns is None:
         patterns = load_patterns(PATTERN_FILE)
 
+    debug_prefix = f"[DEBUG][{site_key}][{chapter_title}]"
+
+    # --- Detect encoding nếu cần ---
+    try:
+        if isinstance(html, bytes):
+            detected = chardet.detect(html)
+            logger.info(f"{debug_prefix} Detected encoding: {detected}")
+            html = html.decode(detected['encoding'] or 'utf-8', errors='replace')
+    except Exception as e:
+        logger.error(f"{debug_prefix} Lỗi khi detect/decode encoding: {e}")
+
     # --- Parse HTML và lấy DIV chương ---
-    soup = BeautifulSoup(html, "html.parser")
+    soup = BeautifulSoup(html, "html.parser")  # Thử "lxml" nếu vẫn fail
+
+    # --- Debug toàn bộ id/class của div ---
+    all_div_ids = [div.get('id') for div in soup.find_all('div') if div.get('id')]#type: ignore
+    all_div_classes = [div.get('class') for div in soup.find_all('div') if div.get('class')]#type: ignore
+    logger.info(f"{debug_prefix} Các div id trong trang: {all_div_ids[:15]}")
+    logger.info(f"{debug_prefix} Các div class trong trang: {all_div_classes[:15]}")
+
     selector_fn = SITE_SELECTORS.get(site_key)
     chapter_div = selector_fn(soup) if selector_fn else None
-
-    debug_prefix = f"[DEBUG][{site_key}][{chapter_title}]"
 
     # Nếu selector fail
     if not chapter_div:
@@ -84,6 +102,7 @@ def extract_chapter_content(
 
     # --- Có nội dung ---
     return content
+
 
 
 def clean_header(text: str):
