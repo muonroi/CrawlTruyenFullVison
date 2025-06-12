@@ -41,7 +41,8 @@ def extract_chapter_content(
     # --- Parse HTML và lấy DIV chương ---
     soup = BeautifulSoup(html, "html.parser")  # Thử "lxml" nếu vẫn fail
     for div in soup.find_all('div'):
-        print(f"ID: {repr(div.get('id'))} | Class: {div.get('class')}")
+        if div.get('id') and 'chapter-c' in div.get('id'):
+            logger.debug(f"[DEBUG][{site_key}][{chapter_title}] id match: {repr(div.get('id'))}")
 
     div = soup.find('div', id=lambda x: x and 'chapter-c' in x)
     print(f"[DEBUG] Found by lambda: {div}")
@@ -54,15 +55,9 @@ def extract_chapter_content(
 
     selector_fn = SITE_SELECTORS.get(site_key)
     chapter_div = selector_fn(soup) if selector_fn else None
-    
-    # Nếu selector fail
-    if not chapter_div:
-        fname = f'debug_empty_chapter_{slugify_title(chapter_title) or "unknown"}.html'
-        if not os.path.exists(fname):
-            with open(fname, 'w', encoding='utf-8') as f:
-                f.write(html)
-        logger.error(f"{debug_prefix} Không tìm thấy selector DIV nội dung chương. Đã lưu HTML vào {fname}")
-        return ""
+    if not chapter_div and site_key == "truyenfull":
+        # Fallback nếu selector cũ fail
+        chapter_div = soup.find("div", id=lambda x: x and "chapter-c" in x)
 
     # --- Log raw HTML vừa parse ra ---
     raw_text = chapter_div.get_text(separator="\n")
