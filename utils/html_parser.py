@@ -7,18 +7,8 @@ from config.config import SITE_SELECTORS, PATTERN_FILE
 from utils.cleaner import clean_chapter_content
 from utils.io_utils import filter_lines_by_patterns, load_patterns
 from utils.logger import logger
-from utils.html_parser import clean_header
 BLACKLIST_PATTERNS = load_patterns(PATTERN_FILE)
- 
 import chardet
-import os
-from bs4 import BeautifulSoup
-from utils.chapter_utils import slugify_title
-import os
-import chardet
-from bs4 import BeautifulSoup
-from utils.chapter_utils import slugify_title
-
 def extract_chapter_content(
     html: str, 
     site_key: str, 
