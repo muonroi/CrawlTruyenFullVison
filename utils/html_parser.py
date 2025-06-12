@@ -56,8 +56,13 @@ def extract_chapter_content(
     selector_fn = SITE_SELECTORS.get(site_key)
     chapter_div = selector_fn(soup) if selector_fn else None
     if not chapter_div and site_key == "truyenfull":
-        # Fallback nếu selector cũ fail
-        chapter_div = soup.find("div", id=lambda x: x and "chapter-c" in x)
+        for div in soup.find_all('div'):
+            div_id = div.get('id') or ''
+            if 'chapter-c' in div_id.strip().lower().replace('\u200b', ''):
+                chapter_div = div
+                break
+    else:
+        raw_text = chapter_div.get_text(separator="\n")
 
     # --- Log raw HTML vừa parse ra ---
     raw_text = chapter_div.get_text(separator="\n")
