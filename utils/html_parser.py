@@ -2,27 +2,30 @@ import os
 from bs4 import BeautifulSoup
 from config.config import  HEADER_RE, PATTERN_FILE
 from utils.chapter_utils import slugify_title
-from utils.io_utils import load_patterns
 from config.config import PATTERN_FILE
-from utils.io_utils import  load_patterns
+from config.config import SITE_SELECTORS, PATTERN_FILE
+from utils.cleaner import clean_chapter_content
+from utils.io_utils import filter_lines_by_patterns, load_patterns
+from utils.logger import logger
+from utils.html_parser import clean_header
 BLACKLIST_PATTERNS = load_patterns(PATTERN_FILE)
  
 import chardet
 import os
 from bs4 import BeautifulSoup
 from utils.chapter_utils import slugify_title
+import os
+import chardet
+from bs4 import BeautifulSoup
+from utils.chapter_utils import slugify_title
 
 def extract_chapter_content(
     html: str, 
     site_key: str, 
-    chapter_title: str = None, #type: ignore
-    patterns: list = None#type: ignore
+    chapter_title: str = None,
+    patterns: list = None
 ) -> str:
-    from config.config import SITE_SELECTORS, PATTERN_FILE
-    from utils.cleaner import clean_chapter_content
-    from utils.io_utils import filter_lines_by_patterns, load_patterns
-    from utils.logger import logger
-    from utils.html_parser import clean_header
+
 
     if patterns is None:
         patterns = load_patterns(PATTERN_FILE)
@@ -39,33 +42,37 @@ def extract_chapter_content(
         logger.error(f"{debug_prefix} Lỗi khi detect/decode encoding: {e}")
 
     # --- Parse HTML và lấy DIV chương ---
-    soup = BeautifulSoup(html, "html.parser")  # Thử "lxml" nếu vẫn fail
+    # Dùng "html5lib" để tránh lỗi parser (nếu vẫn fail đổi sang "lxml")
+    soup = BeautifulSoup(html, "html5lib")
+    chapter_div = None
+
+    # Log rõ từng id có ký tự lạ
     for div in soup.find_all('div'):
-        if div.get('id') and 'chapter-c' in div.get('id'):
-            logger.debug(f"[DEBUG][{site_key}][{chapter_title}] id match: {repr(div.get('id'))}")
-
-    div = soup.find('div', id=lambda x: x and 'chapter-c' in x)
-    print(f"[DEBUG] Found by lambda: {div}")
-
-    # --- Debug toàn bộ id/class của div ---
-    all_div_ids = [div.get('id') for div in soup.find_all('div') if div.get('id')]#type: ignore
-    all_div_classes = [div.get('class') for div in soup.find_all('div') if div.get('class')]#type: ignore
-    logger.info(f"{debug_prefix} Các div id trong trang: {all_div_ids[:15]}")
-    logger.info(f"{debug_prefix} Các div class trong trang: {all_div_classes[:15]}")
-
-    selector_fn = SITE_SELECTORS.get(site_key)
-    chapter_div = selector_fn(soup) if selector_fn else None
-
-    if not chapter_div and site_key == "truyenfull":
-        for div in soup.find_all('div'):
-            div_id = div.get('id') or ''
-            if 'chapter-c' in div_id.strip().lower().replace('\u200b', ''):
+        div_id = div.get('id')
+        if div_id:
+            logger.warning(f"[DEBUG][{site_key}][{chapter_title}] id: {repr(div_id)}")
+            # Fallback mạnh: loại bỏ mọi ký tự trắng/ẩn
+            id_clean = div_id.strip().lower().replace('\u200b', '').replace('\xa0', '').replace('\t', '').replace('\n', '')
+            if 'chapter-c' in id_clean:
                 chapter_div = div
+                logger.warning(f"[DEBUG][{site_key}][{chapter_title}] FOUND id: {repr(div_id)} CLEAN: {repr(id_clean)}")
+                # Dump ra file để bạn check thật sự div nào lấy được
+                with open(f'debug_div_{slugify_title(chapter_title)}.html', 'w', encoding='utf-8') as f:
+                    f.write(str(div))
                 break
+
+    # Fallback selector nếu vẫn chưa thấy (dùng SITE_SELECTORS cũ)
+    if not chapter_div:
+        selector_fn = SITE_SELECTORS.get(site_key)
+        if selector_fn:
+            try:
+                chapter_div = selector_fn(soup)
+            except Exception as e:
+                logger.error(f"{debug_prefix} Lỗi khi gọi selector_fn: {e}")
 
     # Đúng ra phải kiểm tra lại chapter_div trước khi xử lý tiếp:
     if not chapter_div:
-        fname = f'debug_empty_chapter_{slugify_title(chapter_title) or "unknown"}.html'
+        fname = f'debug_empty_chapter_{slugify_title(chapter_title) or 'unknown'}.html'
         if not os.path.exists(fname):
             with open(fname, 'w', encoding='utf-8') as f:
                 f.write(html)
@@ -106,7 +113,7 @@ def extract_chapter_content(
 
     # --- Kiểm tra kết quả cuối ---
     if not content:
-        fname = f'debug_empty_chapter_{slugify_title(chapter_title) or "unknown"}_after_filter.html'
+        fname = f'debug_empty_chapter_{slugify_title(chapter_title) or 'unknown'}_after_filter.html'
         if not os.path.exists(fname):
             with open(fname, 'w', encoding='utf-8') as f:
                 f.write(html)
@@ -115,6 +122,7 @@ def extract_chapter_content(
 
     # --- Có nội dung ---
     return content
+
 
 
 
