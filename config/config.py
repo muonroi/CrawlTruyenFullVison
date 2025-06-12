@@ -73,7 +73,7 @@ PATTERN_FILE = os.getenv("PATTERN_FILE", "config/blacklist_patterns.txt")
 
 # ============ PARSING RULE ============
 SITE_SELECTORS = {
-    "truyenfull": lambda soup: soup.find("div", id="chapter-c"),
+    "truyenfull": lambda soup: soup.find("div", id=re.compile(r'chapter-c', re.I)),
     "truyenyy": lambda soup: soup.select_one("article.flex.flex-col"),
     "metruyenfull": lambda soup: soup.select_one("div.chapter-content"),
 }
