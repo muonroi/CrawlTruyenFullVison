@@ -72,9 +72,16 @@ FAILED_GENRES_FILE = os.getenv("FAILED_GENRES_FILE", "failed_genres.json")
 PATTERN_FILE = os.getenv("PATTERN_FILE", "config/blacklist_patterns.txt")
 
 # ============ PARSING RULE ============
+def truyenyy_selector(soup):
+    # Bảo thủ: tìm article có cả "flex" và "flex-col"
+    for tag in soup.find_all("article"):
+        classes = tag.get("class", [])
+        if "flex" in classes and "flex-col" in classes:
+            return tag
+    return None
 SITE_SELECTORS = {
     "truyenfull": lambda soup: soup.find("div", id=re.compile(r'\bchapter-c\b', re.I)),
-    "truyenyy": lambda soup: soup.select_one("article.flex.flex-col"),
+    "truyenyy": truyenyy_selector,
     "metruyenfull": lambda soup: soup.select_one("div.chapter-content"),
 }
 HEADER_PATTERNS = [r"^nguồn:", r"^truyện:", r"^thể loại:", r"^chương:"]
