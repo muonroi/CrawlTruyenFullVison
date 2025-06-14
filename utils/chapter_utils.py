@@ -9,6 +9,7 @@ import re
 from filelock import FileLock
 from unidecode import unidecode
 import aiofiles
+from adapters.base_site_adapter import BaseSiteAdapter
 from config.config import ASYNC_SEMAPHORE_LIMIT, HEADER_RE, LOCK, get_state_file
 from utils.domain_utils import get_adapter_from_url
 from utils.io_utils import  safe_write_file, safe_write_json
@@ -17,7 +18,7 @@ from utils.batch_utils import get_optimal_batch_size, smart_delay, split_batches
 from utils.anti_bot import is_anti_bot_content
 from utils.state_utils import save_crawl_state
 from utils.errors import CrawlError
-
+from playwright.async_api import async_playwright
 SEM = asyncio.Semaphore(ASYNC_SEMAPHORE_LIMIT)
 
 BATCH_SEMAPHORE_LIMIT = 5
@@ -411,29 +412,61 @@ def get_existing_chapter_nums(story_folder):
         chapter_nums.add(num)
     return chapter_nums
 
-def get_missing_chapters(chapters, existing_nums):
-    # chapters: list từ web, existing_nums: set 0001, 0002...
-    dead_chapters_path = os.path.join(story_folder, "dead_chapters.json")
-    dead_urls = set()
-    if os.path.exists(dead_chapters_path):
-        with open(dead_chapters_path, "r", encoding="utf-8") as f:
-            dead = json.load(f)
-            dead_urls = set(x["url"] for x in dead if "url" in x)
+async def get_max_page_by_playwright(url):
+    async with async_playwright() as p:
+        browser = await p.chromium.launch(headless=True)
+        page = await browser.new_page()
+        await page.goto(url)
+        # Đợi phần tử ul phân trang xuất hiện (bạn sửa selector phù hợp site bạn)
+        await page.wait_for_selector('ul.flex.flex-wrap')  # chỉnh selector cho khớp
+        html = await page.content()
+        await browser.close()
+        # Giờ dùng lxml để lấy max page
+        from lxml import html as lxml_html
+        tree = lxml_html.fromstring(html)
+        li_list = tree.xpath('/html/body/main/div[2]/main/div[2]/div/div/div[2]/div[2]/div[1]/div/div[1]/ul/li')
+        # lấy số lớn nhất trong các li
+        max_page = 1
+        for li in reversed(li_list):
+            text = "".join(li.xpath('.//a/text()')).strip()
+            if text.isdigit():
+                max_page = int(text)
+                break
+        return max_page
+
+
+def get_missing_chapters(story_folder: str, chapters: list[dict]) -> list[dict]:
+    """
+    So sánh file txt hiện có với danh sách từ chapter_metadata.json (ưu tiên),
+    nếu không có thì dùng chapters truyền vào (danh sách chapter từ web)
+    """
+    # Ưu tiên đọc từ chapter_metadata.json (nếu có)
+    chapter_meta_path = os.path.join(story_folder, "chapter_metadata.json")
+    chapter_items = None
+    if os.path.exists(chapter_meta_path):
+        with open(chapter_meta_path, "r", encoding="utf-8") as f:
+            chapter_items = json.load(f)
+    else:
+        chapter_items = chapters
+
+    existing_files = set([f for f in os.listdir(story_folder) if f.endswith('.txt')])
+
     missing = []
     for idx, ch in enumerate(chapter_items):
+        # Dùng đúng tên file quy chuẩn từ chapter_metadata.json
         expected_file = ch.get("file")
         if not expected_file:
+            # fallback nếu chapter_metadata chưa chuẩn hóa
             real_num = ch.get("index", idx+1)
             title = ch.get("title", "") or ""
             expected_file = get_chapter_filename(title, real_num)
         file_path = os.path.join(story_folder, expected_file)
-        # THÊM:
-        if ch.get("url") in dead_urls:
-            continue  # Bỏ qua chương đã được đánh dấu dead
         if expected_file not in existing_files or not os.path.exists(file_path) or os.path.getsize(file_path) < 20:
+            # append đủ thông tin cho crawl lại
             ch_for_missing = {**ch, "idx": idx}
             missing.append(ch_for_missing)
     return missing
+
 
 def slugify_title(title: str) -> str:
     s = unidecode(title)
@@ -578,12 +611,12 @@ def get_actual_chapters_for_export(story_folder):
         })
     return chapters
 
-async def get_real_total_chapters(metadata, adapter):
+async def get_real_total_chapters(metadata, adapter: BaseSiteAdapter):
     # Ưu tiên lấy từ sources nếu có
     if metadata.get("sources"):
         for source in metadata["sources"]:
             url = source.get("url")
-            adapter, site_key = get_adapter_from_url(url,adapter)
+            adapter, site_key = get_adapter_from_url(url,adapter) # type: ignore
             if not adapter or not url:
                 continue
             chapters = await adapter.get_chapter_list(url, metadata.get("title"), site_key)

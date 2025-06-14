@@ -5,6 +5,7 @@ from typing import Optional
 from urllib.parse import urljoin, urlparse
 from bs4 import BeautifulSoup
 from scraper import make_request
+from utils.chapter_utils import get_max_page_by_playwright
 from utils.html_parser import clean_header, extract_chapter_content, get_total_pages_category
 
 def build_category_list_url(genre_url, page=1):
@@ -99,9 +100,9 @@ async def get_all_stories_from_genre_with_page_check(self, genre_name, genre_url
         first_li = ul.find('li', recursive=False)
         first_url = None
         if first_li:
-            first_a = first_li.select_one("a[href*='/truyen/']")
+            first_a = first_li.select_one("a[href*='/truyen/']") # type: ignore
             if first_a and first_a.has_attr('href'):
-                first_url = urljoin(self.BASE_URL, first_a['href'])
+                first_url = urljoin(self.BASE_URL, first_a['href']) # type: ignore
         if last_first_url == first_url:
             repeat_count += 1
         else:
@@ -272,8 +273,8 @@ async def get_story_details(self, story_url, story_title, site_key):
                 details["total_chapters_on_site"] = int(match.group(1))
     # --- Fallback: Canonical ---
     canonical = soup.find("link", rel="canonical")
-    if canonical and canonical.get("href"):
-        details["source"] = canonical["href"]
+    if canonical and canonical.get("href"): # type: ignore
+        details["source"] = canonical["href"] # type: ignore
 
     # --- Fallback đếm chương nếu không có hoặc chênh lệch nhiều ---
     chapters = await get_chapters_from_story(
@@ -291,7 +292,7 @@ async def get_story_details(self, story_url, story_title, site_key):
         details["total_chapters_on_site"] = actual_count
 
     details["sources"] = [{
-        "site": urlparse(details["source"]).netloc,
+        "site": urlparse(details["source"]).netloc, # type: ignore
         "url": details["source"],
         "total_chapters": details["total_chapters_on_site"],
         "last_update": datetime.now().strftime('%Y-%m-%d %H:%M:%S')
@@ -349,7 +350,6 @@ def parse_chapters_from_soup(soup, base_url):
         })
     return chapters
 
-
 async def get_chapters_from_story(self, story_url, story_title, max_pages=None, total_chapters=None, site_key=None):
     chapters = []
 
@@ -365,15 +365,12 @@ async def get_chapters_from_story(self, story_url, story_title, max_pages=None, 
         return chapters
     soup = BeautifulSoup(resp.text, "html.parser")
 
-    select = soup.select_one('select.w-full.py-1.outline-none.ring-0.border-none')
-    if select:
-        options = select.find_all('option')
-        max_page = len(options)
-    else:
-        max_page = 1
+    max_page = await get_max_page_by_playwright(first_url)
 
     if max_pages:
         max_page = min(max_page, max_pages)
+
+    logger.info(f"[YY][CHAPTERS] Phát hiện {max_page} page chapter list cho {story_url}")
 
     for page in range(1, max_page + 1):
         url = build_chapter_list_url(story_url, page)
@@ -390,7 +387,7 @@ async def get_chapters_from_story(self, story_url, story_title, max_pages=None, 
             seen.add(ch['url'])
 
     uniq.sort(
-        key=lambda c: float(re.search(r"(\d+)", c['title']).group(1)) if re.search(r"(\d+)", c['title']) else float('inf')
+        key=lambda c: float(re.search(r"(\d+)", c['title']).group(1)) if re.search(r"(\d+)", c['title']) else float('inf') # type: ignore
     )
 
     if total_chapters and abs(len(uniq) - total_chapters) > 5:
