@@ -27,7 +27,7 @@ user_state = {}
 
 def is_allowed_user(user):
     # Nếu muốn kiểm tra quyền (tùy chọn)
-    return user.id in ALLOWED_USER_IDS or len(ALLOWED_USER_IDS) == 0
+    return True
 
 # ====== MENU GỬI TEXT ======
 MAIN_MENU = (
