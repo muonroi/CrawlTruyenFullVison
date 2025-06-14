@@ -4,6 +4,7 @@ import random
 import sys
 import time
 import aiofiles
+import os
 from typing import List, Optional
 from config.config import USE_PROXY
 from utils.logger import logger
@@ -17,6 +18,7 @@ bad_proxy_counts = {}
 PROXY_NOTIFIED = False
 MAX_FAIL_RATE = 10 
 FAILED_PROXY_TIMES = []
+_last_proxy_mtime = 0
 
 def should_blacklist_proxy(proxy_url, loaded_proxies):
     proxy_domain = proxy_url.split('@')[-1] if '@' in proxy_url else proxy_url
@@ -41,6 +43,19 @@ async def load_proxies(filename: str) -> List[str]:
     except Exception as e:
         print(f"Proxy load error: {e}")
     return LOADED_PROXIES
+
+
+async def reload_proxies_if_changed(filename: str) -> None:
+    """Reload proxies if the file modification time has changed."""
+    global _last_proxy_mtime
+    try:
+        mtime = os.path.getmtime(filename)
+    except FileNotFoundError:
+        return
+    if mtime > _last_proxy_mtime:
+        await load_proxies(filename)
+        _last_proxy_mtime = mtime
+        logger.info("[Proxy] Reloaded proxy list from disk")
 
 def mark_bad_proxy(proxy: str):
     global FAILED_PROXY_TIMES

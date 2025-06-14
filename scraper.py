@@ -3,6 +3,8 @@ import random
 from typing import Dict, Optional
 
 from playwright.async_api import async_playwright, Browser
+from utils.http_client import fetch
+from utils.anti_bot import is_anti_bot_content
 
 from config.config import (
     GLOBAL_PROXY_PASSWORD,
@@ -40,8 +42,8 @@ async def initialize_scraper(
         browser = None
 
 
-async def make_request(url, site_key, timeout: int = 30, max_retries: int = 5):
-    """Load trang bằng Playwright và trả về đối tượng có thuộc tính text."""
+async def _make_request_playwright(url, site_key, timeout: int = 30, max_retries: int = 5):
+    """Load trang bằng Playwright."""
     global browser
     headers = await get_random_headers(site_key)
     last_exception = None
@@ -86,5 +88,18 @@ async def make_request(url, site_key, timeout: int = 30, max_retries: int = 5):
                 remove_bad_proxy(proxy_url)
         await asyncio.sleep(random.uniform(1, 2))
 
-    logger.error(f"[make_request] Đã thử {max_retries} lần nhưng thất bại: {last_exception}")
+    logger.error(f"[playwright] Đã thử {max_retries} lần nhưng thất bại: {last_exception}")
     return None
+
+
+async def make_request(url, site_key, timeout: int = 30, max_retries: int = 5):
+    """Try httpx first then fallback to Playwright when blocked."""
+    resp = await fetch(url, site_key, timeout)
+    if resp and resp.status_code == 200 and resp.text and not is_anti_bot_content(resp.text):
+        class R:
+            def __init__(self, text):
+                self.text = text
+
+        return R(resp.text)
+    logger.info("[request] Fallback to Playwright due to block or bad status")
+    return await _make_request_playwright(url, site_key, timeout, max_retries)
