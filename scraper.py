@@ -1,10 +1,8 @@
 import asyncio
 import random
-import time
 from typing import Dict, Optional
 
-import cloudscraper
-import httpx
+from playwright.async_api import async_playwright, Browser
 
 from config.config import (
     GLOBAL_PROXY_PASSWORD,
@@ -20,67 +18,73 @@ from config.proxy_provider import (
 )
 from utils.logger import logger
 
-scraper: Optional[cloudscraper.CloudScraper] = None
+browser: Optional[Browser] = None
+playwright_obj = None
 
 
 async def initialize_scraper(
     site_key, override_headers: Optional[Dict[str, str]] = None
 ) -> None:
-    """
-    Khởi tạo cloudscraper instance với headers ngẫu nhiên (bất đồng bộ).
-    """
+    """Khởi tạo browser Playwright với proxy (nếu có)."""
+    global browser, playwright_obj
     try:
-        loop = asyncio.get_event_loop()
-        # Tạo scraper trong executor
-        scraper = await loop.run_in_executor(None, cloudscraper.create_scraper)
+        if playwright_obj is None:
+            playwright_obj = await async_playwright().start()
 
-        # Lấy headers ngẫu nhiên
-        current_headers = await get_random_headers(site_key)
-        if override_headers:
-            current_headers.update(override_headers)
-
-        scraper.headers.update(current_headers)  # type: ignore
-        logger.info(
-            f"Cloudscraper initialized with User-Agent: {current_headers.get('User-Agent')}"
-        )
-        logger.debug(f"Full headers for session: {scraper.headers}")  # type: ignore
+        if browser:
+            await browser.close()
+        browser = await playwright_obj.chromium.launch(headless=True)
+        logger.info("Playwright browser initialized")
     except Exception as e:
-        logger.error(f"Lỗi khi khởi tạo Cloudscraper: {e}")
-        scraper = None
-
-
-def get_proxy_mounts(proxy_url):
-    return {
-        "http://": httpx.AsyncHTTPTransport(proxy=proxy_url),
-        "https://": httpx.AsyncHTTPTransport(proxy=proxy_url),
-    }
+        logger.error(f"Lỗi khi khởi tạo Playwright: {e}")
+        browser = None
 
 
 async def make_request(url, site_key, timeout: int = 30, max_retries: int = 5):
-    """Simple HTTP GET with retry & proxy support."""
+    """Load trang bằng Playwright và trả về đối tượng có thuộc tính text."""
+    global browser
     headers = await get_random_headers(site_key)
     last_exception = None
 
     for attempt in range(1, max_retries + 1):
         proxy_url = None
-        if USE_PROXY:
-            proxy_url = get_proxy_url(GLOBAL_PROXY_USERNAME, GLOBAL_PROXY_PASSWORD)
-        mounts = get_proxy_mounts(proxy_url) if proxy_url else None
-
         try:
-            logger.debug(f"[make_request] {attempt}/{max_retries} via {proxy_url}")
-            async with httpx.AsyncClient(timeout=timeout,follow_redirects=True, mounts=mounts) as client:
-                resp = await client.get(url, headers=headers)
-            resp.raise_for_status()
-            return resp
+            if not browser:
+                await initialize_scraper(site_key)
+                if not browser:
+                    raise RuntimeError("Playwright browser not initialized")
+
+            proxy_settings = None
+            if USE_PROXY:
+                proxy_url = get_proxy_url(GLOBAL_PROXY_USERNAME, GLOBAL_PROXY_PASSWORD)
+                if proxy_url:
+                    from urllib.parse import urlparse
+                    p = urlparse(proxy_url)
+                    proxy_settings = {"server": f"{p.scheme}://{p.hostname}:{p.port}"}
+                    if p.username:
+                        proxy_settings["username"] = p.username
+                    if p.password:
+                        proxy_settings["password"] = p.password
+
+            context = await browser.new_context(user_agent=headers.get("User-Agent"), proxy=proxy_settings)
+            page = await context.new_page()
+            logger.debug(f"[make_request] {attempt}/{max_retries} -> {url}")
+            await page.goto(url, timeout=timeout * 1000)
+            content = await page.content()
+            await page.close()
+            await context.close()
+
+            class Resp:
+                def __init__(self, text):
+                    self.text = text
+
+            return Resp(content)
         except Exception as ex:
             last_exception = ex
             logger.warning(f"[make_request] Lỗi lần {attempt} khi truy cập {url}: {ex}")
-            if proxy_url and should_blacklist_proxy(proxy_url, LOADED_PROXIES):
+            if USE_PROXY and proxy_settings and should_blacklist_proxy(proxy_url, LOADED_PROXIES):
                 remove_bad_proxy(proxy_url)
         await asyncio.sleep(random.uniform(1, 2))
 
-    logger.error(
-        f"[make_request] Đã thử {max_retries} lần nhưng thất bại: {last_exception}"
-    )
+    logger.error(f"[make_request] Đã thử {max_retries} lần nhưng thất bại: {last_exception}")
     return None
