@@ -13,6 +13,7 @@ from utils.domain_utils import get_adapter_from_url
 from utils.io_utils import  safe_write_file, safe_write_json
 from utils.logger import logger
 from utils.batch_utils import get_optimal_batch_size, smart_delay, split_batches
+from utils.anti_bot import is_anti_bot_content
 from utils.state_utils import save_crawl_state
 
 SEM = asyncio.Semaphore(ASYNC_SEMAPHORE_LIMIT)
@@ -263,7 +264,7 @@ async def async_download_and_save_chapter(
     async with SEM:
         content = await adapter.get_chapter_content(url, chapter_info['title'], site_key)# type: ignore
 
-    if content:
+    if content and not is_anti_bot_content(content):
         try:
             category_name = get_category_name(story_data_item, current_discovery_genre_data)
             # Gộp nội dung chuẩn file .txt
@@ -327,12 +328,17 @@ async def async_download_and_save_chapter(
             except Exception as ex:
                 logger.warning(f"Lỗi khi ghi dead_chapters.json: {ex}")
     else:
-        logger.warning(f"          Không lấy được nội dung '{chapter_info['title']}'")
+        if content and is_anti_bot_content(content):
+            logger.warning(f"          Nội dung chương bị phát hiện anti-bot '{chapter_info['title']}'")
+            reason = 'anti-bot'
+        else:
+            logger.warning(f"          Không lấy được nội dung '{chapter_info['title']}'")
+            reason = 'Không lấy được nội dung'
         await log_error_chapter({
             "story_title": story_data_item['title'],
             "chapter_title": chapter_info['title'],
             "chapter_url": chapter_info['url'],
-            "error_msg": "Không lấy được nội dung"
+            "error_msg": reason,
         })
         # --- Queue retry chương lỗi ---
         await queue_failed_chapter({
@@ -342,7 +348,7 @@ async def async_download_and_save_chapter(
             "story_url": story_data_item['url'],
             "filename": chapter_filename_full_path,
             'site': site_key,
-            "reason": "Không lấy được nội dung"
+            "reason": reason,
         })
         failed_list.append({
             'chapter_data': chapter_info,
