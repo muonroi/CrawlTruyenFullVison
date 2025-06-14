@@ -1,4 +1,4 @@
-import asyncio
+from datetime import datetime
 from asyncio.log import logger
 import re
 from typing import Optional
@@ -199,32 +199,31 @@ async def get_all_stories_from_genre(self, genre_name, genre_url, max_pages=None
     return all_stories
 
 async def get_story_details(self, story_url, story_title, site_key):
+    from datetime import datetime
     resp = await make_request(story_url, site_key)
     if not resp or not getattr(resp, 'text', None):
         logger.error(f"Không lấy được chi tiết truyện {story_url}")
         return {}
     soup = BeautifulSoup(resp.text, "html.parser")
     details = {
-        "title": None,
-        "author": None,
-        "cover": None,
-        "description": None,
+        "title": "",
+        "author": "",
+        "cover": "",
+        "description": "",
         "categories": [],
-        "status": None,
+        "status": "",
         "source": story_url,
         "rating_value": None,
         "rating_count": None,
         "total_chapters_on_site": None,
     }
-
-    canonical = soup.find("link", rel="canonical")
-    if canonical and canonical.get("href"):
-        details["source"] = urljoin(self.BASE_URL, canonical["href"])
-    # Title
+    # --- Lấy title ---
     title_tag = soup.select_one("h1.font-title")
     details["title"] = title_tag.get_text(strip=True) if title_tag else story_title
-
-    # Author
+    # --- Lấy cover ---
+    cover_img = soup.select_one("div.rounded-md.w-\\[160px\\].h-\\[240px\\].overflow-hidden img")
+    if cover_img and cover_img.has_attr("src"):
+        details["cover"] = cover_img["src"]
     # Lấy p.font-title đứng sau h1
     author = None
     if title_tag:
@@ -237,8 +236,11 @@ async def get_story_details(self, story_url, story_title, site_key):
         if all_p:
             author = all_p[0].get_text(strip=True)
     details["author"] = author
-
-    # Categories
+    # Description
+    desc_tag = soup.select_one("p.prose")
+    if desc_tag:
+        details["description"] = desc_tag.get_text(separator="\n", strip=True)
+        # Categories
     categories = []
     cat_div = soup.select_one("div.flex.flex-wrap.gap-2.text-\\[12px\\].max-w-\\[640px\\]")
     if cat_div:
@@ -248,22 +250,7 @@ async def get_story_details(self, story_url, story_title, site_key):
             if href and name:
                 categories.append({"name": name, "url": urljoin(self.BASE_URL, href)})#type: ignore
     details["categories"] = categories
-
-    # Số chương
-    total_chapters = None
-    for p in soup.select("p.text-base"):
-        if p.find("small") and "chương" in p.find("small").get_text(strip=True).lower():#type: ignore
-            match = re.search(r"(\d+)", p.get_text())
-            if match:
-                total_chapters = int(match.group(1))
-    details["total_chapters_on_site"] = total_chapters
-
-    # Description
-    desc_tag = soup.select_one("p.prose")
-    if desc_tag:
-        details["description"] = desc_tag.get_text(separator="\n", strip=True)
-
-    # trạng thái, số chương
+       # trạng thái, số chươngMore actions
     for li in soup.select("div.lg\\:hidden ul.mt-2.text-start.flex-col > li"):
         text = li.get_text(strip=True)
         text_lower = text.lower()
@@ -283,13 +270,12 @@ async def get_story_details(self, story_url, story_title, site_key):
             match = re.search(r"(\d+)", text)
             if match:
                 details["total_chapters_on_site"] = int(match.group(1))
+    # --- Fallback: Canonical ---
+    canonical = soup.find("link", rel="canonical")
+    if canonical and canonical.get("href"):
+        details["source"] = canonical["href"]
 
-
-    # Cover
-    cover_img = soup.select_one("div.rounded-md.w-\\[160px\\].h-\\[240px\\].overflow-hidden img")
-    if cover_img and cover_img.has_attr("src"):
-        details["cover"] = cover_img["src"]
-    # Fallback đếm chương nếu không có
+    # --- Fallback đếm chương nếu không có hoặc chênh lệch nhiều ---
     chapters = await get_chapters_from_story(
         self,
         details["source"],
@@ -298,23 +284,28 @@ async def get_story_details(self, story_url, story_title, site_key):
         total_chapters=details.get("total_chapters_on_site"),
     )
     actual_count = len(chapters)
-    if details["total_chapters_on_site"] is None:
+    if details["total_chapters_on_site"] is None or details["total_chapters_on_site"] < 100:
         details["total_chapters_on_site"] = actual_count
     elif abs(actual_count - details["total_chapters_on_site"]) > 5:
-        logger.warning(
-            f"[YY][DETAIL] Meta chapters {details['total_chapters_on_site']} kh\u00e1c th\u1ef1c t\u1ebf {actual_count}"
-        )
+        logger.warning(f"[YY][DETAIL] Meta chapters {details['total_chapters_on_site']} khác thực tế {actual_count}")
         details["total_chapters_on_site"] = actual_count
 
-    details["sources"] = [
-        {
-            "site": urlparse(details["source"]).netloc,
-            "url": details["source"],
-            "total_chapters": details["total_chapters_on_site"],
-        }
-    ]
+    details["sources"] = [{
+        "site": urlparse(details["source"]).netloc,
+        "url": details["source"],
+        "total_chapters": details["total_chapters_on_site"],
+        "last_update": datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+    }]
+    # Chuẩn hóa trả về
+    for k in list(details.keys()):
+        if details[k] is None:
+            details[k] = "" if not isinstance(details[k], list) else []
 
+    if not details["categories"]:
+        details["categories"] = [{"name": "Unknown", "url": ""}]
     return details
+
+
 
 def parse_chapters_from_soup(soup, base_url):
     from urllib.parse import urljoin
@@ -421,7 +412,7 @@ async def get_story_chapter_content(
         logger.error(f"Chương '{chapter_title}': Không nhận được phản hồi từ {chapter_url}")
         return None
     html = response.text
-    content = extract_chapter_content(html,chapter_title, site_key)
+    content = extract_chapter_content(html,site_key,chapter_title)
     if not content:
         # Ghi debug nếu cần
         with open("debug_truyenyy_empty_chapter.html", "w", encoding="utf-8") as f:
