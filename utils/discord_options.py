@@ -33,7 +33,8 @@ MAIN_MENU = (
     "2. Crawl một site cụ thể\n"
     "3. Chạy các tác vụ worker khác\n"
     "4. Menu phụ\n"
-    "5. Hủy"
+    "5. Hủy\n"
+    "6. Crawl single truyện (tên hoặc URL)"
 )
 
 EXTRA_MENU = (
@@ -43,7 +44,8 @@ EXTRA_MENU = (
     "3. Recrawl truyện\n"
     "4. Xem meta truyện\n"
     "5. Xem tiến độ crawl truyện\n"
-    "6. Hủy"
+    "6. Hủy\n"
+    "7. Đếm số truyện đã crawl trong truyen_data"
 )
 
 WORKER_MENU = (
@@ -54,7 +56,6 @@ WORKER_MENU = (
     "4. Hủy"
 )
 
-# ======= DISCORD BOT EVENTS/COMMANDS =======
 @bot.event
 async def on_ready():
     print(f'Bot logged in as {bot.user}')
@@ -75,10 +76,11 @@ async def on_message(message):
     text = message.content.strip()
     text_lower = text.lower().strip()
 
-    # -- Exit logic for all stateful menus
+    # -- EXIT/CANCEL logic
     if text_lower in ["hủy", "thoát", "cancel", "quay lại", "exit"]:
         user_state.pop(uid, None)
         await message.channel.send("Đã hủy thao tác. Nhập @start để quay lại menu.")
+        await message.channel.send(MAIN_MENU)
         return
 
     # === MAIN MENU ===
@@ -100,6 +102,10 @@ async def on_message(message):
         elif text_lower in ["5", "hủy", "cancel"]:
             await message.channel.send("Đã hủy thao tác.")
             user_state.pop(uid, None)
+        elif text_lower in ["6", "crawl single truyện", "crawl single"]:
+            user_state[uid] = "crawl_single_story"
+            await message.channel.send("Nhập **tên truyện** hoặc **URL truyện** cần crawl (nhập 'hủy' để quay lại menu):")
+            return
         else:
             await message.channel.send("Không hiểu lựa chọn, nhập lại @start")
         return
@@ -165,6 +171,8 @@ async def on_message(message):
     if user_state.get(uid) == "extra_menu":
         if text_lower.startswith("1") or "thống kê" in text_lower:
             await count_completed_by_genre_discord(message)
+            await message.channel.send("Nhập số tiếp theo hoặc nhập 'hủy' để quay lại menu.")
+            return
         elif text_lower.startswith("2") or "tìm truyện" in text_lower:
             user_state[uid] = "search_story"
             await message.channel.send("Nhập tên truyện muốn tìm (chỉ tên, nhập 'hủy' để quay lại menu):")
@@ -183,12 +191,18 @@ async def on_message(message):
             return
         elif text_lower.startswith("6") or text_lower.startswith("hủy"):
             await message.channel.send("Đã hủy thao tác.")
+            user_state.pop(uid, None)
+            await message.channel.send(MAIN_MENU)
+            return
+        elif text_lower.startswith("7") or "đếm số truyện" in text_lower:
+            await count_stories_in_truyen_data(message)
+            await message.channel.send("Nhập số tiếp theo hoặc nhập 'hủy' để quay lại menu.")
+            return
         else:
             await message.channel.send("Không hiểu lựa chọn. Hãy nhập lại.")
-        user_state.pop(uid, None)
         return
 
-    # === SEARCH STORY - STATEFUL ===
+    # === SEARCH STORY - LOOP STATE ===
     if user_state.get(uid) == "search_story":
         name = text
         slug = slugify_title(name)
@@ -210,7 +224,7 @@ async def on_message(message):
         await message.channel.send("Nhập tên truyện khác để kiểm tra tiếp hoặc nhập 'hủy' để quay lại menu.")
         return
 
-    # === RECRAWL STORY - STATEFUL ===
+    # === RECRAWL STORY - LOOP STATE ===
     if user_state.get(uid) == "recrawl_story":
         title = text
         await message.channel.send(f"Đang recrawl truyện: {title}")
@@ -222,7 +236,7 @@ async def on_message(message):
         await message.channel.send("Nhập tên truyện khác để recrawl tiếp hoặc nhập 'hủy' để quay lại menu.")
         return
 
-    # === META STORY - STATEFUL ===
+    # === META STORY - LOOP STATE ===
     if user_state.get(uid) == "meta_story":
         name = text
         slug = slugify_title(name)
@@ -245,7 +259,7 @@ async def on_message(message):
         await message.channel.send("Nhập tên truyện khác để kiểm tra tiếp hoặc nhập 'hủy' để quay lại menu.")
         return
 
-    # === PROGRESS STORY - STATEFUL ===
+    # === PROGRESS STORY - LOOP STATE ===
     if user_state.get(uid) == "progress_story":
         name = text
         slug = slugify_title(name)
@@ -273,6 +287,18 @@ async def on_message(message):
         if not found:
             await message.channel.send("❌ Không tìm thấy truyện hoặc chưa có metadata!")
         await message.channel.send("Nhập tên truyện khác để kiểm tra tiếp hoặc nhập 'hủy' để quay lại menu.")
+        return
+
+    # === CRAWL SINGLE TRUYỆN (Tên hoặc URL) - LOOP STATE ===
+    if user_state.get(uid) == "crawl_single_story":
+        query = text
+        await message.channel.send(f"Đang crawl single truyện: {query}")
+        try:
+            await run_single_story(query)
+            await message.channel.send("✅ Đã crawl xong truyện!")
+        except Exception as e:
+            await message.channel.send(f"❌ Lỗi crawl: {e}")
+        await message.channel.send("Nhập tên hoặc url truyện khác để crawl tiếp hoặc nhập 'hủy' để quay lại menu.")
         return
 
     await bot.process_commands(message)
@@ -306,5 +332,17 @@ async def run_crawl_and_notify_user_discord(message):
         await message.channel.send("✅ Đã crawl/check missing xong toàn bộ!")
     except Exception as ex:
         await message.channel.send(f"❌ Crawl gặp lỗi: {ex}")
+
+async def count_stories_in_truyen_data(message):
+    truyen_data_root = "truyen_data"
+    if not os.path.exists(truyen_data_root):
+        await message.channel.send("❌ Thư mục truyen_data không tồn tại!")
+        return
+    count = 0
+    for name in os.listdir(truyen_data_root):
+        story_folder = os.path.join(truyen_data_root, name)
+        if os.path.isdir(story_folder) and os.path.exists(os.path.join(story_folder, "metadata.json")):
+            count += 1
+    await message.channel.send(f"Hiện tại đã crawl được **{count} truyện** trong truyen_data.")
 
 bot.run(TOKEN)
