@@ -4,7 +4,7 @@ from config.config import DATA_FOLDER, COMPLETED_FOLDER, PROXIES_FILE, PROXIES_F
 from config.proxy_provider import load_proxies
 from scraper import initialize_scraper
 from utils.chapter_utils import count_txt_files, get_actual_chapters_for_export, slugify_title, crawl_missing_chapters_for_story, export_chapter_metadata_sync, extract_real_chapter_number, get_chapter_filename
-from utils.io_utils import create_proxy_template_if_not_exists
+from utils.io_utils import create_proxy_template_if_not_exists, move_story_to_completed
 from utils.logger import logger
 from utils.cleaner import ensure_sources_priority
 from utils.domain_utils import get_site_key_from_url
@@ -14,7 +14,6 @@ import re
 import sys
 import json
 import asyncio
-import shutil
 
 # --- Auto-fix sources nếu thiếu ---
 def autofix_sources(meta, meta_path=None):
@@ -234,12 +233,7 @@ async def crawl_single_story_worker(story_url: Optional[str]=None, title: Option
         genre = "Unknown"
         if meta.get('categories') and isinstance(meta['categories'], list) and meta['categories']:
             genre = meta['categories'][0].get('name')
-        dest_genre_folder = os.path.join(COMPLETED_FOLDER, genre)
-        os.makedirs(dest_genre_folder, exist_ok=True)
-        dest_folder = os.path.join(dest_genre_folder, slug)
-        if not os.path.exists(dest_folder):
-            shutil.move(folder, dest_folder)
-            logger.info(f"[INFO] Đã move truyện '{meta['title']}' sang {dest_genre_folder}")
+        await move_story_to_completed(folder, genre)
     else:
         logger.warning(f"[WARNING] Truyện chưa đủ chương ({num_txt}/{real_total})")
 

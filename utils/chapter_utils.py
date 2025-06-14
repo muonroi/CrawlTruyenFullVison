@@ -3,6 +3,7 @@ import glob
 import hashlib
 import json
 import os
+import datetime
 from typing import Any, Dict, List
 import re
 from filelock import FileLock
@@ -15,6 +16,7 @@ from utils.logger import logger
 from utils.batch_utils import get_optimal_batch_size, smart_delay, split_batches
 from utils.anti_bot import is_anti_bot_content
 from utils.state_utils import save_crawl_state
+from utils.errors import CrawlError
 
 SEM = asyncio.Semaphore(ASYNC_SEMAPHORE_LIMIT)
 
@@ -222,6 +224,7 @@ async def log_error_chapter(item, filename="error_chapters.json"):
                     arr = json.load(f)
             except Exception:
                 arr = []
+        item.setdefault("error_time", datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
         arr.append(item)
         await safe_write_json(filename,arr)
 
@@ -240,8 +243,9 @@ async def queue_failed_chapter(chapter_data, filename='chapter_retry_queue.json'
     for item in data:
         if item.get("url") == chapter_data.get("url"):
             return
+    chapter_data.setdefault("error_time", datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
     data.append(chapter_data)  # type: ignore
-    await safe_write_json(filename,data)
+    await safe_write_json(filename, data)
 
 async def async_download_and_save_chapter(
     chapter_info: Dict[str, Any],
@@ -309,7 +313,8 @@ async def async_download_and_save_chapter(
                 "story_url": story_data_item['url'],
                 "filename": chapter_filename_full_path,
                 'site': site_key,
-                "reason": f"Lỗi lưu: {e}"
+                "reason": f"Lỗi lưu: {e}",
+                "error_type": CrawlError.WRITE_FAIL.value,
             })
             failed_list.append({
                 'chapter_data': chapter_info,
@@ -349,6 +354,7 @@ async def async_download_and_save_chapter(
             "filename": chapter_filename_full_path,
             'site': site_key,
             "reason": reason,
+            "error_type": CrawlError.ANTI_BOT.value if reason == 'anti-bot' else CrawlError.UNKNOWN.value,
         })
         failed_list.append({
             'chapter_data': chapter_info,

@@ -22,6 +22,7 @@ from utils.logger import logger
 
 browser: Optional[Browser] = None
 playwright_obj = None
+_init_lock = asyncio.Lock()
 _context_pool: Dict[str, BrowserContext] = {}
 fallback_stats = {
     "httpx_success": {},
@@ -32,19 +33,19 @@ fallback_stats = {
 async def initialize_scraper(
     site_key, override_headers: Optional[Dict[str, str]] = None
 ) -> None:
-    """Khởi tạo browser Playwright với proxy (nếu có)."""
+    """Khởi tạo browser Playwright một lần và tái sử dụng."""
     global browser, playwright_obj
-    try:
-        if playwright_obj is None:
-            playwright_obj = await async_playwright().start()
+    async with _init_lock:
+        try:
+            if playwright_obj is None:
+                playwright_obj = await async_playwright().start()
 
-        if browser:
-            await browser.close()
-        browser = await playwright_obj.chromium.launch(headless=True)
-        logger.info("Playwright browser initialized")
-    except Exception as e:
-        logger.error(f"Lỗi khi khởi tạo Playwright: {e}")
-        browser = None
+            if browser is None:
+                browser = await playwright_obj.chromium.launch(headless=True)
+                logger.info("Playwright browser initialized")
+        except Exception as e:
+            logger.error(f"Lỗi khi khởi tạo Playwright: {e}")
+            browser = None
 
 async def get_context(proxy_settings, headers) -> BrowserContext:
     key = str(proxy_settings)
