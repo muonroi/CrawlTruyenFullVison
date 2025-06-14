@@ -10,7 +10,7 @@ from config.config import BASE_URLS, COMPLETED_FOLDER, DATA_FOLDER, LOADED_PROXI
 from config.proxy_provider import load_proxies
 from scraper import initialize_scraper 
 from utils.async_utils import sync_chapter_with_yy_first_batch
-from utils.chapter_utils import SEM, count_txt_files, crawl_missing_chapters_for_story, export_chapter_metadata_sync, extract_real_chapter_number, get_actual_chapters_for_export, get_chapter_filename, get_real_total_chapters
+from utils.chapter_utils import SEM, count_txt_files, crawl_missing_chapters_for_story, export_chapter_metadata_sync, extract_real_chapter_number, get_actual_chapters_for_export, get_chapter_filename, get_missing_chapters, get_real_total_chapters, mark_dead_chapter
 from utils.domain_utils import  get_site_key_from_url, is_url_for_site, resolve_site_key
 from utils.logger import logger
 from utils.io_utils import create_proxy_template_if_not_exists, move_story_to_completed
@@ -71,40 +71,6 @@ def check_and_fix_chapter_filename(story_folder: str, ch: dict, real_num: int, i
             break
 
 
-def get_missing_chapters(story_folder: str, chapters: list[dict]) -> list[dict]:
-    """
-    So sánh file txt hiện có với danh sách từ chapter_metadata.json (ưu tiên),
-    nếu không có thì dùng chapters truyền vào (danh sách chapter từ web)
-    """
-    # Ưu tiên đọc từ chapter_metadata.json (nếu có)
-    chapter_meta_path = os.path.join(story_folder, "chapter_metadata.json")
-    chapter_items = None
-    if os.path.exists(chapter_meta_path):
-        with open(chapter_meta_path, "r", encoding="utf-8") as f:
-            chapter_items = json.load(f)
-    else:
-        chapter_items = chapters
-
-    existing_files = set([f for f in os.listdir(story_folder) if f.endswith('.txt')])
-
-    missing = []
-    for idx, ch in enumerate(chapter_items):
-        # Dùng đúng tên file quy chuẩn từ chapter_metadata.json
-        expected_file = ch.get("file")
-        if not expected_file:
-            # fallback nếu chapter_metadata chưa chuẩn hóa
-            real_num = ch.get("index", idx+1)
-            title = ch.get("title", "") or ""
-            expected_file = get_chapter_filename(title, real_num)
-        file_path = os.path.join(story_folder, expected_file)
-        if expected_file not in existing_files or not os.path.exists(file_path) or os.path.getsize(file_path) < 20:
-            # append đủ thông tin cho crawl lại
-            ch_for_missing = {**ch, "idx": idx}
-            missing.append(ch_for_missing)
-    return missing
-
-
-
 def get_current_category(metadata):
     categories = autofix_category(metadata)
     return categories[0]
@@ -129,7 +95,7 @@ async def loop_once_multi_sites(force_unskip=False):
     logger.info(f"===== [DONE] =====\n")
     #await send_discord_notify(f"✅ DONE: Đã crawl/check missing xong toàn bộ ({now})")
 async def crawl_missing_until_complete(
-    site_key, session, chapters_from_web, metadata, current_category, story_folder, crawl_state, state_file, max_retry=3
+    adapter, site_key, session, chapters_from_web, metadata, current_category, story_folder, crawl_state, state_file, max_retry=3
 ):
     retry = 0
     while retry < max_retry:
@@ -173,7 +139,7 @@ async def crawl_missing_until_complete(
         logger.warning(f"[FATAL] Sau {max_retry} lần vẫn còn thiếu chương. Đánh dấu dead_chapters và bỏ qua.")
         # Đánh dấu dead luôn cho các chương còn thiếu
         for ch in missing_chapters:
-            await mark_dead_chapter(folder, {
+            await mark_dead_chapter(story_folder, {
                 "index": ch.get("real_num"),
                 "title": ch.get("title"),
                 "url": ch.get("url"),
@@ -406,7 +372,7 @@ async def check_and_crawl_missing_all_stories(adapter, home_page_url, site_key, 
                     chapters = await adapter.get_chapter_list(url, metadata['title'], src_site_key)#type:ignore
                     current_category = get_current_category(metadata)  # <- Dùng hàm helper
                     crawl_done = await crawl_missing_until_complete(
-                        src_site_key, None, chapters, metadata, current_category,
+                        adapter,src_site_key, None, chapters, metadata, current_category,
                         story_folder, crawl_state, state_file
                     )
                     if crawl_done:
