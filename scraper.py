@@ -5,6 +5,7 @@ from typing import Dict, Optional
 
 import cloudscraper
 import httpx
+from playwright.async_api import async_playwright
 
 from config.config import (
     GLOBAL_PROXY_PASSWORD,
@@ -57,7 +58,7 @@ def get_proxy_mounts(proxy_url):
 
 
 async def make_request(url, site_key, timeout: int = 30, max_retries: int = 5):
-    """Simple HTTP GET with retry & proxy support."""
+    """Simple GET using Playwright with retry & proxy support."""
     headers = await get_random_headers(site_key)
     last_exception = None
 
@@ -65,14 +66,27 @@ async def make_request(url, site_key, timeout: int = 30, max_retries: int = 5):
         proxy_url = None
         if USE_PROXY:
             proxy_url = get_proxy_url(GLOBAL_PROXY_USERNAME, GLOBAL_PROXY_PASSWORD)
-        mounts = get_proxy_mounts(proxy_url) if proxy_url else None
 
         try:
             logger.debug(f"[make_request] {attempt}/{max_retries} via {proxy_url}")
-            async with httpx.AsyncClient(timeout=timeout,follow_redirects=True, mounts=mounts) as client:
-                resp = await client.get(url, headers=headers)
-            resp.raise_for_status()
-            return resp
+            playwright_kwargs = {}
+            if proxy_url:
+                playwright_kwargs["proxy"] = {"server": proxy_url}
+
+            async with async_playwright() as p:
+                browser = await p.firefox.launch(headless=True, **playwright_kwargs)
+                context = await browser.new_context(user_agent=headers.get("User-Agent"), extra_http_headers=headers)
+                page = await context.new_page()
+                await page.goto(url, timeout=timeout * 1000)
+                content = await page.content()
+                await browser.close()
+
+            class Resp:
+                def __init__(self, text: str):
+                    self.text = text
+                    self.status_code = 200
+
+            return Resp(content)
         except Exception as ex:
             last_exception = ex
             logger.warning(f"[make_request] Lỗi lần {attempt} khi truy cập {url}: {ex}")

@@ -31,6 +31,8 @@ Một project crawl truyện nâng cao, hỗ trợ async, đa nguồn, đa thể
     git clone <URL_REPO_CUA_BAN> # Thay <URL_REPO_CUA_BAN> bằng URL thực tế
     cd CrawlTruyenFullVison # Hoặc tên thư mục project của bạn
     pip install -r requirements.txt
+    # Cài đặt trình duyệt cho Playwright
+    playwright install
     ```
 
 2.  **Tạo file `.env` để cấu hình (tham khảo file `config/config.py` hoặc file `.env.example` nếu có):**
