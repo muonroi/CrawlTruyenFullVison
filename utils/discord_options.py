@@ -23,6 +23,7 @@ intents = discord.Intents.default()
 intents.message_content = True
 bot = commands.Bot(command_prefix='@', intents=intents)
 user_state = {}
+recrawl_pending = {}
 
 def is_allowed_user(user):
     return True
@@ -76,11 +77,49 @@ async def on_message(message):
     text = message.content.strip()
     text_lower = text.lower().strip()
 
-    # -- EXIT/CANCEL logic
+    # -- Thoát toàn bộ stateful menu
     if text_lower in ["hủy", "thoát", "cancel", "quay lại", "exit"]:
         user_state.pop(uid, None)
+        recrawl_pending.pop(uid, None)
         await message.channel.send("Đã hủy thao tác. Nhập @start để quay lại menu.")
-        await message.channel.send(MAIN_MENU)
+        return
+
+    # ==== Crawl single truyện ====
+    if user_state.get(uid) == "crawl_single_story":
+        query = text
+        slug = slugify_title(query)
+        story_folder = os.path.join("truyen_data", slug)
+        meta_path = os.path.join(story_folder, "metadata.json")
+
+        # Nếu đang chờ xác nhận recrawl
+        if uid in recrawl_pending:
+            if text_lower in ["y", "yes", "có", "recrawl", "ok", "đồng ý"]:
+                await message.channel.send(f"Đang recrawl truyện: {recrawl_pending[uid]}")
+                try:
+                    await run_single_story(recrawl_pending[uid])
+                    await message.channel.send("✅ Đã recrawl xong truyện!")
+                except Exception as e:
+                    await message.channel.send(f"❌ Recrawl lỗi: {e}")
+                recrawl_pending.pop(uid, None)
+                await message.channel.send("Nhập tên hoặc url truyện khác để crawl tiếp hoặc nhập 'hủy' để quay lại menu.")
+            else:
+                recrawl_pending.pop(uid, None)
+                await message.channel.send("Đã hủy recrawl. Nhập tên/url truyện khác để crawl hoặc 'hủy' để quay lại menu.")
+            return
+
+        # Kiểm tra tồn tại truyện
+        if os.path.exists(meta_path):
+            recrawl_pending[uid] = query
+            await message.channel.send(f"⚠️ Truyện đã từng crawl. Bạn có muốn recrawl lại không? Trả lời 'có' hoặc 'y' để tiếp tục.")
+            return
+        # Nếu chưa từng crawl, crawl mới hoàn toàn
+        await message.channel.send(f"Đang crawl mới truyện: {query}")
+        try:
+            await run_single_story(query)
+            await message.channel.send("✅ Đã crawl xong truyện!")
+        except Exception as e:
+            await message.channel.send(f"❌ Lỗi crawl: {e}")
+        await message.channel.send("Nhập tên hoặc url truyện khác để crawl tiếp hoặc nhập 'hủy' để quay lại menu.")
         return
 
     # === MAIN MENU ===
@@ -171,8 +210,6 @@ async def on_message(message):
     if user_state.get(uid) == "extra_menu":
         if text_lower.startswith("1") or "thống kê" in text_lower:
             await count_completed_by_genre_discord(message)
-            await message.channel.send("Nhập số tiếp theo hoặc nhập 'hủy' để quay lại menu.")
-            return
         elif text_lower.startswith("2") or "tìm truyện" in text_lower:
             user_state[uid] = "search_story"
             await message.channel.send("Nhập tên truyện muốn tìm (chỉ tên, nhập 'hủy' để quay lại menu):")
@@ -191,18 +228,14 @@ async def on_message(message):
             return
         elif text_lower.startswith("6") or text_lower.startswith("hủy"):
             await message.channel.send("Đã hủy thao tác.")
-            user_state.pop(uid, None)
-            await message.channel.send(MAIN_MENU)
-            return
-        elif text_lower.startswith("7") or "đếm số truyện" in text_lower:
+        elif text_lower.startswith("7") or "đếm số" in text_lower:
             await count_stories_in_truyen_data(message)
-            await message.channel.send("Nhập số tiếp theo hoặc nhập 'hủy' để quay lại menu.")
-            return
         else:
             await message.channel.send("Không hiểu lựa chọn. Hãy nhập lại.")
+        user_state.pop(uid, None)
         return
 
-    # === SEARCH STORY - LOOP STATE ===
+    # === SEARCH STORY - STATEFUL ===
     if user_state.get(uid) == "search_story":
         name = text
         slug = slugify_title(name)
@@ -224,7 +257,7 @@ async def on_message(message):
         await message.channel.send("Nhập tên truyện khác để kiểm tra tiếp hoặc nhập 'hủy' để quay lại menu.")
         return
 
-    # === RECRAWL STORY - LOOP STATE ===
+    # === RECRAWL STORY - STATEFUL ===
     if user_state.get(uid) == "recrawl_story":
         title = text
         await message.channel.send(f"Đang recrawl truyện: {title}")
@@ -236,7 +269,7 @@ async def on_message(message):
         await message.channel.send("Nhập tên truyện khác để recrawl tiếp hoặc nhập 'hủy' để quay lại menu.")
         return
 
-    # === META STORY - LOOP STATE ===
+    # === META STORY - STATEFUL ===
     if user_state.get(uid) == "meta_story":
         name = text
         slug = slugify_title(name)
@@ -259,7 +292,7 @@ async def on_message(message):
         await message.channel.send("Nhập tên truyện khác để kiểm tra tiếp hoặc nhập 'hủy' để quay lại menu.")
         return
 
-    # === PROGRESS STORY - LOOP STATE ===
+    # === PROGRESS STORY - STATEFUL ===
     if user_state.get(uid) == "progress_story":
         name = text
         slug = slugify_title(name)
@@ -287,18 +320,6 @@ async def on_message(message):
         if not found:
             await message.channel.send("❌ Không tìm thấy truyện hoặc chưa có metadata!")
         await message.channel.send("Nhập tên truyện khác để kiểm tra tiếp hoặc nhập 'hủy' để quay lại menu.")
-        return
-
-    # === CRAWL SINGLE TRUYỆN (Tên hoặc URL) - LOOP STATE ===
-    if user_state.get(uid) == "crawl_single_story":
-        query = text
-        await message.channel.send(f"Đang crawl single truyện: {query}")
-        try:
-            await run_single_story(query)
-            await message.channel.send("✅ Đã crawl xong truyện!")
-        except Exception as e:
-            await message.channel.send(f"❌ Lỗi crawl: {e}")
-        await message.channel.send("Nhập tên hoặc url truyện khác để crawl tiếp hoặc nhập 'hủy' để quay lại menu.")
         return
 
     await bot.process_commands(message)
