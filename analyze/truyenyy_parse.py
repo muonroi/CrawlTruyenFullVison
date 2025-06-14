@@ -14,16 +14,9 @@ def build_category_list_url(genre_url, page=1):
     else:
         return f"{base}"
 
-async def get_all_stories_from_genre_with_page_check(self, genre_name, genre_url,  site_key,max_pages=None):
+async def get_all_stories_from_genre_with_page_check(self, genre_name, genre_url, site_key, max_pages=None):
+    """Crawl toàn bộ truyện trong 1 category với kiểm soát lặp."""
     from urllib.parse import urljoin
-    loop = asyncio.get_event_loop()
-
-    def build_category_list_url(genre_url, page=1):
-        base = genre_url.rstrip('/')
-        if page > 1:
-            return f"{base}?p={page}"
-        else:
-            return base
 
     first_page_url = build_category_list_url(genre_url, page=1)
     resp = await make_request(first_page_url, self.SITE_KEY)
@@ -37,16 +30,27 @@ async def get_all_stories_from_genre_with_page_check(self, genre_name, genre_url
     all_stories = []
     pages_crawled = 0
     seen_urls = set()
+    visited_pages = set()
+    last_first_url = None
+    repeat_count = 0
 
     for page in range(1, total_pages + 1):
         page_url = build_category_list_url(genre_url, page)
-        resp = await make_request(page_url, self.SITE_KEY)
-        if not resp:
+        if page_url in visited_pages:
+            logger.error("[YY][CATEGORY] Lặp trang, dừng crawl")
             break
+        visited_pages.add(page_url)
+
+        resp = await make_request(page_url, self.SITE_KEY)
+        if not resp or not getattr(resp, 'text', None):
+            logger.warning(f"[YY][CATEGORY] Không nhận được dữ liệu {page_url}")
+            break
+
         soup = BeautifulSoup(resp.text, "html.parser")
         ul = soup.select_one("ul.flex.flex-col")
         if not ul:
-            continue
+            logger.warning(f"[YY][CATEGORY] Không tìm thấy list ở {page_url}")
+            break
         for li in ul.find_all("li", recursive=False):
             # 1. Lấy url + cover
             a_img = li.select_one("a[href*='/truyen/']") #type: ignore
@@ -75,15 +79,39 @@ async def get_all_stories_from_genre_with_page_check(self, genre_name, genre_url
                     total_chapters = int(match.group(1))
 
             # Check đủ url + title mới append
-            if url and title and url not in seen_urls:
-                all_stories.append({
-                    "title": title,
-                    "url": url,
-                    "cover": cover,
-                    "author": author,
-                    "total_chapters": total_chapters
-                })
-                seen_urls.add(url)
+            if url and title:
+                if url not in seen_urls:
+                    all_stories.append({
+                        "title": title,
+                        "url": url,
+                        "cover": cover,
+                        "author": author,
+                        "total_chapters": total_chapters,
+                    })
+                    seen_urls.add(url)
+                else:
+                    logger.warning(f"[YY][CATEGORY] Bỏ qua truyện trùng {url}")
+
+        if not all_stories:
+            logger.warning(f"[YY][CATEGORY] Trang {page_url} không có truyện")
+            break
+
+        first_li = ul.find('li', recursive=False)
+        first_url = None
+        if first_li:
+            first_a = first_li.select_one("a[href*='/truyen/']")
+            if first_a and first_a.has_attr('href'):
+                first_url = urljoin(self.BASE_URL, first_a['href'])
+        if last_first_url == first_url:
+            repeat_count += 1
+        else:
+            repeat_count = 0
+        last_first_url = first_url
+
+        if repeat_count >= 2:
+            logger.error("[YY][CATEGORY] Phát hiện lặp trang liên tiếp, dừng")
+            break
+
         pages_crawled += 1
 
     return all_stories, total_pages, pages_crawled
@@ -188,6 +216,10 @@ async def get_story_details(self, story_url, story_title, site_key):
         "rating_count": None,
         "total_chapters_on_site": None,
     }
+
+    canonical = soup.find("link", rel="canonical")
+    if canonical and canonical.get("href"):
+        details["source"] = urljoin(self.BASE_URL, canonical["href"])
     # Title
     title_tag = soup.select_one("h1.font-title")
     details["title"] = title_tag.get_text(strip=True) if title_tag else story_title
@@ -258,9 +290,29 @@ async def get_story_details(self, story_url, story_title, site_key):
     if cover_img and cover_img.has_attr("src"):
         details["cover"] = cover_img["src"]
     # Fallback đếm chương nếu không có
-    if not details["total_chapters_on_site"]:
-        chapters = await get_chapters_from_story(self, story_url, story_title, site_key=site_key)
-        details["total_chapters_on_site"] = len(chapters)
+    chapters = await get_chapters_from_story(
+        self,
+        details["source"],
+        story_title,
+        site_key=site_key,
+        total_chapters=details.get("total_chapters_on_site"),
+    )
+    actual_count = len(chapters)
+    if details["total_chapters_on_site"] is None:
+        details["total_chapters_on_site"] = actual_count
+    elif abs(actual_count - details["total_chapters_on_site"]) > 5:
+        logger.warning(
+            f"[YY][DETAIL] Meta chapters {details['total_chapters_on_site']} kh\u00e1c th\u1ef1c t\u1ebf {actual_count}"
+        )
+        details["total_chapters_on_site"] = actual_count
+
+    details["sources"] = [
+        {
+            "site": urlparse(details["source"]).netloc,
+            "url": details["source"],
+            "total_chapters": details["total_chapters_on_site"],
+        }
+    ]
 
     return details
 
@@ -339,7 +391,23 @@ async def get_chapters_from_story(self, story_url, story_title, max_pages=None, 
             continue
         soup = BeautifulSoup(resp.text, "html.parser")
         chapters += parse_chapters_from_soup(soup, self.BASE_URL)
-    return chapters
+
+    uniq, seen = [], set()
+    for ch in chapters:
+        if ch['url'] not in seen:
+            uniq.append(ch)
+            seen.add(ch['url'])
+
+    uniq.sort(
+        key=lambda c: float(re.search(r"(\d+)", c['title']).group(1)) if re.search(r"(\d+)", c['title']) else float('inf')
+    )
+
+    if total_chapters and abs(len(uniq) - total_chapters) > 5:
+        logger.warning(
+            f"[YY][CHAPTERS] Meta {total_chapters} != actual {len(uniq)} cho '{story_title}'"
+        )
+
+    return uniq
 
 
 async def get_story_chapter_content(
