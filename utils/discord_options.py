@@ -4,10 +4,16 @@ import asyncio
 import os
 import json
 from adapters.factory import get_adapter
-from main import retry_failed_genres, run_crawler
+from main import retry_failed_genres, run_crawler, run_single_story
 from utils.chapter_utils import slugify_title
 from utils.notifier import send_discord_notify
 from config.config import BASE_URLS, DISCORD_BOT_TOKEN
+from workers.clean_garbage import main as clean_garbage_main, clean_error_jsons
+from workers.retry_failed_chapters import retry_queue
+from workers.crawler_missing_chapter import (
+    check_and_crawl_missing_all_stories,
+    loop_once_multi_sites,
+)
 
 TOKEN = DISCORD_BOT_TOKEN
 GUILD_ID = 123456789012345678  # Thay bằng ID server
@@ -145,7 +151,7 @@ async def on_message(message):
         text = message.content.lower().strip()
         if text.startswith("1") or "dọn rác" in text:
             await message.channel.send("Bắt đầu dọn rác hệ thống, vui lòng đợi...")
-            await asyncio.to_thread(main)
+            await asyncio.to_thread(clean_garbage_main)
             await message.channel.send("✅ Đã dọn rác xong!")
         elif text.startswith("2") or "retry" in text:
             await message.channel.send("Bắt đầu retry chương lỗi...")
@@ -209,6 +215,19 @@ async def on_message(message):
         else:
             reply = "Tìm thấy truyện ở các folder:\n" + "\n".join(found_paths)
             await message.channel.send(reply)
+        user_state.pop(uid, None)
+        await start(message)
+        return
+
+    # ==== RECRAWL STORY ====
+    if user_state.get(uid) == "recrawl_story":
+        title = message.content.strip()
+        await message.channel.send(f"Đang recrawl truyện: {title}")
+        try:
+            await run_single_story(title)
+            await message.channel.send("✅ Đã recrawl xong!")
+        except Exception as e:
+            await message.channel.send(f"❌ Recrawl lỗi: {e}")
         user_state.pop(uid, None)
         await start(message)
         return
