@@ -60,7 +60,7 @@ async def load_proxies(filename: str = None) -> List[str]:
                 if isinstance(item, dict) and 'ip' in item and 'port' in item
             ])
             if not LOADED_PROXIES:
-                asyncio.create_task(send_discord_notify("[Crawl Notify] Không có proxy nào từ API!"))
+                logger.info("[Crawl Notify] Không có proxy nào từ API!")
         except Exception as e:
             print(f"Proxy API load error: {e}")
     else:
@@ -145,7 +145,6 @@ def get_proxy_url(username: str = None, password: str = None) -> Optional[str]:
     available = _get_available_proxies()
     if not available:
         if not PROXY_NOTIFIED:
-            asyncio.create_task(send_discord_notify("[Crawl Notify] Hết proxy usable!"))
             PROXY_NOTIFIED = True
         return None
     PROXY_NOTIFIED = False
