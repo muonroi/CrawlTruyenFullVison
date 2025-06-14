@@ -17,6 +17,7 @@ from config.proxy_provider import (
     get_proxy_url,
     remove_bad_proxy,
     should_blacklist_proxy,
+    mark_bad_proxy,
 )
 from utils.logger import logger
 
@@ -24,6 +25,7 @@ browser: Optional[Browser] = None
 playwright_obj = None
 _init_lock = asyncio.Lock()
 _context_pool: Dict[str, BrowserContext] = {}
+_context_last_used: Dict[str, float] = {}
 fallback_stats = {
     "httpx_success": {},
     "fallback_count": {},
@@ -51,11 +53,23 @@ async def get_context(proxy_settings, headers) -> BrowserContext:
     key = str(proxy_settings)
     ctx = _context_pool.get(key)
     if ctx:
+        _context_last_used[key] = asyncio.get_event_loop().time()
         return ctx
     assert browser, "Browser not initialized"
     ctx = await browser.new_context(user_agent=headers.get("User-Agent"), proxy=proxy_settings)
     _context_pool[key] = ctx
+    _context_last_used[key] = asyncio.get_event_loop().time()
     return ctx
+
+async def release_context(proxy_settings) -> None:
+    key = str(proxy_settings)
+    ctx = _context_pool.pop(key, None)
+    _context_last_used.pop(key, None)
+    if ctx:
+        try:
+            await ctx.close()
+        except Exception:
+            pass
 
 async def close_playwright():
     global browser
@@ -65,12 +79,25 @@ async def close_playwright():
         except Exception:
             pass
     _context_pool.clear()
+    _context_last_used.clear()
     if browser:
         try:
             await browser.close()
         except Exception:
             pass
         browser = None
+
+async def recycle_idle_contexts(max_idle_seconds: float = 60):
+    now = asyncio.get_event_loop().time()
+    for key, last in list(_context_last_used.items()):
+        if now - last > max_idle_seconds:
+            ctx = _context_pool.pop(key, None)
+            _context_last_used.pop(key, None)
+            if ctx:
+                try:
+                    await ctx.close()
+                except Exception:
+                    pass
 
 
 async def _make_request_playwright(url, site_key, timeout: int = 30, max_retries: int = 5):
@@ -105,7 +132,15 @@ async def _make_request_playwright(url, site_key, timeout: int = 30, max_retries
             await page.goto(url, timeout=timeout * 1000)
             content = await page.content()
             await page.close()
-            # keep context for reuse
+            await recycle_idle_contexts()
+            if is_anti_bot_content(content):
+                logger.warning("[playwright] Anti-bot detected")
+                if USE_PROXY and proxy_settings:
+                    mark_bad_proxy(proxy_url)
+                await asyncio.sleep(random.uniform(2, 4))
+                await release_context(proxy_settings)
+                continue
+            await release_context(proxy_settings)
 
             class Resp:
                 def __init__(self, text):
