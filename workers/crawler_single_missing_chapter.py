@@ -1,3 +1,4 @@
+from datetime import datetime
 from typing import Optional
 from adapters.factory import get_adapter
 from config.config import DATA_FOLDER, PROXIES_FILE, PROXIES_FOLDER
@@ -129,8 +130,11 @@ async def crawl_single_story_worker(story_url: Optional[str]=None, title: Option
         try:
             chapters = await adapter_src.get_chapter_list(url, meta.get("title"), src_site_key)
             if chapters and len(chapters) > 0:
-                # --- Update lại total_chapters_on_site trong metadata ---
                 meta["total_chapters_on_site"] = len(chapters)
+                for source in meta.get("sources", []):
+                    if source.get("url") == url:
+                        source["total_chapters"] = len(chapters)
+                        source["last_update"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
                 with open(meta_path, "w", encoding="utf-8") as f:
                     json.dump(meta, f, ensure_ascii=False, indent=4)
                 break
@@ -158,8 +162,8 @@ async def crawl_single_story_worker(story_url: Optional[str]=None, title: Option
     # Lưu lại danh sách chapter vào chapter_metadata.json để lấy đúng title
     export_chapter_metadata_sync(folder, [
         {"index": extract_real_chapter_number(ch.get('title', '')) or (i+1),
-         "title": ch.get('title', ''),
-         "url": ch.get('url', '')}
+        "title": ch.get('title', ''),
+        "url": ch.get('url', '')}
         for i, ch in enumerate(chapters)
     ])
 
@@ -221,7 +225,7 @@ async def crawl_single_story_worker(story_url: Optional[str]=None, title: Option
             await crawl_missing_chapters_for_story(
                 site_key,
                 None,
-                missing_chapters,
+                chapters,
                 meta,
                 meta.get("categories", [{}])[0] if meta.get("categories") else {},
                 folder,
