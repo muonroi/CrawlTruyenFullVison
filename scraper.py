@@ -2,7 +2,7 @@ import asyncio
 import random
 from typing import Dict, Optional
 
-from playwright.async_api import async_playwright, Browser
+from playwright.async_api import async_playwright, Browser, BrowserContext
 from utils.http_client import fetch
 from utils.anti_bot import is_anti_bot_content
 
@@ -22,6 +22,11 @@ from utils.logger import logger
 
 browser: Optional[Browser] = None
 playwright_obj = None
+_context_pool: Dict[str, BrowserContext] = {}
+fallback_stats = {
+    "httpx_success": {},
+    "fallback_count": {},
+}
 
 
 async def initialize_scraper(
@@ -39,6 +44,31 @@ async def initialize_scraper(
         logger.info("Playwright browser initialized")
     except Exception as e:
         logger.error(f"Lỗi khi khởi tạo Playwright: {e}")
+        browser = None
+
+async def get_context(proxy_settings, headers) -> BrowserContext:
+    key = str(proxy_settings)
+    ctx = _context_pool.get(key)
+    if ctx:
+        return ctx
+    assert browser, "Browser not initialized"
+    ctx = await browser.new_context(user_agent=headers.get("User-Agent"), proxy=proxy_settings)
+    _context_pool[key] = ctx
+    return ctx
+
+async def close_playwright():
+    global browser
+    for ctx in list(_context_pool.values()):
+        try:
+            await ctx.close()
+        except Exception:
+            pass
+    _context_pool.clear()
+    if browser:
+        try:
+            await browser.close()
+        except Exception:
+            pass
         browser = None
 
 
@@ -68,13 +98,13 @@ async def _make_request_playwright(url, site_key, timeout: int = 30, max_retries
                     if p.password:
                         proxy_settings["password"] = p.password
 
-            context = await browser.new_context(user_agent=headers.get("User-Agent"), proxy=proxy_settings)
+            context = await get_context(proxy_settings, headers)
             page = await context.new_page()
             logger.debug(f"[make_request] {attempt}/{max_retries} -> {url}")
             await page.goto(url, timeout=timeout * 1000)
             content = await page.content()
             await page.close()
-            await context.close()
+            # keep context for reuse
 
             class Resp:
                 def __init__(self, text):
@@ -95,11 +125,15 @@ async def _make_request_playwright(url, site_key, timeout: int = 30, max_retries
 async def make_request(url, site_key, timeout: int = 30, max_retries: int = 5):
     """Try httpx first then fallback to Playwright when blocked."""
     resp = await fetch(url, site_key, timeout)
+    fallback_stats["httpx_success"].setdefault(site_key, 0)
+    fallback_stats["fallback_count"].setdefault(site_key, 0)
     if resp and resp.status_code == 200 and resp.text and not is_anti_bot_content(resp.text):
         class R:
             def __init__(self, text):
                 self.text = text
 
+        fallback_stats["httpx_success"][site_key] += 1
         return R(resp.text)
     logger.info("[request] Fallback to Playwright due to block or bad status")
+    fallback_stats["fallback_count"][site_key] += 1
     return await _make_request_playwright(url, site_key, timeout, max_retries)
