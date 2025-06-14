@@ -1,12 +1,21 @@
-import sys, os
+import sys
+import os
 
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
+
 import asyncio
 import json
-import os
 from types import SimpleNamespace
+import types
 import pytest
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock
+
+# Patch heavy optional deps before importing workers modules
+sys.modules.setdefault(
+    "playwright.async_api",
+    types.SimpleNamespace(async_playwright=None, Browser=None, BrowserContext=None),
+)
+sys.modules.setdefault("adapters.truyenfull_adapter", types.SimpleNamespace(TruyenFullAdapter=object))
 
 from workers import crawler_single_missing_chapter, missing_chapter_worker
 
@@ -57,6 +66,10 @@ async def test_crawl_single_story_worker(tmp_path, monkeypatch):
     monkeypatch.setattr(
         crawler_single_missing_chapter, "COMPLETED_FOLDER", str(complete_dir)
     )
+    import config.config as cfg
+    monkeypatch.setattr(cfg, "COMPLETED_FOLDER", str(complete_dir))
+    import utils.io_utils as io_utils
+    monkeypatch.setattr(io_utils, "COMPLETED_FOLDER", str(complete_dir))
     monkeypatch.setattr(
         crawler_single_missing_chapter, "PROXIES_FILE", str(tmp_path / "p.txt")
     )
