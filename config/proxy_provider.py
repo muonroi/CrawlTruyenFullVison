@@ -1,16 +1,18 @@
-# proxy_provider.py
 import asyncio
 import random
 import sys
 import time
 import aiofiles
 import os
+import httpx
 from typing import List, Optional
 from config.config import USE_PROXY
 from utils.logger import logger
 from config.config import LOADED_PROXIES
-from utils.notifier import send_telegram_notify
+from utils.notifier import send_discord_notify
 
+# Đặt biến này nếu muốn load từ API, để rỗng "" nếu chỉ dùng file txt
+PROXY_API_URL = "http://api.proxy.ip2world.com/getProxyIp?num=500&lb=1&return_type=json&protocol=http"
 
 proxy_mode = "random"
 current_proxy_index: int = 0
@@ -39,24 +41,51 @@ def should_blacklist_proxy(proxy_url, loaded_proxies):
         return False
     return True
 
-
-async def load_proxies(filename: str) -> List[str]:
-    try:
-        async with aiofiles.open(filename, "r") as f:
-            lines = await f.readlines()
-        raw_entries = [line.strip() for line in lines if line.strip() and not line.startswith("#")]
-        LOADED_PROXIES.clear()
-        LOADED_PROXIES.extend(raw_entries)
-        if not LOADED_PROXIES:
-            asyncio.create_task(send_telegram_notify("[Crawl Notify] Không có proxy nào được load vào hệ thống!"))
-    except Exception as e:
-        print(f"Proxy load error: {e}")
+async def load_proxies(filename: str = None) -> List[str]:
+    """Load proxies từ file txt hoặc từ API nếu PROXY_API_URL có giá trị"""
+    global LOADED_PROXIES
+    if PROXY_API_URL:
+        try:
+            async with httpx.AsyncClient(timeout=10) as client:
+                resp = await client.get(PROXY_API_URL)
+            # Đọc data, kiểm tra phải list
+            data = resp.json()
+            proxies_data = data.get("data")
+            if not isinstance(proxies_data, list):
+                proxies_data = []
+            LOADED_PROXIES.clear()
+            LOADED_PROXIES.extend([
+                f"http://{item['ip']}:{item['port']}"
+                for item in proxies_data
+                if isinstance(item, dict) and 'ip' in item and 'port' in item
+            ])
+            if not LOADED_PROXIES:
+                asyncio.create_task(send_discord_notify("[Crawl Notify] Không có proxy nào từ API!"))
+        except Exception as e:
+            print(f"Proxy API load error: {e}")
+    else:
+        try:
+            async with aiofiles.open(filename, "r") as f:
+                lines = await f.readlines()
+            raw_entries = [line.strip() for line in lines if line.strip() and not line.startswith("#")]
+            LOADED_PROXIES.clear()
+            LOADED_PROXIES.extend(raw_entries)
+            if not LOADED_PROXIES:
+                asyncio.create_task(send_discord_notify("[Crawl Notify] Không có proxy nào được load vào hệ thống!"))
+        except Exception as e:
+            print(f"Proxy load error: {e}")
     return LOADED_PROXIES
 
 
-async def reload_proxies_if_changed(filename: str) -> None:
-    """Reload proxies if the file modification time has changed."""
+async def reload_proxies_if_changed(filename: str = None) -> None:
+    """Reload proxies nếu file đổi (hoặc luôn reload nếu dùng API)"""
     global _last_proxy_mtime
+    if PROXY_API_URL:
+        # Luôn reload mỗi lần gọi
+        await load_proxies()
+        logger.info("[Proxy] Reloaded proxy list from API")
+        return
+    # Trường hợp file txt như cũ
     try:
         mtime = os.path.getmtime(filename)
     except FileNotFoundError:
@@ -71,7 +100,7 @@ def mark_bad_proxy(proxy: str):
     COOLDOWN_PROXIES[proxy] = time.time() + PROXY_COOLDOWN_SECONDS
     if not should_blacklist_proxy(proxy, LOADED_PROXIES):
         logger.warning(f"[Proxy] Proxy xoay hoặc pool chỉ có 1 proxy, sẽ không blacklist: {proxy}. Chỉ sleep & retry.")
-        time.sleep(10)  # Đợi IP backend đổi (proxy xoay)
+        time.sleep(10)
         return
 
     bad_proxy_counts.setdefault(proxy, 0)
@@ -80,13 +109,12 @@ def mark_bad_proxy(proxy: str):
         LOADED_PROXIES.remove(proxy)
         logger.warning(f"Proxy '{proxy}' auto-banned do quá nhiều lỗi.")
         FAILED_PROXY_TIMES.append(time.time())
-        FAILED_PROXY_TIMES = [t for t in FAILED_PROXY_TIMES if time.time() - t < 60]
+        FAILED_PROXY_TIMES[:] = [t for t in FAILED_PROXY_TIMES if time.time() - t < 60]
         if len(FAILED_PROXY_TIMES) >= MAX_FAIL_RATE:
-            asyncio.create_task(send_telegram_notify("[Crawl Notify] Cảnh báo: Số lượng proxy bị ban liên tục vượt ngưỡng, hãy kiểm tra lại hệ thống/proxy!"))
+            asyncio.create_task(send_discord_notify("[Crawl Notify] Cảnh báo: Số lượng proxy bị ban liên tục vượt ngưỡng, hãy kiểm tra lại hệ thống/proxy!"))
             FAILED_PROXY_TIMES.clear()
- 
 
-def get_random_proxy_url(username: str = None, password: str = None) -> Optional[str]: # type: ignore
+def get_random_proxy_url(username: str = None, password: str = None) -> Optional[str]:
     available = _get_available_proxies()
     if not available:
         return None
@@ -97,7 +125,7 @@ def get_random_proxy_url(username: str = None, password: str = None) -> Optional
         return f"http://{username}:{password}@{proxy}"
     return f"http://{proxy}"
 
-def get_round_robin_proxy_url(username: str = None, password: str = None) -> Optional[str]: # type: ignore
+def get_round_robin_proxy_url(username: str = None, password: str = None) -> Optional[str]:
     global current_proxy_index
     available = _get_available_proxies()
     if not available:
@@ -110,14 +138,14 @@ def get_round_robin_proxy_url(username: str = None, password: str = None) -> Opt
         return f"http://{username}:{password}@{proxy}"
     return f"http://{proxy}"
 
-def get_proxy_url(username: str = None, password: str = None) -> Optional[str]: # type: ignore
+def get_proxy_url(username: str = None, password: str = None) -> Optional[str]:
     if not USE_PROXY:
         return None
     global PROXY_NOTIFIED
     available = _get_available_proxies()
     if not available:
         if not PROXY_NOTIFIED:
-            asyncio.create_task(send_telegram_notify("[Crawl Notify] Hết proxy usable!"))
+            asyncio.create_task(send_discord_notify("[Crawl Notify] Hết proxy usable!"))
             PROXY_NOTIFIED = True
         return None
     PROXY_NOTIFIED = False
@@ -148,6 +176,5 @@ def remove_bad_proxy(bad_proxy_url):
             f.write(f"{time.strftime('%Y-%m-%d %H:%M:%S')} - {proxy} bị remove vì lỗi nhiều lần\n")
 
 def shuffle_proxies():
-    import random
     random.shuffle(LOADED_PROXIES)
     logger.info("[Proxy] Đã shuffle lại proxy pool!")

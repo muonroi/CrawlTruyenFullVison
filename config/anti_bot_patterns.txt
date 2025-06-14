@@ -3,3 +3,6 @@ Access Denied
 Cloudflare
 captcha
 Xin lỗi, tạm thời không truy cập được
+Bạn đã bị chặn truy cập tự động
+Trang web này sử dụng dịch vụ bảo vệ chống lại truy cập tự động.
+Chặn truy cập tự động | Cloudflare

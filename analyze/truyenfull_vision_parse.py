@@ -347,7 +347,7 @@ async def get_story_chapter_content(
         logger.error(f"Chương '{chapter_title}': Không nhận được phản hồi từ {chapter_url}")
         return None
     html = response.text
-    content = extract_chapter_content(html,chapter_title,site_key)
+    content = extract_chapter_content(html,site_key,chapter_title)
     if not content:
         logger.warning(f"Nội dung chương '{chapter_title}' trống sau khi clean header.")
         return None

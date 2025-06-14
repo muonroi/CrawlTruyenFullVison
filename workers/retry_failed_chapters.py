@@ -9,7 +9,7 @@ from config.proxy_provider import load_proxies
 from scraper import initialize_scraper
 from utils.chapter_utils import async_save_chapter_with_hash_check
 from utils.io_utils import create_proxy_template_if_not_exists, ensure_directory_exists, safe_write_json
-from utils.notifier import send_telegram_notify
+from utils.notifier import send_discord_notify
 from adapters.factory import get_adapter
 
 MAX_RETRY_FAILS = 5
@@ -71,7 +71,7 @@ async def retry_queue(filename='chapter_retry_queue.json', interval=900):
                 else:
                     retry_fail_count += 1
                     if retry_fail_count >= MAX_RETRY_FAILS:
-                        asyncio.create_task(send_telegram_notify(
+                        asyncio.create_task(send_discord_notify(
                             f"[Crawl Notify][{site_key}] Retry quá nhiều lần nhưng toàn bộ đều lỗi (proxy/blocked)! Queue: {filename}"))
                         retry_fail_count = 0
 

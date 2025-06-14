@@ -1,20 +1,21 @@
 import aiohttp
+from config.config import DISCORD_WEBHOOK_URL
 
-from config.config import  TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID
-async def send_telegram_notify(message: str):
-    url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
-    payload = {
-        "chat_id": TELEGRAM_CHAT_ID,
-        "text": message
-    }
-    async with aiohttp.ClientSession() as session:
-        async with session.post(url, data=payload) as resp:
-            return await resp.json()
-        
+async def send_discord_notify(message: str):
+    """Gửi thông báo đến Discord webhook."""
+    if not DISCORD_WEBHOOK_URL:
+        return
+    payload = {"content": message}
+    try:
+        async with aiohttp.ClientSession() as session:
+            async with session.post(DISCORD_WEBHOOK_URL, json=payload, timeout=10) as resp:
+                return await resp.json()
+    except Exception as ex:
+        print(f"[Discord Notify] Gửi lỗi: {ex}")
+
 async def notify_genre_completed(genre_name):
     message = f"Tất cả truyện của thể loại '{genre_name}' đã crawl xong!"
-    await send_telegram_notify(message)
-
+    await send_discord_notify(message)
 
 async def send_retry_queue_report(queue_file="chapter_retry_queue.json"):
     """Gửi báo cáo tổng hợp số chương lỗi trong queue."""
@@ -34,4 +35,4 @@ async def send_retry_queue_report(queue_file="chapter_retry_queue.json"):
         counts[site] = counts.get(site, 0) + 1
     lines = [f"{k}: {v}" for k, v in counts.items()]
     msg = "[Queue Report] Chương lỗi còn lại: " + ", ".join(lines)
-    await send_telegram_notify(msg)
+    await send_discord_notify(msg)

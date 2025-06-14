@@ -7,10 +7,12 @@
 *.pyc
 *.json
 /backup/
+/backup_truyen_data/
+/tmp_data/
 # Các mục khác bạn có thể đã có hoặc muốn thêm:
 # Môi trường ảo Python
 /.venv/
-*/__pycache__/
+/.github/
 *.py[cod]
 *$py.class
 *.log
@@ -30,11 +32,11 @@ Thumbs.db
 crawler.log
 .vs/*
 .vscode/*
-__pycache__/*
 *.pyc
 log/*
 .env
 debug_empty_chapter.html
 venv/
-__pycache__/scraper.cpython-313.pyc
-__pycache__/scraper.cpython-313.pyc
+__pycache__/
+*.pyc
+*.pyo
