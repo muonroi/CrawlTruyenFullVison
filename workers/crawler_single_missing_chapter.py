@@ -4,7 +4,7 @@ from adapters.factory import get_adapter
 from config.config import DATA_FOLDER, PROXIES_FILE, PROXIES_FOLDER
 from config.proxy_provider import load_proxies
 from scraper import initialize_scraper
-from utils.chapter_utils import count_txt_files, get_actual_chapters_for_export, get_missing_chapters, slugify_title, crawl_missing_chapters_for_story, export_chapter_metadata_sync, extract_real_chapter_number, get_chapter_filename
+from utils.chapter_utils import count_txt_files, get_actual_chapters_for_export, slugify_title, crawl_missing_chapters_for_story, export_chapter_metadata_sync, extract_real_chapter_number, get_chapter_filename
 from utils.io_utils import create_proxy_template_if_not_exists, move_story_to_completed, async_rename, async_remove
 from utils.logger import logger
 from utils.cleaner import ensure_sources_priority
@@ -112,7 +112,7 @@ async def crawl_single_story_worker(story_url: Optional[str]=None, title: Option
 
     # --- Always update lại metadata từ web ---
     logger.info(f"[SYNC] Đang cập nhật lại metadata từ web cho '{meta['title']}'...")
-    details = await adapter.get_story_details(story_url=meta.get("url"), story_title=meta.get("title"))
+    details = await adapter.get_story_details(meta.get("url"), meta.get("title"))
     if details:
         for k, v in details.items():
             if v is not None and v != "" and meta.get(k) != v:
@@ -203,6 +203,16 @@ async def crawl_single_story_worker(story_url: Optional[str]=None, title: Option
                 if m:
                     nums.add(int(m.group(1)))
             return nums
+        def get_missing_chapters(folder, chapters):
+            existing_nums = get_existing_real_chapter_numbers(folder)
+            missing = []
+            for idx, ch in enumerate(chapters):
+                real_num = extract_real_chapter_number(ch.get('title', '')) or (idx+1)
+                fname = get_chapter_filename(ch.get("title", ""), real_num)
+                path = os.path.join(folder, fname)
+                if real_num not in existing_nums or not os.path.exists(path) or os.path.getsize(path) < 20:
+                    missing.append({**ch, "real_num": real_num, "idx": idx})
+            return missing
 
         while retry < max_retry:
             missing_chapters = get_missing_chapters(folder, chapters_from_web)
