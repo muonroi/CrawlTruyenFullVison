@@ -9,6 +9,7 @@ from utils.chapter_utils import slugify_title
 from utils.notifier import send_discord_notify
 from config.config import BASE_URLS, DISCORD_BOT_TOKEN, DISCORD_USER_ID, DISCORD_SERVER_ID
 from workers.clean_garbage import main as clean_garbage_main, clean_error_jsons
+from workers.crawler_single_missing_chapter import crawl_single_story_worker
 from workers.retry_failed_chapters import retry_queue
 from workers.crawler_missing_chapter import (
     check_and_crawl_missing_all_stories,
@@ -87,40 +88,20 @@ async def on_message(message):
     # ==== Crawl single truyện ====
     if user_state.get(uid) == "crawl_single_story":
         query = text
-        slug = slugify_title(query)
-        story_folder = os.path.join("truyen_data", slug)
-        meta_path = os.path.join(story_folder, "metadata.json")
+        await message.channel.send(f"Đang crawl truyện: {query}")
 
-        # Nếu đang chờ xác nhận recrawl
-        if uid in recrawl_pending:
-            if text_lower in ["y", "yes", "có", "recrawl", "ok", "đồng ý"]:
-                await message.channel.send(f"Đang recrawl truyện: {recrawl_pending[uid]}")
-                try:
-                    await run_single_story(recrawl_pending[uid])
-                    await message.channel.send("✅ Đã recrawl xong truyện!")
-                except Exception as e:
-                    await message.channel.send(f"❌ Recrawl lỗi: {e}")
-                recrawl_pending.pop(uid, None)
-                await message.channel.send("Nhập tên hoặc url truyện khác để crawl tiếp hoặc nhập 'hủy' để quay lại menu.")
-            else:
-                recrawl_pending.pop(uid, None)
-                await message.channel.send("Đã hủy recrawl. Nhập tên/url truyện khác để crawl hoặc 'hủy' để quay lại menu.")
-            return
-
-        # Kiểm tra tồn tại truyện
-        if os.path.exists(meta_path):
-            recrawl_pending[uid] = query
-            await message.channel.send(f"⚠️ Truyện đã từng crawl. Bạn có muốn recrawl lại không? Trả lời 'có' hoặc 'y' để tiếp tục.")
-            return
-        # Nếu chưa từng crawl, crawl mới hoàn toàn
-        await message.channel.send(f"Đang crawl mới truyện: {query}")
         try:
-            await run_single_story(query)
+            is_url = query.startswith("http")
+            await crawl_single_story_worker(
+                story_url=query if is_url else None,
+                title=None if is_url else query
+            )
             await message.channel.send("✅ Đã crawl xong truyện!")
         except Exception as e:
             await message.channel.send(f"❌ Lỗi crawl: {e}")
         await message.channel.send("Nhập tên hoặc url truyện khác để crawl tiếp hoặc nhập 'hủy' để quay lại menu.")
         return
+
 
     # === MAIN MENU ===
     if user_state.get(uid) == "main_menu":
