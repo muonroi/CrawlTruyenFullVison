@@ -21,7 +21,7 @@ ALLOWED_USER_IDS = [DISCORD_USER_ID]  # List user discord id cho phép dùng bot
 
 intents = discord.Intents.default()
 intents.message_content = True
-bot = commands.Bot(command_prefix='/', intents=intents)
+bot = commands.Bot(command_prefix='@', intents=intents)
 
 user_state = {}
 
