@@ -202,7 +202,7 @@ async def crawl_all_sources_until_full(
                 logger.warning(f"[SKIP] Nguồn {url} bị lỗi quá nhiều, bỏ qua.")
                 continue
             try:
-                chapters = await adapter.get_chapter_list(
+                chapters = await adapter.get_chapter_list( 
                     story_url=url,
                     story_title=story_data_item["title"],
                     site_key=site_key,
