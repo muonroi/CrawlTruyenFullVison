@@ -21,6 +21,9 @@ RETRY_ATTEMPTS = int(os.getenv("RETRY_ATTEMPTS", 3))
 DELAY_ON_RETRY = float(os.getenv("DELAY_ON_RETRY", 2.5))
 DISCORD_WEBHOOK_URL = os.getenv("DISCORD_WEBHOOK_URL", "")
 DISCORD_BOT_TOKEN = os.getenv("DISCORD_BOT_TOKEN", "")
+DISCORD_USER_ID = os.getenv("DISCORD_USER_ID", "")
+DISCORD_SERVER_ID = os.getenv("DISCORD_SERVER_ID", "")
+
 # ============ FOLDER CONFIG ============
 DATA_FOLDER = os.getenv("DATA_FOLDER", "truyen_data")
 COMPLETED_FOLDER = os.getenv("COMPLETED_FOLDER", "completed_stories")
