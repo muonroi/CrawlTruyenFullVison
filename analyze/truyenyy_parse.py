@@ -365,7 +365,7 @@ async def get_chapters_from_story(self, story_url, story_title, max_pages=None, 
         return chapters
     soup = BeautifulSoup(resp.text, "html.parser")
 
-    max_page = await get_max_page_by_playwright(first_url)
+    max_page = await get_max_page_by_playwright(first_url, site_key)
 
     if max_pages:
         max_page = min(max_page, max_pages)
