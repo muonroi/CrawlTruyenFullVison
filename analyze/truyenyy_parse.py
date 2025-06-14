@@ -276,21 +276,7 @@ async def get_story_details(self, story_url, story_title, site_key):
     if canonical and canonical.get("href"): # type: ignore
         details["source"] = canonical["href"] # type: ignore
 
-    # --- Fallback đếm chương nếu không có hoặc chênh lệch nhiều ---
-    chapters = await get_chapters_from_story(
-        self,
-        details["source"],
-        story_title,
-        site_key=site_key,
-        total_chapters=details.get("total_chapters_on_site"),
-    )
-    actual_count = len(chapters)
-    if details["total_chapters_on_site"] is None or details["total_chapters_on_site"] < 100:
-        details["total_chapters_on_site"] = actual_count
-    elif abs(actual_count - details["total_chapters_on_site"]) > 5:
-        logger.warning(f"[YY][DETAIL] Meta chapters {details['total_chapters_on_site']} khác thực tế {actual_count}")
-        details["total_chapters_on_site"] = actual_count
-
+  
     details["sources"] = [{
         "site": urlparse(details["source"]).netloc, # type: ignore
         "url": details["source"],

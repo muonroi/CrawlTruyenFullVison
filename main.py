@@ -203,9 +203,9 @@ async def crawl_all_sources_until_full(
                 continue
             try:
                 chapters = await adapter.get_chapter_list(
-                    url,
-                    story_data_item["title"],
-                    site_key,
+                    story_url=url,
+                    story_title=story_data_item["title"],
+                    site_key=site_key,
                     total_chapters=total_chapters,
                 )
             except Exception as ex:
@@ -461,7 +461,7 @@ async def process_story_item(
             if not url:
                 continue
             chapters = await adapter.get_chapter_list(
-                url, story_data_item.get("title"), site_key
+                story_url=url, story_title=story_data_item.get("title"), site_key=site_key, total_chapters=total_chapters_on_site
             )
             if chapters and len(chapters) > 0:
                 break

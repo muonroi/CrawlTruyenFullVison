@@ -103,7 +103,12 @@ async def update_chapter_metadata_for_folder(story_folder):
         src_site_key = source.get("site_key") or site_key
         try:
             adapter_src = get_adapter(src_site_key)
-            chapters = await adapter_src.get_chapter_list(src_url, meta.get("title"), src_site_key)
+            chapters = await adapter_src.get_chapter_list(
+               story_url=src_url,
+                story_title=meta.get("title"),
+                site_key=src_site_key,
+                total_chapters=meta.get("total_chapters_on_site")
+            )
             if chapters and len(chapters) > 0:
                 break
         except Exception as e:
