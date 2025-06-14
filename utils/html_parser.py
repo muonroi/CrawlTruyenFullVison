@@ -12,8 +12,8 @@ import chardet
 def extract_chapter_content(
     html: str, 
     site_key: str, 
-    chapter_title: str = None,
-    patterns: list = None
+    chapter_title: str = None,#type: ignore
+    patterns: list = None#type: ignore
 ) -> str:
 
 
@@ -38,11 +38,11 @@ def extract_chapter_content(
 
     # Log rõ từng id có ký tự lạ
     for div in soup.find_all('div'):
-        div_id = div.get('id')
+        div_id = div.get('id')#type: ignore
         if div_id:
             logger.warning(f"[DEBUG][{site_key}][{chapter_title}] id: {repr(div_id)}")
             # Fallback mạnh: loại bỏ mọi ký tự trắng/ẩn
-            id_clean = div_id.strip().lower().replace('\u200b', '').replace('\xa0', '').replace('\t', '').replace('\n', '')
+            id_clean = div_id.strip().lower().replace('\u200b', '').replace('\xa0', '').replace('\t', '').replace('\n', '') #type: ignore
             if 'chapter-c' in id_clean:
                 chapter_div = div
                 logger.warning(f"[DEBUG][{site_key}][{chapter_title}] FOUND id: {repr(div_id)} CLEAN: {repr(id_clean)}")
@@ -69,19 +69,12 @@ def extract_chapter_content(
         logger.error(f"{debug_prefix} Không tìm thấy selector DIV nội dung chương. Đã lưu HTML vào {fname}")
         return ""
 
-    # Chỉ lúc này mới được get_text
-    raw_text = chapter_div.get_text(separator="\n")
-    logger.info(f"{debug_prefix} Raw extracted from selector (first 500 chars):\n{raw_text[:500]}")
-
-    # --- Clean bổ sung nếu có ---
     try:
         clean_chapter_content(chapter_div)
     except Exception as e:
         logger.error(f"{debug_prefix} Lỗi khi chạy clean_chapter_content: {e}")
 
     text = chapter_div.get_text(separator="\n")
-    logger.info(f"{debug_prefix} After clean_chapter_content (first 500 chars):\n{text[:500]}")
-
     # --- Lọc dòng trắng, strip ---
     lines = [line.strip() for line in text.splitlines() if line.strip()]
     logger.info(f"{debug_prefix} Số dòng sau strip: {len(lines)}")
@@ -95,12 +88,8 @@ def extract_chapter_content(
         logger.error(f"{debug_prefix} Lỗi khi filter_lines_by_patterns: {e}")
         cleaned_lines = lines
 
-    logger.info(f"{debug_prefix} After filter_lines_by_patterns (first 10 lines):\n{cleaned_lines[:10]}")
-
     # --- Clean header cuối cùng ---
     content = clean_header("\n".join(cleaned_lines)).strip()
-    logger.info(f"{debug_prefix} After clean_header (first 500 chars):\n{content[:500]}")
-
     # --- Kiểm tra kết quả cuối ---
     if not content:
         fname = f"debug_empty_chapter_{slugify_title(chapter_title) or 'unknown'}_after_filter.html"
@@ -112,9 +101,6 @@ def extract_chapter_content(
 
     # --- Có nội dung ---
     return content
-
-
-
 
 def clean_header(text: str):
     lines = text.splitlines()

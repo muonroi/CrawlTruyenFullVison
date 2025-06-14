@@ -1,6 +1,6 @@
 from typing import Optional
 from adapters.factory import get_adapter
-from config.config import DATA_FOLDER, COMPLETED_FOLDER, PROXIES_FILE, PROXIES_FOLDER
+from config.config import DATA_FOLDER, PROXIES_FILE, PROXIES_FOLDER
 from config.proxy_provider import load_proxies
 from scraper import initialize_scraper
 from utils.chapter_utils import count_txt_files, get_actual_chapters_for_export, slugify_title, crawl_missing_chapters_for_story, export_chapter_metadata_sync, extract_real_chapter_number, get_chapter_filename
@@ -129,9 +129,15 @@ async def crawl_single_story_worker(story_url: Optional[str]=None, title: Option
         try:
             chapters = await adapter_src.get_chapter_list(url, meta.get("title"), src_site_key)
             if chapters and len(chapters) > 0:
+                # --- Update lại total_chapters_on_site trong metadata ---
+                meta["total_chapters_on_site"] = len(chapters)
+                with open(meta_path, "w", encoding="utf-8") as f:
+                    json.dump(meta, f, ensure_ascii=False, indent=4)
                 break
         except Exception as ex:
             logger.warning(f"[SOURCE] Lỗi lấy chapter list từ {src_site_key}: {ex}")
+
+
 
     if not chapters or len(chapters) == 0:
         logger.error(f"[CRAWL] Không lấy được danh sách chương từ bất kỳ nguồn nào! meta.sources = {meta['sources']}")
