@@ -50,3 +50,24 @@ This document lists key areas to improve the performance and stability of the cr
 - Allow runtime changes to settings such as proxies, batch size and retry counts.
 - Apply per-site adjustments: increase delays or reduce batch sizes for heavy anti-bot sites.
 
+
+## 11. Proxy Health Checks
+- Periodically test proxies and remove ones with high failure rate.
+- Apply cooldown delays before re-using a proxy that recently failed.
+
+## 12. Error Classification
+- Tag retries with categories such as anti-bot, 404, timeout or dead link.
+- Tune retry counts per error class to avoid wasting requests.
+
+## 13. File Operation Safety
+- Wrap file move operations and retry on common filesystem errors.
+- Log failed moves and keep partially moved data in a safe folder.
+
+## 14. Reporting Dashboard
+- Send overall crawl statistics and error summaries via Telegram.
+- Optionally expose a CLI/WEB dashboard showing worker status and queue lengths.
+
+## 15. Worker Management API
+- Provide endpoints to start/stop batches or query current progress.
+- Combine health check results across workers for a global view.
+

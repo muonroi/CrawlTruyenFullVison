@@ -15,10 +15,19 @@ from utils.notifier import send_telegram_notify
 proxy_mode = "random"
 current_proxy_index: int = 0
 bad_proxy_counts = {}
+COOLDOWN_PROXIES = {}
+PROXY_COOLDOWN_SECONDS = 60
 PROXY_NOTIFIED = False
-MAX_FAIL_RATE = 10 
+MAX_FAIL_RATE = 10
 FAILED_PROXY_TIMES = []
 _last_proxy_mtime = 0
+
+def _get_available_proxies():
+    now = time.time()
+    for p, t in list(COOLDOWN_PROXIES.items()):
+        if t <= now:
+            COOLDOWN_PROXIES.pop(p, None)
+    return [p for p in LOADED_PROXIES if COOLDOWN_PROXIES.get(p, 0) <= now]
 
 def should_blacklist_proxy(proxy_url, loaded_proxies):
     proxy_domain = proxy_url.split('@')[-1] if '@' in proxy_url else proxy_url
@@ -59,6 +68,7 @@ async def reload_proxies_if_changed(filename: str) -> None:
 
 def mark_bad_proxy(proxy: str):
     global FAILED_PROXY_TIMES
+    COOLDOWN_PROXIES[proxy] = time.time() + PROXY_COOLDOWN_SECONDS
     if not should_blacklist_proxy(proxy, LOADED_PROXIES):
         logger.warning(f"[Proxy] Proxy xoay hoặc pool chỉ có 1 proxy, sẽ không blacklist: {proxy}. Chỉ sleep & retry.")
         time.sleep(10)  # Đợi IP backend đổi (proxy xoay)
@@ -77,9 +87,10 @@ def mark_bad_proxy(proxy: str):
  
 
 def get_random_proxy_url(username: str = None, password: str = None) -> Optional[str]: # type: ignore
-    if not LOADED_PROXIES:
+    available = _get_available_proxies()
+    if not available:
         return None
-    proxy = random.choice(LOADED_PROXIES)
+    proxy = random.choice(available)
     if "://" in proxy:
         return proxy
     if username and password:
@@ -88,10 +99,11 @@ def get_random_proxy_url(username: str = None, password: str = None) -> Optional
 
 def get_round_robin_proxy_url(username: str = None, password: str = None) -> Optional[str]: # type: ignore
     global current_proxy_index
-    if not LOADED_PROXIES:
+    available = _get_available_proxies()
+    if not available:
         return None
-    proxy = LOADED_PROXIES[current_proxy_index]
-    current_proxy_index = (current_proxy_index + 1) % len(LOADED_PROXIES)
+    proxy = available[current_proxy_index % len(available)]
+    current_proxy_index = (current_proxy_index + 1) % len(available)
     if "://" in proxy:
         return proxy
     if username and password:
@@ -102,13 +114,14 @@ def get_proxy_url(username: str = None, password: str = None) -> Optional[str]: 
     if not USE_PROXY:
         return None
     global PROXY_NOTIFIED
-    if not LOADED_PROXIES:
+    available = _get_available_proxies()
+    if not available:
         if not PROXY_NOTIFIED:
             asyncio.create_task(send_telegram_notify("[Crawl Notify] Hết proxy usable!"))
             PROXY_NOTIFIED = True
         return None
     PROXY_NOTIFIED = False
-    
+
     if proxy_mode == "round_robin":
         return get_round_robin_proxy_url(username, password)
     return get_random_proxy_url(username, password)
