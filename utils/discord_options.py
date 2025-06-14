@@ -4,7 +4,7 @@ import asyncio
 import os
 import json
 from adapters.factory import get_adapter
-from main import retry_failed_genres, run_crawler, run_single_story
+from main import run_single_site, run_single_story
 from utils.chapter_utils import slugify_title
 from utils.notifier import send_discord_notify
 from config.config import BASE_URLS, DISCORD_BOT_TOKEN
@@ -125,13 +125,11 @@ async def on_message(message):
             user_state.pop(uid, None)
             return
         elif text.startswith("2") or text.startswith("full crawl"):
-            adapter = get_adapter(site)
             await message.channel.send(f"Bắt đầu crawl FULL cho site: {site}")
             try:
                 from utils.state_utils import merge_all_missing_workers_to_main
                 merge_all_missing_workers_to_main(site)
-                await run_crawler(adapter, site)
-                await retry_failed_genres(adapter, site)
+                await run_single_site(site, crawl_mode="genres_only")
                 await send_discord_notify(f"✅ Crawl full site {site} hoàn thành!")
             except Exception as e:
                 await send_discord_notify(f"❌ Crawl full site {site} lỗi: {e}")
