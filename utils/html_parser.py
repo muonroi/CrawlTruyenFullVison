@@ -62,7 +62,7 @@ def extract_chapter_content(
 
     # Đúng ra phải kiểm tra lại chapter_div trước khi xử lý tiếp:
     if not chapter_div:
-        fname = f'debug_empty_chapter_{slugify_title(chapter_title) or 'unknown'}.html'
+        fname = f"debug_empty_chapter_{slugify_title(chapter_title) or 'unknown'}.html"
         if not os.path.exists(fname):
             with open(fname, 'w', encoding='utf-8') as f:
                 f.write(html)
@@ -103,7 +103,7 @@ def extract_chapter_content(
 
     # --- Kiểm tra kết quả cuối ---
     if not content:
-        fname = f'debug_empty_chapter_{slugify_title(chapter_title) or 'unknown'}_after_filter.html'
+        fname = f"debug_empty_chapter_{slugify_title(chapter_title) or 'unknown'}_after_filter.html"
         if not os.path.exists(fname):
             with open(fname, 'w', encoding='utf-8') as f:
                 f.write(html)
