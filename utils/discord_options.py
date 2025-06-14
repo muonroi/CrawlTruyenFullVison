@@ -7,7 +7,7 @@ from adapters.factory import get_adapter
 from main import run_single_site, run_single_story
 from utils.chapter_utils import slugify_title
 from utils.notifier import send_discord_notify
-from config.config import BASE_URLS, DISCORD_BOT_TOKEN
+from config.config import BASE_URLS, DISCORD_BOT_TOKEN,DISCORD_USER_ID, DISCORD_SERVER_ID
 from workers.clean_garbage import main as clean_garbage_main, clean_error_jsons
 from workers.retry_failed_chapters import retry_queue
 from workers.crawler_missing_chapter import (
@@ -16,8 +16,8 @@ from workers.crawler_missing_chapter import (
 )
 
 TOKEN = DISCORD_BOT_TOKEN
-GUILD_ID = 123456789012345678  # Thay bằng ID server
-ALLOWED_USER_IDS = [123456789012345678]  # List user discord id cho phép dùng bot (nếu muốn bảo mật)
+GUILD_ID = DISCORD_SERVER_ID  # Thay bằng ID server
+ALLOWED_USER_IDS = [DISCORD_USER_ID]  # List user discord id cho phép dùng bot (nếu muốn bảo mật)
 
 intents = discord.Intents.default()
 intents.message_content = True
