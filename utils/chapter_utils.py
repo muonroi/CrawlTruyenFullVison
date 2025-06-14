@@ -619,14 +619,14 @@ async def get_real_total_chapters(metadata, adapter: BaseSiteAdapter):
             adapter, site_key = get_adapter_from_url(url,adapter) # type: ignore
             if not adapter or not url:
                 continue
-            chapters = await adapter.get_chapter_list(url, metadata.get("title"), site_key)
+            chapters = await adapter.get_chapter_list(story_url=url, story_title=metadata.get("title"), site_key=site_key, total_chapters=metadata.get("total_chapters_on_site"))
             if chapters and len(chapters) > 0:
                 return len(chapters)
     # Nếu không có sources, fallback dùng url + site_key hiện tại trong metadata
     url = metadata.get("url")
     site_key = metadata.get("site_key")
     if url and site_key:
-        chapters = await adapter.get_chapter_list(story_url=url, story_title=metadata.get("title"), site_key=site_key)
+        chapters = await adapter.get_chapter_list(story_url=url, story_title=metadata.get("title"), site_key=site_key, total_chapters=metadata.get("total_chapters_on_site"))
         if chapters:
             return len(chapters)
     return 0

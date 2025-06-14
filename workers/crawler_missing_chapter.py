@@ -369,7 +369,9 @@ async def check_and_crawl_missing_all_stories(adapter, home_page_url, site_key, 
                     continue
                 adapter = get_adapter(src_site_key)
                 try:
-                    chapters = await adapter.get_chapter_list(url, metadata['title'], src_site_key)#type:ignore
+                    chapters = await adapter.get_chapter_list(
+                        story_url=url, story_title=metadata['title'], site_key=src_site_key, total_chapters=metadata.get("total_chapters_on_site")
+                    )
                     current_category = get_current_category(metadata)  # <- Dùng hàm helper
                     crawl_done = await crawl_missing_until_complete(
                         adapter,src_site_key, None, chapters, metadata, current_category,

@@ -44,7 +44,12 @@ async def sync_chapter_with_yy_first_batch(story_folder, metadata):
                     return
     try:
         yy_adapter = get_adapter("truyenyy")
-        chapters_yy = await yy_adapter.get_chapter_list(yy_source["url"], metadata["title"], "truyenyy")
+        chapters_yy = await yy_adapter.get_chapter_list(
+          story_url=yy_source["url"],
+          story_title=metadata["title"],
+          site_key="truyenyy",
+          total_chapters=metadata.get("total_chapters_on_site")
+        )
         for idx, ch in enumerate(chapters_yy):
             real_num = extract_real_chapter_number(ch.get('title', '')) or (idx + 1)
             fname = get_chapter_filename(ch.get("title", ""), real_num)
