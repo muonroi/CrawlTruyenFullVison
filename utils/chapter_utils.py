@@ -412,27 +412,27 @@ def get_existing_chapter_nums(story_folder):
         chapter_nums.add(num)
     return chapter_nums
 
-async def get_max_page_by_playwright(url):
-    async with async_playwright() as p:
-        browser = await p.chromium.launch(headless=True)
-        page = await browser.new_page()
-        await page.goto(url)
-        # Đợi phần tử ul phân trang xuất hiện (bạn sửa selector phù hợp site bạn)
-        await page.wait_for_selector('ul.flex.flex-wrap')  # chỉnh selector cho khớp
-        html = await page.content()
-        await browser.close()
-        # Giờ dùng lxml để lấy max page
-        from lxml import html as lxml_html
-        tree = lxml_html.fromstring(html)
-        li_list = tree.xpath('/html/body/main/div[2]/main/div[2]/div/div/div[2]/div[2]/div[1]/div/div[1]/ul/li')
-        # lấy số lớn nhất trong các li
-        max_page = 1
-        for li in reversed(li_list):
-            text = "".join(li.xpath('.//a/text()')).strip()
-            if text.isdigit():
-                max_page = int(text)
-                break
-        return max_page
+async def get_max_page_by_playwright(url, site_key=None):
+    from scraper import _make_request_playwright
+    resp = await _make_request_playwright(
+        url,
+        site_key or "truyenyy",
+        wait_for_selector="ul.flex.flex-wrap",
+    )
+    if not resp or not getattr(resp, "text", None):
+        return 1
+    from lxml import html as lxml_html
+    tree = lxml_html.fromstring(resp.text)
+    li_list = tree.xpath(
+        "/html/body/main/div[2]/main/div[2]/div/div/div[2]/div[2]/div[1]/div/div[1]/ul/li"
+    )
+    max_page = 1
+    for li in reversed(li_list):
+        text = "".join(li.xpath(".//a/text()")).strip()
+        if text.isdigit():
+            max_page = int(text)
+            break
+    return max_page
 
 
 def get_missing_chapters(story_folder: str, chapters: list[dict]) -> list[dict]:
