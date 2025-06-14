@@ -100,7 +100,13 @@ async def recycle_idle_contexts(max_idle_seconds: float = 60):
                     pass
 
 
-async def _make_request_playwright(url, site_key, timeout: int = 30, max_retries: int = 5):
+async def _make_request_playwright(
+    url,
+    site_key,
+    timeout: int = 30,
+    max_retries: int = 5,
+    wait_for_selector: str | None = None,
+):
     """Load trang bằng Playwright."""
     global browser
     headers = await get_random_headers(site_key)
@@ -130,6 +136,11 @@ async def _make_request_playwright(url, site_key, timeout: int = 30, max_retries
             page = await context.new_page()
             logger.debug(f"[make_request] {attempt}/{max_retries} -> {url}")
             await page.goto(url, timeout=timeout * 1000)
+            if wait_for_selector:
+                try:
+                    await page.wait_for_selector(wait_for_selector, timeout=timeout * 1000)
+                except Exception:
+                    pass
             content = await page.content()
             await page.close()
             await recycle_idle_contexts()
