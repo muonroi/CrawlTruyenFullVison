@@ -44,7 +44,7 @@ RETRY_FAILED_CHAPTERS_PASSES = int(os.getenv("RETRY_FAILED_CHAPTERS_PASSES", 2))
 NUM_CHAPTER_BATCHES = int(os.getenv("NUM_CHAPTER_BATCHES", 10))
 MAX_CHAPTERS_PER_STORY = int(os.getenv("MAX_CHAPTERS_PER_STORY", 0)) or None
 RETRY_STORY_ROUND_LIMIT = int(os.getenv("RETRY_STORY_ROUND_LIMIT", 40))
-
+SKIPPED_STORIES_FILE= os.getenv("SKIPPED_STORIES_FILE", "skipped_stories.json")
 # ============ PROXY CONFIG ============
 USE_PROXY = os.getenv("USE_PROXY", "false").lower() == "true"
 PROXIES_FOLDER = os.getenv("PROXIES_FOLDER", "proxies")

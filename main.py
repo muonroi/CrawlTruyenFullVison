@@ -16,7 +16,6 @@ from utils.batch_utils import get_optimal_batch_size, smart_delay, split_batches
 from utils.chapter_utils import (
     crawl_missing_chapters_for_story,
     export_chapter_metadata_sync,
-    get_chapter_filename,
     get_saved_chapters_files,
     slugify_title,
 )
@@ -25,7 +24,6 @@ from utils.io_utils import (
     create_proxy_template_if_not_exists,
     ensure_directory_exists,
     log_failed_genre,
-    safe_write_file,
 )
 from utils.logger import logger
 from config.config import (
@@ -47,6 +45,7 @@ from config.config import (
     MAX_CHAPTERS_PER_STORY,
     MAX_CHAPTER_PAGES_TO_CRAWL,
     RETRY_FAILED_CHAPTERS_PASSES,
+    SKIPPED_STORIES_FILE
 )
 from scraper import initialize_scraper
 from utils.meta_utils import (
@@ -70,6 +69,7 @@ router = Router()
 is_crawling = False
 GENRE_SEM = asyncio.Semaphore(GENRE_ASYNC_LIMIT)
 STORY_SEM = asyncio.Semaphore(STORY_ASYNC_LIMIT) 
+SKIPPED_STORIES_FILE = SKIPPED_STORIES_FILE
 
     
 class WorkerSettings:
@@ -82,6 +82,31 @@ class WorkerSettings:
         self.retry_sleep_seconds = retry_sleep_seconds
 
 
+def mark_story_as_skipped(story):
+    slug = slugify_title(story['title'])
+    try:
+        if os.path.exists(SKIPPED_STORIES_FILE):
+            with open(SKIPPED_STORIES_FILE, "r", encoding="utf-8") as f:
+                skipped = json.load(f)
+        else:
+            skipped = {}
+        skipped[slug] = {
+            "url": story.get('url'),
+            "title": story.get('title'),
+            "time": time.strftime("%Y-%m-%d %H:%M:%S"),
+        }
+        with open(SKIPPED_STORIES_FILE, "w", encoding="utf-8") as f:
+            json.dump(skipped, f, ensure_ascii=False, indent=2)
+    except Exception as ex:
+        logger.error(f"[SKIP] Không ghi được skipped_stories: {ex}")
+
+def is_story_skipped(story):
+    slug = slugify_title(story['title'])
+    if os.path.exists(SKIPPED_STORIES_FILE):
+        with open(SKIPPED_STORIES_FILE, "r", encoding="utf-8") as f:
+            skipped = json.load(f)
+        return slug in skipped
+    return False
 
 async def crawl_single_story_by_title(title, site_key, genre_name=None):
 
@@ -533,6 +558,9 @@ async def process_genre_item(
     batches = split_batches(stories_to_process, num_batches)
 
     async def handle_story(idx, story):
+        if is_story_skipped(story):
+            logger.warning(f"[SKIP] Truyện {story['title']} đã bị skip vĩnh viễn trước đó, bỏ qua.")
+            return True, story["url"], idx  # Mark as done để batch không retry nữa
         async with STORY_SEM:
             slug = slugify_title(story["title"])
             folder = os.path.join(DATA_FOLDER, slug)
@@ -562,9 +590,11 @@ async def process_genre_item(
                     retry_counts[idx] = retry_counts.get(idx, 0) + 1
                     if retry_counts[idx] >= RETRY_STORY_ROUND_LIMIT:
                         story_title = next(st['title'] for j, st in batch if j == idx)
+                        story_obj = next(st for j, st in batch if j == idx)
                         logger.error(
                             f"[FATAL] Vượt quá retry cho truyện {story_title}, bỏ qua."
                         )
+                        mark_story_as_skipped(story_obj)
                         continue
                     remaining.append((idx, next(st for j, st in batch if j == idx)))
             if remaining:
