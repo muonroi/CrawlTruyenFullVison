@@ -70,6 +70,7 @@ STORY_BATCH_SIZE = int(os.getenv("STORY_BATCH_SIZE", 3))
 # ============ FILE PATH ============
 FAILED_GENRES_FILE = os.getenv("FAILED_GENRES_FILE", "failed_genres.json")
 PATTERN_FILE = os.getenv("PATTERN_FILE", "config/blacklist_patterns.txt")
+ANTI_BOT_PATTERN_FILE = os.getenv("ANTI_BOT_PATTERN_FILE", "config/anti_bot_patterns.txt")
 
 # ============ PARSING RULE ============
 def truyenyy_selector(soup):
