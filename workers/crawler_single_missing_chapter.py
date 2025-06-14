@@ -139,6 +139,24 @@ async def crawl_single_story_worker(story_url: Optional[str]=None, title: Option
     else:
         logger.info(f"[CRAWL] Đã lấy được {len(chapters)} chương từ nguồn {src_site_key}")
 
+    # Sắp xếp danh sách chương theo số thực sự để đảm bảo đúng thứ tự
+    chapters.sort(key=lambda ch: extract_real_chapter_number(ch.get('title', '')) or 0)
+
+    # Cập nhật lại tổng số chương trong metadata nếu cần
+    real_total = len(chapters)
+    if real_total != meta.get("total_chapters_on_site"):
+        meta["total_chapters_on_site"] = real_total
+        with open(meta_path, "w", encoding="utf-8") as f:
+            json.dump(meta, f, ensure_ascii=False, indent=4)
+
+    # Lưu lại danh sách chapter vào chapter_metadata.json để lấy đúng title
+    export_chapter_metadata_sync(folder, [
+        {"index": extract_real_chapter_number(ch.get('title', '')) or (i+1),
+         "title": ch.get('title', ''),
+         "url": ch.get('url', '')}
+        for i, ch in enumerate(chapters)
+    ])
+
 
     # --- Check và rename lại file chương theo đúng thứ tự/tên title ---
     existing_files = [f for f in os.listdir(folder) if f.endswith('.txt')]
