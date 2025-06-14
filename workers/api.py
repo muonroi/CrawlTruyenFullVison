@@ -1,6 +1,8 @@
 from fastapi import FastAPI
 from pydantic import BaseModel
 import asyncio
+from config.proxy_provider import load_proxies
+from config.config import PROXIES_FILE, LOADED_PROXIES
 
 app = FastAPI()
 
@@ -27,3 +29,9 @@ async def stop_worker(req: WorkerRequest):
 @app.get("/workers")
 async def list_workers():
     return list(workers.keys())
+
+
+@app.post("/reload_proxies")
+async def reload_proxies():
+    await load_proxies(PROXIES_FILE)
+    return {"status": "reloaded", "count": len(LOADED_PROXIES)}

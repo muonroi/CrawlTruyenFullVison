@@ -4,7 +4,7 @@ from config.config import DATA_FOLDER, COMPLETED_FOLDER, PROXIES_FILE, PROXIES_F
 from config.proxy_provider import load_proxies
 from scraper import initialize_scraper
 from utils.chapter_utils import count_txt_files, get_actual_chapters_for_export, slugify_title, crawl_missing_chapters_for_story, export_chapter_metadata_sync, extract_real_chapter_number, get_chapter_filename
-from utils.io_utils import create_proxy_template_if_not_exists, move_story_to_completed
+from utils.io_utils import create_proxy_template_if_not_exists, move_story_to_completed, async_rename, async_remove
 from utils.logger import logger
 from utils.cleaner import ensure_sources_priority
 from utils.domain_utils import get_site_key_from_url
@@ -152,14 +152,14 @@ async def crawl_single_story_worker(story_url: Optional[str]=None, title: Option
                 old_path = os.path.join(folder, fname)
                 new_path = os.path.join(folder, expected_name)
                 if os.path.exists(old_path) and not os.path.exists(new_path):
-                    os.rename(old_path, new_path)
+                    await async_rename(old_path, new_path)
                     logger.info(f"[RENAME] {fname} -> {expected_name}")
                 break
     
     # Xóa các file chương có index = 0 (sau khi rename)
     for fname in os.listdir(folder):
         if fname.startswith("0000_") and fname.endswith(".txt"):
-            os.remove(os.path.join(folder, fname))
+            await async_remove(os.path.join(folder, fname))
             logger.info(f"[REMOVE] Xoá file chương lỗi index 0: {fname}")
 
     # --- Load crawl state và check chương missing ---

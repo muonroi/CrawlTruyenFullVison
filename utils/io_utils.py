@@ -10,6 +10,14 @@ from config.config import COMPLETED_FOLDER, FAILED_GENRES_FILE
 from utils.logger import logger
 
 
+async def async_rename(src: str, dst: str) -> None:
+    await asyncio.to_thread(os.rename, src, dst)
+
+
+async def async_remove(path: str) -> None:
+    await asyncio.to_thread(os.remove, path)
+
+
 async def ensure_directory_exists(dir_path: str) -> bool:
     loop = asyncio.get_event_loop()
     exists = await loop.run_in_executor(None, os.path.exists, dir_path)
