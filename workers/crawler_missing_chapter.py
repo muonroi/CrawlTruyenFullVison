@@ -3,7 +3,6 @@ import asyncio
 import json
 import datetime
 import re
-import shutil
 import traceback
 from typing import cast
 from adapters.factory import get_adapter
@@ -14,7 +13,7 @@ from utils.async_utils import sync_chapter_with_yy_first_batch
 from utils.chapter_utils import SEM, count_txt_files, crawl_missing_chapters_for_story, export_chapter_metadata_sync, extract_real_chapter_number, get_actual_chapters_for_export, get_chapter_filename, get_real_total_chapters
 from utils.domain_utils import  get_site_key_from_url, is_url_for_site, resolve_site_key
 from utils.logger import logger
-from utils.io_utils import create_proxy_template_if_not_exists
+from utils.io_utils import create_proxy_template_if_not_exists, move_story_to_completed
 from utils.notifier import send_telegram_notify
 from utils.state_utils import get_missing_worker_state_file, load_crawl_state
 from filelock import FileLock
@@ -417,12 +416,7 @@ async def check_and_crawl_missing_all_stories(adapter, home_page_url, site_key, 
                         if chapter_count >= real_total and real_total > 0:
                             # move to completed_folder
                             genre_name = current_category['name'] if current_category else 'Unknown'
-                            dest_genre_folder = os.path.join(COMPLETED_FOLDER, genre_name)
-                            os.makedirs(dest_genre_folder, exist_ok=True)
-                            dest_folder = os.path.join(dest_genre_folder, os.path.basename(story_folder))
-                            if not os.path.exists(dest_folder):
-                                shutil.move(story_folder, dest_folder)
-                                logger.info(f"[INFO] Đã chuyển truyện '{metadata['title']}' sang {dest_genre_folder}")#type:ignore
+                            await move_story_to_completed(story_folder, genre_name)
                         break
                 except Exception as ex:
                     logger.error(f"  [ERROR] Không lấy được chapter list từ {src_site_key}: {ex}")
@@ -510,12 +504,7 @@ async def check_and_crawl_missing_all_stories(adapter, home_page_url, site_key, 
             genre_name = "Unknown"
             if metadata.get('categories') and isinstance(metadata['categories'], list) and metadata['categories']:
                 genre_name = metadata['categories'][0].get('name')
-            dest_genre_folder = os.path.join(COMPLETED_FOLDER, genre_name)
-            os.makedirs(dest_genre_folder, exist_ok=True)
-            dest_folder = os.path.join(dest_genre_folder, os.path.basename(story_folder))
-            if not os.path.exists(dest_folder):
-                shutil.move(story_folder, dest_folder)
-                logger.info(f"[INFO] Đã chuyển truyện '{metadata['title']}' sang {dest_genre_folder}")
+            await move_story_to_completed(story_folder, genre_name)
             if genre_name not in genre_complete_checked:
                 genre_url = genre_name_to_url.get(genre_name)
                 if genre_url:

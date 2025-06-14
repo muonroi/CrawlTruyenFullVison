@@ -372,6 +372,8 @@ async def get_all_stories_from_genre_with_page_check(genre_name, genre_url, site
     all_stories = []
     seen_urls = set()
     pages_crawled = 0
+    repeat_count = 0
+    last_first_url = None
 
     for page in range(1, total_pages + 1):
         page_url = genre_url if page == 1 else f"{genre_url.rstrip('/')}/trang-{page}/"
@@ -385,6 +387,14 @@ async def get_all_stories_from_genre_with_page_check(genre_name, genre_url, site
         stories, _ = await get_stories_from_genre_page(genre_page_url=page_url, site_key=site_key)
         if not stories:
             logger.warning(f"Không tìm thấy truyện nào ở {page_url}, dừng crawl category.")
+            break
+        if last_first_url and stories[0]['url'] == last_first_url:
+            repeat_count += 1
+        else:
+            repeat_count = 0
+        last_first_url = stories[0]['url']
+        if repeat_count >= 2:
+            logger.error("Phát hiện lặp trang, dừng crawl để tránh vòng lặp vô tận")
             break
         for s in stories:
             if s['url'] not in seen_urls:

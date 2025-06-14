@@ -83,14 +83,23 @@ def filter_lines_by_patterns(lines, patterns):
         result.append(l)
     return result
 
-def move_story_to_completed(story_folder, genre_name):
+async def move_story_to_completed(story_folder, genre_name, retries: int = 3) -> bool:
+    """Di chuyển truyện sang thư mục completed với retry."""
     dest_genre_folder = os.path.join(COMPLETED_FOLDER, genre_name)
-    os.makedirs(dest_genre_folder, exist_ok=True)
-    # Move truyện vào folder completed/genre_name/
+    await ensure_directory_exists(dest_genre_folder)
     dest_folder = os.path.join(dest_genre_folder, os.path.basename(story_folder))
-    if not os.path.exists(dest_folder):
-        shutil.move(story_folder, dest_folder)
-        print(f"[INFO] Đã chuyển truyện sang {dest_genre_folder}")
+    if os.path.exists(dest_folder):
+        return True
+
+    for attempt in range(1, retries + 1):
+        try:
+            await asyncio.to_thread(shutil.move, story_folder, dest_folder)
+            logger.info(f"[INFO] Đã chuyển truyện sang {dest_genre_folder}")
+            return True
+        except Exception as ex:
+            logger.error(f"Lỗi move {story_folder} -> {dest_folder} ({attempt}/{retries}): {ex}")
+            await asyncio.sleep(2)
+    return False
 
 def log_failed_genre(genre_data):
     try:
