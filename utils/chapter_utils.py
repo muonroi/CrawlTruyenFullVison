@@ -10,7 +10,13 @@ from filelock import FileLock
 from unidecode import unidecode
 import aiofiles
 from adapters.base_site_adapter import BaseSiteAdapter
-from config.config import ASYNC_SEMAPHORE_LIMIT, HEADER_RE, LOCK, get_state_file
+from config.config import (
+    ASYNC_SEMAPHORE_LIMIT,
+    HEADER_RE,
+    LOCK,
+    get_state_file,
+    MAX_CHAPTER_RETRY,
+)
 from utils.domain_utils import get_adapter_from_url
 from utils.io_utils import  safe_write_file, safe_write_json
 from utils.logger import logger
@@ -62,7 +68,9 @@ async def crawl_missing_chapters_for_story(
 ):
     total_chapters = story_data_item.get('total_chapters_on_site', len(chapters))
     retry_count = 0
-    max_global_retry = 5  # tránh loop vô hạn
+    max_global_retry = MAX_CHAPTER_RETRY
+    fail_counts: Dict[str, int] = {}
+    permanent_missing: List[Dict[str, Any]] = []
 
     while retry_count < max_global_retry:
         saved_files = get_saved_chapters_files(story_folder_path)
@@ -73,6 +81,8 @@ async def crawl_missing_chapters_for_story(
         missing_chapters = []
         for idx, ch in enumerate(chapters):
             fname_only = get_chapter_filename(ch['title'], idx + 1)
+            if fail_counts.get(fname_only, 0) >= MAX_CHAPTER_RETRY:
+                continue
             fpath = os.path.join(story_folder_path, fname_only)
             if fname_only not in saved_files or not os.path.exists(fpath) or os.path.getsize(fpath) < 20:
                 missing_chapters.append((idx, ch, fname_only))
@@ -136,7 +146,22 @@ async def crawl_missing_chapters_for_story(
         for batch_idx, batch in enumerate(batches):
             if not batch:
                 continue
-            await crawl_batch(batch, batch_idx + 1)
+            _, failed = await crawl_batch(batch, batch_idx + 1)
+            for item in failed:
+                fname_only = item.get('filename_only')
+                fail_counts[fname_only] = fail_counts.get(fname_only, 0) + 1
+                if fail_counts[fname_only] >= MAX_CHAPTER_RETRY:
+                    await mark_dead_chapter(story_folder_path, {
+                        "index": (item.get('original_idx') or 0) + 1,
+                        "title": item['chapter_data'].get('title'),
+                        "url": item['chapter_data'].get('url'),
+                        "reason": "max_retry_reached",
+                    })
+                    permanent_missing.append({
+                        "index": (item.get('original_idx') or 0) + 1,
+                        "title": item['chapter_data'].get('title'),
+                        "url": item['chapter_data'].get('url'),
+                    })
 
         retry_count += 1
         await smart_delay()
@@ -149,6 +174,23 @@ async def crawl_missing_chapters_for_story(
             logger.error(
                 f"[ALERT] Truyện '{story_data_item['title']}' còn các chương sau mãi chưa crawl được: {[f for _,_,f in missing_chapters]}"
             )
+
+    if permanent_missing:
+        report_path = os.path.join(story_folder_path, "missing_permanent.json")
+        try:
+            if os.path.exists(report_path):
+                with open(report_path, "r", encoding="utf-8") as f:
+                    old = json.load(f)
+            else:
+                old = []
+        except Exception:
+            old = []
+        for item in permanent_missing:
+            if not any(o.get("url") == item.get("url") for o in old):
+                old.append(item)
+        with open(report_path, "w", encoding="utf-8") as f:
+            json.dump(old, f, ensure_ascii=False, indent=2)
+        logger.warning(f"[REPORT] Đã ghi {len(permanent_missing)} chương lỗi vĩnh viễn vào {report_path}")
 
 def clean_header_only_chapter(text: str):
     lines = text.splitlines()
