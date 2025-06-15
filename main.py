@@ -539,6 +539,7 @@ async def process_genre_item(
     batches = split_batches(stories_to_process, num_batches)
 
     async def handle_story(idx, story):
+        load_skipped_stories()
         if is_story_skipped(story):
             logger.warning(f"[SKIP] Truyện {story['title']} đã bị skip vĩnh viễn trước đó, bỏ qua.")
             return True, story["url"], idx  # Mark as done để batch không retry nữa
