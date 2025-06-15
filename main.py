@@ -64,12 +64,17 @@ from workers.crawler_missing_chapter import check_and_crawl_missing_all_stories
 from workers.crawler_single_missing_chapter import crawl_single_story_worker
 from workers.missing_chapter_worker import crawl_all_missing_stories
 from utils.chapter_utils import slugify_title
+from utils.skip_manager import (
+    load_skipped_stories,
+    mark_story_as_skipped,
+    is_story_skipped,
+    get_all_skipped_stories,
+)
 
 router = Router()
 is_crawling = False
 GENRE_SEM = asyncio.Semaphore(GENRE_ASYNC_LIMIT)
-STORY_SEM = asyncio.Semaphore(STORY_ASYNC_LIMIT) 
-SKIPPED_STORIES_FILE = SKIPPED_STORIES_FILE
+STORY_SEM = asyncio.Semaphore(STORY_ASYNC_LIMIT)
 
     
 class WorkerSettings:
@@ -82,31 +87,7 @@ class WorkerSettings:
         self.retry_sleep_seconds = retry_sleep_seconds
 
 
-def mark_story_as_skipped(story):
-    slug = slugify_title(story['title'])
-    try:
-        if os.path.exists(SKIPPED_STORIES_FILE):
-            with open(SKIPPED_STORIES_FILE, "r", encoding="utf-8") as f:
-                skipped = json.load(f)
-        else:
-            skipped = {}
-        skipped[slug] = {
-            "url": story.get('url'),
-            "title": story.get('title'),
-            "time": time.strftime("%Y-%m-%d %H:%M:%S"),
-        }
-        with open(SKIPPED_STORIES_FILE, "w", encoding="utf-8") as f:
-            json.dump(skipped, f, ensure_ascii=False, indent=2)
-    except Exception as ex:
-        logger.error(f"[SKIP] Không ghi được skipped_stories: {ex}")
 
-def is_story_skipped(story):
-    slug = slugify_title(story['title'])
-    if os.path.exists(SKIPPED_STORIES_FILE):
-        with open(SKIPPED_STORIES_FILE, "r", encoding="utf-8") as f:
-            skipped = json.load(f)
-        return slug in skipped
-    return False
 
 async def crawl_single_story_by_title(title, site_key, genre_name=None):
 
@@ -579,6 +560,7 @@ async def process_genre_item(
     for batch in batches:
         remaining = batch
         retry_counts = {idx: 0 for idx, _ in batch}
+        skipped_in_batch = []
         while remaining:
             tasks = [asyncio.create_task(handle_story(i, s)) for i, s in remaining]
             results = await asyncio.gather(*tasks)
@@ -594,7 +576,8 @@ async def process_genre_item(
                         logger.error(
                             f"[FATAL] Vượt quá retry cho truyện {story_title}, bỏ qua."
                         )
-                        mark_story_as_skipped(story_obj)
+                        mark_story_as_skipped(story_obj, "retry quá giới hạn")
+                        skipped_in_batch.append(story_title)
                         continue
                     remaining.append((idx, next(st for j, st in batch if j == idx)))
             if remaining:
@@ -605,6 +588,14 @@ async def process_genre_item(
         crawl_state["globally_completed_story_urls"] = sorted(completed_global)
         crawl_state["current_story_index_in_genre"] = batch[-1][0] + 1
         await save_crawl_state(crawl_state, state_file)
+        if skipped_in_batch:
+            logger.warning(
+                "[BATCH] Các truyện bị skip trong batch này: " + ", ".join(skipped_in_batch)
+            )
+            all_titles = ", ".join(
+                s.get("title") for s in get_all_skipped_stories().values()
+            )
+            logger.info("[SKIP LIST] " + all_titles)
 
     await clear_specific_state_keys(
         crawl_state,
@@ -779,6 +770,7 @@ async def run_single_site(
         apply_env_overrides({"env_override": env_overrides})
 
     logger.info(f"[MAIN] Đang chạy crawler cho site: {site_key} với mode={crawl_mode}")
+    load_skipped_stories()
     merge_all_missing_workers_to_main(site_key)
     homepage_url, crawl_state = await initialize_and_log_setup_with_state(site_key)
 
