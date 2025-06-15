@@ -1,7 +1,12 @@
 from datetime import datetime
 from typing import Optional
 from adapters.factory import get_adapter
-from config.config import DATA_FOLDER, PROXIES_FILE, PROXIES_FOLDER
+from config.config import (
+    DATA_FOLDER,
+    PROXIES_FILE,
+    PROXIES_FOLDER,
+    COMPLETED_FOLDER,
+)
 from config.proxy_provider import load_proxies
 from scraper import initialize_scraper
 from utils.chapter_utils import (
@@ -137,7 +142,11 @@ async def crawl_single_story_worker(story_url: Optional[str]=None, title: Option
         src_site_key = source.get("site_key") or meta.get("site_key")
         adapter_src = get_adapter(src_site_key)
         try:
-            chapters = await adapter_src.get_chapter_list(story_url=url, story_title=meta.get("title"), site_key=src_site_key, total_chapters=meta.get("total_chapters_on_site"))
+            chapters = await adapter_src.get_chapter_list(
+                url,
+                meta.get("title"),
+                src_site_key,
+            )
             if chapters and len(chapters) > 0:
                 meta["total_chapters_on_site"] = len(chapters)
                 for source in meta.get("sources", []):
@@ -234,7 +243,7 @@ async def crawl_single_story_worker(story_url: Optional[str]=None, title: Option
             await crawl_missing_chapters_for_story(
                 site_key,
                 None,
-                chapters,
+                missing_chapters,
                 meta,
                 meta.get("categories", [{}])[0] if meta.get("categories") else {},
                 folder,
