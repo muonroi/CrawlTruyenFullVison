@@ -522,6 +522,20 @@ def count_txt_files(story_folder_path):
         return 0
     return len([f for f in os.listdir(story_folder_path) if f.endswith('.txt')])
 
+def count_dead_chapters(story_folder_path: str) -> int:
+    """Return number of chapters marked as dead for the story."""
+    path = os.path.join(story_folder_path, "dead_chapters.json")
+    if not os.path.exists(path):
+        return 0
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            data = json.load(f)
+        if isinstance(data, list):
+            return len(data)
+    except Exception:
+        pass
+    return 0
+
 
 async def async_save_chapter_with_lock(filename, content):
     lockfile = filename + ".lock"

@@ -160,6 +160,75 @@ async def test_crawl_single_story_worker(tmp_path, monkeypatch):
     assert len(files) == 2
 
 
+@pytest.mark.asyncio
+async def test_crawl_single_story_with_dead_chapter(tmp_path, monkeypatch):
+    data_dir = tmp_path / "data"
+    complete_dir = tmp_path / "complete"
+    data_dir.mkdir()
+    complete_dir.mkdir()
+
+    monkeypatch.setattr(crawler_single_missing_chapter, "DATA_FOLDER", str(data_dir))
+    monkeypatch.setattr(crawler_single_missing_chapter, "COMPLETED_FOLDER", str(complete_dir))
+    import config.config as cfg
+    monkeypatch.setattr(cfg, "COMPLETED_FOLDER", str(complete_dir))
+    import utils.io_utils as io_utils
+    monkeypatch.setattr(io_utils, "COMPLETED_FOLDER", str(complete_dir))
+    monkeypatch.setattr(crawler_single_missing_chapter, "PROXIES_FILE", str(tmp_path / "p.txt"))
+    monkeypatch.setattr(crawler_single_missing_chapter, "PROXIES_FOLDER", str(tmp_path / "pf"))
+
+    monkeypatch.setattr(crawler_single_missing_chapter, "create_proxy_template_if_not_exists", AsyncMock())
+    monkeypatch.setattr(crawler_single_missing_chapter, "load_proxies", AsyncMock())
+    monkeypatch.setattr(crawler_single_missing_chapter, "initialize_scraper", AsyncMock())
+    monkeypatch.setattr(crawler_single_missing_chapter, "get_missing_worker_state_file", lambda sk: str(tmp_path / "state.json"))
+    monkeypatch.setattr(crawler_single_missing_chapter, "load_crawl_state", AsyncMock(return_value={}))
+
+    slug = "test-story"
+    folder = data_dir / slug
+    folder.mkdir()
+    meta = {
+        "title": "Test Story",
+        "url": "http://example.com/test-story",
+        "site_key": "dummy",
+        "categories": [{"name": "c"}],
+        "sources": [{"url": "http://example.com/test-story", "site_key": "dummy"}],
+        "total_chapters_on_site": 2,
+    }
+    (folder / "metadata.json").write_text(json.dumps(meta), encoding="utf-8")
+    (folder / "0001_first.txt").write_text("a", encoding="utf-8")
+
+    # Mark second chapter as dead
+    dead = [{"index": 2, "title": "c2", "url": "u2"}]
+    (folder / "dead_chapters.json").write_text(json.dumps(dead), encoding="utf-8")
+
+    chapters = [
+        {"title": "Chương 1", "url": "u1"},
+        {"title": "Chương 2", "url": "u2"},
+    ]
+
+    class DummyAdapter:
+        async def get_story_details(self, url, title):
+            return {}
+
+        async def get_chapter_list(self, url, title, site_key):
+            return chapters
+
+    monkeypatch.setattr(crawler_single_missing_chapter, "get_adapter", lambda sk: DummyAdapter())
+
+    async def no_crawl(*args, **kwargs):
+        pass
+
+    monkeypatch.setattr(crawler_single_missing_chapter, "crawl_missing_chapters_for_story", no_crawl)
+
+    await crawler_single_missing_chapter.crawl_single_story_worker(
+        story_url="http://example.com/test-story"
+    )
+
+    dest_folder = complete_dir / "c" / slug
+    assert dest_folder.exists()
+    files = list(dest_folder.glob("*.txt"))
+    assert len(files) == 1
+
+
 def test_process_genre_item_batches(tmp_path, monkeypatch):
     import types, sys
     monkeypatch.setitem(sys.modules, "aiogram", types.SimpleNamespace(Router=object))
