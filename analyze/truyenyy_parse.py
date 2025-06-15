@@ -285,11 +285,15 @@ async def get_story_details(self, story_url, story_title, site_key):
         total_chapters=details.get("total_chapters_on_site"),
     )
     actual_count = len(chapters)
-    if details["total_chapters_on_site"] is None or details["total_chapters_on_site"] < 100:
+    if (
+        details["total_chapters_on_site"] is None 
+        or actual_count > details["total_chapters_on_site"]
+        or abs(actual_count - details["total_chapters_on_site"]) > 5
+    ):
+        logger.warning(f"[YY][DETAIL] Cập nhật số chương từ {details['total_chapters_on_site']} -> {actual_count}")
         details["total_chapters_on_site"] = actual_count
-    elif abs(actual_count - details["total_chapters_on_site"]) > 5:
-        logger.warning(f"[YY][DETAIL] Meta chapters {details['total_chapters_on_site']} khác thực tế {actual_count}")
-        details["total_chapters_on_site"] = actual_count
+
+
   
     details["sources"] = [{
         "site": urlparse(details["source"]).netloc, # type: ignore
