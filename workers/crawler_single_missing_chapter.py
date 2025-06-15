@@ -24,6 +24,7 @@ from utils.logger import logger
 from utils.cleaner import ensure_sources_priority
 from utils.domain_utils import get_site_key_from_url
 from utils.state_utils import get_missing_worker_state_file, load_crawl_state
+from utils.cache_utils import cached_get_story_details, cached_get_chapter_list
 import os
 import re
 import sys
@@ -126,7 +127,7 @@ async def crawl_single_story_worker(story_url: Optional[str]=None, title: Option
 
     # --- Always update lại metadata từ web ---
     logger.info(f"[SYNC] Đang cập nhật lại metadata từ web cho '{meta['title']}'...")
-    details = await adapter.get_story_details(meta.get("url"), meta.get("title"))
+    details = await cached_get_story_details(adapter, meta.get("url"), meta.get("title"))
     if details:
         for k, v in details.items():
             if v is not None and v != "" and meta.get(k) != v:
@@ -142,7 +143,8 @@ async def crawl_single_story_worker(story_url: Optional[str]=None, title: Option
         src_site_key = source.get("site_key") or meta.get("site_key")
         adapter_src = get_adapter(src_site_key)
         try:
-            chapters = await adapter_src.get_chapter_list(
+            chapters = await cached_get_chapter_list(
+                adapter_src,
                 url,
                 meta.get("title"),
                 src_site_key,
