@@ -52,6 +52,12 @@ async def save_story_metadata_file(
     for key in FIELDS_MUST_HAVE:
         metadata_to_save.setdefault(key, None)
 
+    missing_fields = [k for k in FIELDS_MUST_HAVE if not metadata_to_save.get(k)]
+    if missing_fields:
+        logger.warning(
+            f"[META] Metadata autofix: thiếu các trường {missing_fields} cho '{story_base_data.get('title')}'"
+        )
+
     now_str = time.strftime("%Y-%m-%d %H:%M:%S")
     metadata_to_save["metadata_updated_at"] = now_str
     if "crawled_at" not in metadata_to_save:
