@@ -4,7 +4,16 @@ from adapters.factory import get_adapter
 from config.config import DATA_FOLDER, PROXIES_FILE, PROXIES_FOLDER
 from config.proxy_provider import load_proxies
 from scraper import initialize_scraper
-from utils.chapter_utils import count_txt_files, get_actual_chapters_for_export, slugify_title, crawl_missing_chapters_for_story, export_chapter_metadata_sync, extract_real_chapter_number, get_chapter_filename
+from utils.chapter_utils import (
+    count_txt_files,
+    count_dead_chapters,
+    get_actual_chapters_for_export,
+    slugify_title,
+    crawl_missing_chapters_for_story,
+    export_chapter_metadata_sync,
+    extract_real_chapter_number,
+    get_chapter_filename,
+)
 from utils.io_utils import create_proxy_template_if_not_exists, move_story_to_completed, async_rename, async_remove
 from utils.logger import logger
 from utils.cleaner import ensure_sources_priority
@@ -256,14 +265,17 @@ async def crawl_single_story_worker(story_url: Optional[str]=None, title: Option
     export_chapter_metadata_sync(folder, chapters_for_export)
     logger.info(f"[META] Đã cập nhật lại chapter_metadata.json ({len(chapters_for_export)} chương)")
 
+    dead_count = count_dead_chapters(folder)
     # --- Move sang completed nếu đủ ---
-    if num_txt >= real_total and real_total > 0:
+    if num_txt + dead_count >= real_total and real_total > 0:
         genre = "Unknown"
         if meta.get('categories') and isinstance(meta['categories'], list) and meta['categories']:
             genre = meta['categories'][0].get('name')
         await move_story_to_completed(folder, genre)
     else:
-        logger.warning(f"[WARNING] Truyện chưa đủ chương ({num_txt}/{real_total})")
+        logger.warning(
+            f"[WARNING] Truyện chưa đủ chương ({num_txt}+{dead_count}/{real_total})"
+        )
 
 if __name__ == "__main__":
     import argparse

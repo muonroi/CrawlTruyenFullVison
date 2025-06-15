@@ -10,7 +10,19 @@ from config.config import BASE_URLS, COMPLETED_FOLDER, DATA_FOLDER, LOADED_PROXI
 from config.proxy_provider import load_proxies
 from scraper import initialize_scraper 
 from utils.async_utils import sync_chapter_with_yy_first_batch
-from utils.chapter_utils import SEM, count_txt_files, crawl_missing_chapters_for_story, export_chapter_metadata_sync, extract_real_chapter_number, get_actual_chapters_for_export, get_chapter_filename, get_missing_chapters, get_real_total_chapters, mark_dead_chapter
+from utils.chapter_utils import (
+    SEM,
+    count_txt_files,
+    count_dead_chapters,
+    crawl_missing_chapters_for_story,
+    export_chapter_metadata_sync,
+    extract_real_chapter_number,
+    get_actual_chapters_for_export,
+    get_chapter_filename,
+    get_missing_chapters,
+    get_real_total_chapters,
+    mark_dead_chapter,
+)
 from utils.domain_utils import  get_site_key_from_url, is_url_for_site, resolve_site_key
 from utils.logger import logger
 from utils.io_utils import create_proxy_template_if_not_exists, move_story_to_completed
@@ -381,7 +393,8 @@ async def check_and_crawl_missing_all_stories(adapter, home_page_url, site_key, 
                         # Check + move completed ở đây (nếu muốn move ngay, khỏi phải sweep lại sau)
                         real_total = len(chapters)
                         chapter_count = recount_chapters(story_folder)
-                        if chapter_count >= real_total and real_total > 0:
+                        dead_count = count_dead_chapters(story_folder)
+                        if chapter_count + dead_count >= real_total and real_total > 0:
                             # move to completed_folder
                             genre_name = current_category['name'] if current_category else 'Unknown'
                             await move_story_to_completed(story_folder, genre_name)
@@ -457,6 +470,7 @@ async def check_and_crawl_missing_all_stories(adapter, home_page_url, site_key, 
 
         real_total = await get_real_total_chapters(metadata, adapter)
         chapter_count = recount_chapters(story_folder)
+        dead_count = count_dead_chapters(story_folder)
 
         # Luôn cập nhật lại metadata cho đúng số chương thực tế từ web
         if metadata.get("total_chapters_on_site") != real_total:
@@ -467,8 +481,8 @@ async def check_and_crawl_missing_all_stories(adapter, home_page_url, site_key, 
 
         logger.info(f"[CHECK] {metadata.get('title')} - txt: {chapter_count} / web: {real_total}")
 
-        # Move nếu đủ chương thực tế trên web
-        if chapter_count >= real_total and real_total > 0:
+        # Move nếu đủ chương thực tế trên web (bao gồm chương đã đánh dấu fail)
+        if chapter_count + dead_count >= real_total and real_total > 0:
             genre_name = "Unknown"
             if metadata.get('categories') and isinstance(metadata['categories'], list) and metadata['categories']:
                 genre_name = metadata['categories'][0].get('name')
@@ -482,7 +496,9 @@ async def check_and_crawl_missing_all_stories(adapter, home_page_url, site_key, 
             # Cảnh báo thiếu chương (chỉ 1 lần/truyện)
             title = metadata.get('title')
             if title and title not in notified_titles:
-                warning_msg = f"[WARNING] Sau crawl bù, truyện '{title}' vẫn thiếu chương: {chapter_count}/{real_total}"
+                warning_msg = (
+                    f"[WARNING] Sau crawl bù, truyện '{title}' vẫn thiếu chương: {chapter_count}+{dead_count}/{real_total}"
+                )
                 logger.warning(warning_msg)
                 await send_discord_notify(warning_msg)
                 notified_titles.add(title)
