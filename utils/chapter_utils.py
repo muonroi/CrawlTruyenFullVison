@@ -4,6 +4,7 @@ import hashlib
 import json
 import os
 import datetime
+import math
 from typing import Any, Dict, List
 import re
 from filelock import FileLock
@@ -71,8 +72,60 @@ async def crawl_missing_chapters_for_story(
     max_global_retry = MAX_CHAPTER_RETRY
     fail_counts: Dict[str, int] = {}
     permanent_missing: List[Dict[str, Any]] = []
+    skip_file = os.path.join(story_folder_path, "skipped_chapters.json")
+    try:
+        with open(skip_file, "r", encoding="utf-8") as f:
+            skipped_chapters = json.load(f)
+    except Exception:
+        skipped_chapters = {}
 
-    while retry_count < max_global_retry:
+    normal_rounds = max(0, max_global_retry - 1)
+
+    async def crawl_batch(batch, batch_idx, num_batches_now):
+        successful, failed = set(), []
+        sem = asyncio.Semaphore(BATCH_SEMAPHORE_LIMIT)
+        tasks = []
+        for i, (idx, ch, fname_only) in enumerate(batch):
+            full_path = os.path.join(story_folder_path, fname_only)
+            logger.info(f"[Batch {batch_idx}/{num_batches_now}] Đang crawl chương {idx+1}: {ch['title']}")
+
+            async def wrapped(ch=ch, idx=idx, fname_only=fname_only, full_path=full_path):
+                async with sem:
+                    try:
+                        await asyncio.wait_for(
+                            async_download_and_save_chapter(
+                                ch,
+                                story_data_item,
+                                current_discovery_genre_data,
+                                full_path,
+                                fname_only,
+                                "Crawl bù missing",
+                                f"{idx+1}/{len(chapters)}",
+                                crawl_state,
+                                successful,
+                                failed,
+                                idx,
+                                site_key=site_key,
+                                state_file=state_file,  # type: ignore
+                                adapter=adapter,
+                            ),
+                            timeout=300
+                        )
+                    except Exception as ex:
+                        logger.error(f"[Batch {batch_idx}] Lỗi khi crawl chương {idx+1}: {ch['title']} - {ex}")
+                        failed.append({
+                            'chapter_data': ch,
+                            'filename': full_path,
+                            'filename_only': fname_only,
+                            'original_idx': idx
+                        })
+            tasks.append(asyncio.create_task(wrapped()))
+        await asyncio.gather(*tasks, return_exceptions=True)
+        if state_file:
+            await save_crawl_state(crawl_state, state_file)
+        return successful, failed
+
+    while retry_count < normal_rounds:
         saved_files = get_saved_chapters_files(story_folder_path)
         if len(saved_files) >= total_chapters:
             logger.info(f"ĐÃ ĐỦ {len(saved_files)}/{total_chapters} chương cho '{story_data_item['title']}'")
@@ -82,6 +135,8 @@ async def crawl_missing_chapters_for_story(
         for idx, ch in enumerate(chapters):
             fname_only = get_chapter_filename(ch['title'], idx + 1)
             if fail_counts.get(fname_only, 0) >= MAX_CHAPTER_RETRY:
+                continue
+            if fname_only in skipped_chapters:
                 continue
             fpath = os.path.join(story_folder_path, fname_only)
             if fname_only not in saved_files or not os.path.exists(fpath) or os.path.getsize(fpath) < 20:
@@ -99,54 +154,10 @@ async def crawl_missing_chapters_for_story(
         batches = split_batches(missing_chapters, num_batches_now)
         logger.info(f"Crawl {len(missing_chapters)} chương với {num_batches_now} batch (batch size={batch_size})")
 
-        async def crawl_batch(batch, batch_idx):
-            successful, failed = set(), []
-            sem = asyncio.Semaphore(BATCH_SEMAPHORE_LIMIT)
-            tasks = []
-            for i, (idx, ch, fname_only) in enumerate(batch):
-                full_path = os.path.join(story_folder_path, fname_only)
-                logger.info(f"[Batch {batch_idx}/{num_batches_now}] Đang crawl chương {idx+1}: {ch['title']}")
-
-                async def wrapped(ch=ch, idx=idx, fname_only=fname_only, full_path=full_path):
-                    async with sem:
-                        try:
-                            await asyncio.wait_for(
-                                async_download_and_save_chapter(
-                                    ch,
-                                    story_data_item,
-                                    current_discovery_genre_data,
-                                    full_path,
-                                    fname_only,
-                                    "Crawl bù missing",
-                                    f"{idx+1}/{len(chapters)}",
-                                    crawl_state,
-                                    successful,
-                                    failed,
-                                    idx,
-                                    site_key=site_key,
-                                    state_file=state_file,  # type: ignore
-                                    adapter=adapter,
-                                ),
-                                timeout=300
-                            )
-                        except Exception as ex:
-                            logger.error(f"[Batch {batch_idx}] Lỗi khi crawl chương {idx+1}: {ch['title']} - {ex}")
-                            failed.append({
-                                'chapter_data': ch,
-                                'filename': full_path,
-                                'filename_only': fname_only,
-                                'original_idx': idx
-                            })
-                tasks.append(asyncio.create_task(wrapped()))
-            await asyncio.gather(*tasks, return_exceptions=True)
-            if state_file:
-                await save_crawl_state(crawl_state, state_file)
-            return successful, failed
-
         for batch_idx, batch in enumerate(batches):
             if not batch:
                 continue
-            _, failed = await crawl_batch(batch, batch_idx + 1)
+            _, failed = await crawl_batch(batch, batch_idx + 1, num_batches_now)
             for item in failed:
                 fname_only = item.get('filename_only')
                 fail_counts[fname_only] = fail_counts.get(fname_only, 0) + 1
@@ -162,6 +173,11 @@ async def crawl_missing_chapters_for_story(
                         "title": item['chapter_data'].get('title'),
                         "url": item['chapter_data'].get('url'),
                     })
+                    skipped_chapters[fname_only] = {
+                        "reason": "max_retry_reached",
+                        "retry": fail_counts[fname_only],
+                        "time": datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                    }
 
         retry_count += 1
         await smart_delay()
@@ -174,6 +190,42 @@ async def crawl_missing_chapters_for_story(
             logger.error(
                 f"[ALERT] Truyện '{story_data_item['title']}' còn các chương sau mãi chưa crawl được: {[f for _,_,f in missing_chapters]}"
             )
+
+    # --- Final retry for remaining failed chapters ---
+    saved_files = get_saved_chapters_files(story_folder_path)
+    final_missing = []
+    for idx, ch in enumerate(chapters):
+        fname_only = get_chapter_filename(ch['title'], idx + 1)
+        if fname_only in skipped_chapters:
+            continue
+        if fname_only in saved_files:
+            continue
+        final_missing.append((idx, ch, fname_only))
+
+    if final_missing:
+        logger.warning(
+            f"[FINAL] Thử lại {len(final_missing)} chương lỗi cuối cùng"
+        )
+        batch_size = int(
+            os.getenv("BATCH_SIZE") or get_optimal_batch_size(len(final_missing))
+        )
+        num_batches_now = max(1, (len(final_missing) + batch_size - 1) // batch_size)
+        batches = split_batches(final_missing, num_batches_now)
+        for batch_idx, batch in enumerate(batches):
+            _, failed = await crawl_batch(batch, batch_idx + 1, num_batches_now)
+            for item in failed:
+                fname_only = item.get('filename_only')
+                fail_counts[fname_only] = fail_counts.get(fname_only, 0) + 1
+                skipped_chapters[fname_only] = {
+                    "reason": "final_retry_fail",
+                    "retry": fail_counts[fname_only],
+                    "time": datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                }
+                permanent_missing.append({
+                    "index": (item.get('original_idx') or 0) + 1,
+                    "title": item['chapter_data'].get('title'),
+                    "url": item['chapter_data'].get('url'),
+                })
 
     if permanent_missing:
         report_path = os.path.join(story_folder_path, "missing_permanent.json")
@@ -191,6 +243,15 @@ async def crawl_missing_chapters_for_story(
         with open(report_path, "w", encoding="utf-8") as f:
             json.dump(old, f, ensure_ascii=False, indent=2)
         logger.warning(f"[REPORT] Đã ghi {len(permanent_missing)} chương lỗi vĩnh viễn vào {report_path}")
+
+    if skipped_chapters:
+        with open(skip_file, "w", encoding="utf-8") as f:
+            json.dump(skipped_chapters, f, ensure_ascii=False, indent=2)
+
+    fail_total = len(skipped_chapters)
+    if fail_total >= math.ceil(total_chapters * 2 / 3):
+        from utils.skip_manager import mark_story_as_skipped
+        mark_story_as_skipped(story_data_item, "too_many_failed_chapters")
 
 def clean_header_only_chapter(text: str):
     lines = text.splitlines()
