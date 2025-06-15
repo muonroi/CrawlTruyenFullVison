@@ -1,6 +1,7 @@
 import asyncio
 import glob
 import json
+from random import random
 import sys
 import time
 import aiohttp
@@ -621,9 +622,6 @@ async def process_genre_item(
 async def retry_failed_genres(
     adapter, site_key, settings: WorkerSettings, shuffle_func
 ):
-    import json
-    import random
-
     round_idx = 0
     while True:
         if not os.path.exists(settings.failed_genres_file):
