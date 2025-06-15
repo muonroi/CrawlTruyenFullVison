@@ -173,6 +173,9 @@ async def crawl_all_sources_until_full(
 
     retry_full = 0
     while True:
+        if is_story_skipped(story_data_item):
+            logger.warning(f"[SKIP][LOOP] Truyện '{story_data_item['title']}' đã bị đánh dấu skip, bỏ qua vòng lặp sources.")
+            break
         files_before = len(get_saved_chapters_files(story_folder_path))
         crawled = False
         for source in sources:
@@ -206,6 +209,10 @@ async def crawl_all_sources_until_full(
                 state_file=state_file,
                 adapter=adapter,
             )
+            load_skipped_stories()
+            if is_story_skipped(story_data_item):
+                logger.warning(f"[SKIP][AFTER CRAWL] Truyện '{story_data_item['title']}' đã bị đánh dấu skip, thoát khỏi vòng lặp sources.")
+                break
             files_now = len(get_saved_chapters_files(story_folder_path))
             if files_now >= total_chapters:
                 logger.info(
@@ -214,14 +221,16 @@ async def crawl_all_sources_until_full(
                 return
             crawled = True
 
-        files_after = len(get_saved_chapters_files(story_folder_path))
-        if files_after >= total_chapters:
-            break
-        if not crawled or files_after == files_before:
-            logger.warning(
-                f"[ALERT] Đã thử hết nguồn nhưng không crawl thêm được chương nào cho '{story_data_item['title']}'. Sẽ lặp lại."
-            )
-        retry_full += 1
+            files_after = len(get_saved_chapters_files(story_folder_path))
+            if files_after >= total_chapters:
+                break
+            if not crawled or files_after == files_before:
+                logger.warning(
+                    f"[ALERT] Đã thử hết nguồn nhưng không crawl thêm được chương nào cho '{story_data_item['title']}'. Đánh dấu skip và next truyện."
+                )
+                mark_story_as_skipped(story_data_item, reason="sources_fail_or_all_chapter_skipped")
+                break 
+            retry_full += 1
         if retry_full >= RETRY_STORY_ROUND_LIMIT:
             logger.error(
                 f"[FATAL] Vượt quá retry cho truyện {story_data_item['title']}, sẽ bỏ qua."
