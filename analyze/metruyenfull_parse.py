@@ -2,7 +2,7 @@ import re
 import httpx
 from bs4 import BeautifulSoup
 from scraper import make_request
-from config.config import PATTERN_FILE, get_random_headers, load_blacklist_patterns
+from config.config import PATTERN_FILE, get_random_headers, load_blacklist_patterns, MAX_CHAPTER_PAGES_TO_CRAWL
 from utils.logger import logger
 from utils.html_parser import get_total_pages_metruyen_category, parse_stories_from_category_page
 PATTERNS, CONTAINS_LIST = load_blacklist_patterns(PATTERN_FILE)
@@ -125,6 +125,8 @@ async def get_all_stories_from_category_with_page_check(self, genre_name, genre_
     all_stories = []
     pages_crawled = 0
     seen_urls = set()
+    last_first_url = None
+    repeat_count = 0
     for page in range(1, total_pages+1):
         page_url = genre_url if page == 1 else f"{genre_url.rstrip('/')}/page/{page}"
         resp = await make_request(page_url, site_key)
@@ -132,6 +134,23 @@ async def get_all_stories_from_category_with_page_check(self, genre_name, genre_
             break
         stories_on_page = parse_stories_from_category_page(resp.text)
         if not stories_on_page:
+            try:
+                from ai.selector_ai import ai_parse_category_fallback
+                ai_stories, _ = await ai_parse_category_fallback(page_url, resp.text)
+                stories_on_page = ai_stories or []
+            except Exception as e:
+                logger.warning(f"[AI-FALLBACK][MTRF][CATEGORY] Parse fail: {e}")
+            if not stories_on_page:
+                break
+        # repeat guard by first item url
+        first_url = stories_on_page[0]['url'] if stories_on_page else None
+        if last_first_url and first_url == last_first_url:
+            repeat_count += 1
+        else:
+            repeat_count = 0
+        last_first_url = first_url
+        if repeat_count >= 2:
+            logger.error("[MTRF][CATEGORY] Phat hien lap trang, dung crawl")
             break
         for s in stories_on_page:
             if s['url'] not in seen_urls:
@@ -193,8 +212,17 @@ async def get_chapters_from_story(self, story_url, story_title, total_chapters_o
             print(f"❌ Failed to determine total pages via AJAX. Assuming 1 page. Error: {e}")
             total_pages = 1
 
+        # Limit chapter pages to avoid infinite loops
+        try:
+            if MAX_CHAPTER_PAGES_TO_CRAWL:
+                total_pages = min(total_pages, int(MAX_CHAPTER_PAGES_TO_CRAWL))
+        except Exception:
+            pass
+
         # 3. Thu thập tất cả các chương
         all_chapters = []
+        seen = set()
+        no_new_pages = 0
         for page in range(1, total_pages + 1):
             print(f"Fetching chapters from page {page}/{total_pages}...")
             chapters_html = ''
@@ -215,10 +243,35 @@ async def get_chapters_from_story(self, story_url, story_title, total_chapters_o
             # Trích xuất chương từ HTML thu được
             if chapters_html:
                 page_soup = BeautifulSoup(chapters_html, 'html.parser')
+                before = len(seen)
                 for li_item in page_soup.select('ul.list-chapter li'):
                     a_tag = li_item.find('a')
                     if a_tag and a_tag.has_attr('href'):# type: ignore
-                        all_chapters.append({"title": a_tag.get_text(strip=True), "url": a_tag['href']})# type: ignore
+                        href = a_tag['href']
+                        if href not in seen:
+                            seen.add(href)
+                            all_chapters.append({"title": a_tag.get_text(strip=True), "url": href})# type: ignore
+                if len(seen) == before:
+                    try:
+                        from ai.selector_ai import ai_parse_chapter_list_fallback
+                        ai_items = await ai_parse_chapter_list_fallback(story_url + f"#page-{page}", chapters_html)
+                        for it in ai_items or []:
+                            h = it.get('url')
+                            if h and h not in seen:
+                                seen.add(h)
+                                all_chapters.append(it)
+                    except Exception as e:
+                        print(f"[AI-FALLBACK][MTRF][CHAPTERS] Parse fail: {e}")
+                if total_chapters_on_site and len(all_chapters) >= total_chapters_on_site:
+                    break
+                added = len(seen) - before
+                if added <= 0:
+                    no_new_pages += 1
+                else:
+                    no_new_pages = 0
+                if no_new_pages >= 2:
+                    print("[MTRF][CHAPTERS] Khong thay chuong moi trong 2 trang lien tiep, dung paginate.")
+                    break
 
         # 4. Xử lý trùng và sắp xếp
         print("Deduplicating and sorting chapters...")

@@ -553,6 +553,23 @@ def get_missing_chapters(story_folder: str, chapters: list[dict]) -> list[dict]:
         chapter_items = chapters
 
     existing_files = set([f for f in os.listdir(story_folder) if f.endswith('.txt')])
+    # Skip permanently failed (dead) chapters when calculating missing
+    dead_urls = set()
+    dead_indexes = set()
+    dead_path = os.path.join(story_folder, "dead_chapters.json")
+    try:
+        if os.path.exists(dead_path):
+            with open(dead_path, "r", encoding="utf-8") as f:
+                dead_list = json.load(f)
+            for d in dead_list:
+                u = d.get("url")
+                if u:
+                    dead_urls.add(u)
+                idx = d.get("index")
+                if isinstance(idx, int):
+                    dead_indexes.add(int(idx))
+    except Exception:
+        pass
 
     missing = []
     for idx, ch in enumerate(chapter_items):
@@ -564,6 +581,10 @@ def get_missing_chapters(story_folder: str, chapters: list[dict]) -> list[dict]:
             title = ch.get("title", "") or ""
             expected_file = get_chapter_filename(title, real_num)
         file_path = os.path.join(story_folder, expected_file)
+        ch_url = ch.get("url")
+        ch_index = ch.get("index", idx + 1)
+        if (ch_url and ch_url in dead_urls) or (isinstance(ch_index, int) and ch_index in dead_indexes):
+            continue
         if expected_file not in existing_files or not os.path.exists(file_path) or os.path.getsize(file_path) < 20:
             # append đủ thông tin cho crawl lại
             ch_for_missing = {**ch, "idx": idx}

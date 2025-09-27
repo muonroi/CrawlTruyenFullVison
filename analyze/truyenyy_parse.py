@@ -7,6 +7,8 @@ from bs4 import BeautifulSoup
 from scraper import make_request
 from utils.chapter_utils import get_max_page_by_playwright
 from utils.html_parser import clean_header, extract_chapter_content, get_total_pages_category
+from ai.selector_ai import ai_parse_category_fallback, ai_parse_chapter_list_fallback
+from config.config import MAX_CHAPTER_PAGES_TO_CRAWL
 
 def build_category_list_url(genre_url, page=1):
     base = genre_url.rstrip('/')
@@ -50,6 +52,18 @@ async def get_all_stories_from_genre_with_page_check(self, genre_name, genre_url
         soup = BeautifulSoup(resp.text, "html.parser")
         ul = soup.select_one("ul.flex.flex-col")
         if not ul:
+            try:
+                ai_stories, _ = await ai_parse_category_fallback(page_url, resp.text)
+                if ai_stories:
+                    for s in ai_stories:
+                        u = s.get('url')
+                        if u and u not in seen_urls:
+                            all_stories.append(s)
+                            seen_urls.add(u)
+                    pages_crawled += 1
+                    continue
+            except Exception as e:
+                logger.warning(f"[AI-FALLBACK][YY][CATEGORY] Parse fail: {e}")
             logger.warning(f"[YY][CATEGORY] Không tìm thấy list ở {page_url}")
             break
         for li in ul.find_all("li", recursive=False):
@@ -370,19 +384,50 @@ async def get_chapters_from_story(self, story_url, story_title, max_pages=None, 
     soup = BeautifulSoup(resp.text, "html.parser")
 
     max_page = await get_max_page_by_playwright(first_url, site_key)
-
     if max_pages:
         max_page = min(max_page, max_pages)
+    if MAX_CHAPTER_PAGES_TO_CRAWL:
+        try:
+            max_page = min(max_page, int(MAX_CHAPTER_PAGES_TO_CRAWL))
+        except Exception:
+            pass
 
     logger.info(f"[YY][CHAPTERS] Phát hiện {max_page} page chapter list cho {story_url}")
 
+    seen_urls = set()
+    no_new_pages = 0
     for page in range(1, max_page + 1):
         url = build_chapter_list_url(story_url, page)
         resp = await make_request(url, site_key)
         if not resp or not getattr(resp, "text", None):
             continue
         soup = BeautifulSoup(resp.text, "html.parser")
-        chapters += parse_chapters_from_soup(soup, self.BASE_URL)
+        before = len(seen_urls)
+        page_items = parse_chapters_from_soup(soup, self.BASE_URL)
+        if not page_items:
+            try:
+                from ai.selector_ai import ai_parse_chapter_list_fallback
+                ai_items = await ai_parse_chapter_list_fallback(url, resp.text)
+                page_items = ai_items or []
+            except Exception as e:
+                logger.warning(f"[AI-FALLBACK][YY][CHAPTERS] Parse fail: {e}")
+        for it in page_items:
+            u = it.get('url')
+            if u and u not in seen_urls:
+                seen_urls.add(u)
+                chapters.append(it)
+        # stop early when enough
+        if total_chapters and len(chapters) >= total_chapters:
+            break
+        # no-growth guard
+        added = len(seen_urls) - before
+        if added <= 0:
+            no_new_pages += 1
+        else:
+            no_new_pages = 0
+        if no_new_pages >= 2:
+            logger.warning("[YY][CHAPTERS] Khong thay chuong moi trong 2 trang lien tiep, dung paginate.")
+            break
 
     uniq, seen = [], set()
     for ch in chapters:
@@ -413,7 +458,7 @@ async def get_story_chapter_content(
         logger.error(f"Chương '{chapter_title}': Không nhận được phản hồi từ {chapter_url}")
         return None
     html = response.text
-    content = extract_chapter_content(html,site_key,chapter_title)
+    content = extract_chapter_content(html, site_key, chapter_title)
     if not content:
         # Ghi debug nếu cần
         with open("debug_truyenyy_empty_chapter.html", "w", encoding="utf-8") as f:

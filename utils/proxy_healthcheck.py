@@ -29,7 +29,7 @@ async def healthcheck_loop(interval: int = 300):
             ok = await check_proxy(proxy_url)
             if not ok:
                 logger.warning(f"[HEALTHCHECK] Proxy {proxy_url} failed")
-                mark_bad_proxy(proxy_url)
+                await mark_bad_proxy(proxy_url)
         await asyncio.sleep(interval)
 
 if __name__ == "__main__":

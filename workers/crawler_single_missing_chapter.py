@@ -225,9 +225,26 @@ async def crawl_single_story_worker(story_url: Optional[str]=None, title: Option
             return nums
         def get_missing_chapters(folder, chapters):
             existing_nums = get_existing_real_chapter_numbers(folder)
+            # Load dead set to skip permanently failed chapters
+            dead_indexes = set()
+            dead_urls = set()
+            dead_path = os.path.join(folder, "dead_chapters.json")
+            try:
+                if os.path.exists(dead_path):
+                    with open(dead_path, "r", encoding="utf-8") as f:
+                        dead_list = json.load(f)
+                    for d in dead_list:
+                        if isinstance(d.get("index"), int):
+                            dead_indexes.add(int(d["index"]))
+                        if d.get("url"):
+                            dead_urls.add(d["url"]) 
+            except Exception:
+                pass
             missing = []
             for idx, ch in enumerate(chapters):
                 real_num = extract_real_chapter_number(ch.get('title', '')) or (idx+1)
+                if real_num in dead_indexes or (ch.get('url') in dead_urls if ch.get('url') else False):
+                    continue
                 fname = get_chapter_filename(ch.get("title", ""), real_num)
                 path = os.path.join(folder, fname)
                 if real_num not in existing_nums or not os.path.exists(path) or os.path.getsize(path) < 20:

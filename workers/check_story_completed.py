@@ -1,4 +1,4 @@
-import os
+﻿import os
 import json
 import shutil
 
@@ -36,8 +36,9 @@ def check_story_can_move(story_folder):
 
     # 5. Kiểm tra số chương thực tế
     try:
-        chapter_files = [f for f in os.listdir(story_folder) if f.endswith('.txt')]
-        chapter_count = len(chapter_files)
+        txt_count = len([f for f in os.listdir(story_folder) if f.endswith('.txt')])
+        dead_count = count_dead_chapters(story_folder)
+        chapter_count = txt_count + dead_count
     except Exception as ex:
         reasons.append(f"Lỗi khi đếm file chương: {ex}")
         return False, reasons
@@ -154,3 +155,4 @@ if __name__ == "__main__":
     # print(f"\n== Tổng kết completed_stories ==")
     # print(f"Số truyện đủ điều kiện: {can_move_completed}")
     # print(f"Số truyện chưa đủ: {cant_move_completed}")
+

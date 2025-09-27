@@ -1,7 +1,7 @@
-import asyncio
+﻿import asyncio
 import glob
 import json
-from random import random
+import random
 import sys
 import time
 import aiohttp
@@ -19,6 +19,8 @@ from utils.chapter_utils import (
     export_chapter_metadata_sync,
     get_saved_chapters_files,
     slugify_title,
+    count_dead_chapters,
+    get_real_total_chapters,
 )
 from utils.domain_utils import get_site_key_from_url
 from utils.io_utils import (
@@ -215,7 +217,7 @@ async def crawl_all_sources_until_full(
                 logger.warning(f"[SKIP][AFTER CRAWL] Truyện '{story_data_item['title']}' đã bị đánh dấu skip, thoát khỏi vòng lặp sources.")
                 break
             files_now = len(get_saved_chapters_files(story_folder_path))
-            if files_now >= total_chapters:
+            if (files_now + count_dead_chapters(story_folder_path)) >= (len(chapters) if chapters else (total_chapters or 0)):
                 logger.info(
                     f"Đã crawl đủ chương {files_now}/{total_chapters} cho '{story_data_item['title']}' (từ nguồn {source.get('site_key')})"
                 )
@@ -223,7 +225,7 @@ async def crawl_all_sources_until_full(
             crawled = True
 
             files_after = len(get_saved_chapters_files(story_folder_path))
-            if files_after >= total_chapters:
+            if (files_after + count_dead_chapters(story_folder_path)) >= (len(chapters) if chapters else (total_chapters or 0)):
                 break
             if not crawled or files_after == files_before:
                 logger.warning(
@@ -249,6 +251,13 @@ async def initialize_and_log_setup_with_state(site_key) -> Tuple[str, Dict[str, 
     await create_proxy_template_if_not_exists(PROXIES_FILE, PROXIES_FOLDER)
     await load_proxies(PROXIES_FILE)
     await initialize_scraper(site_key)
+    try:
+        import os as _os
+        if (_os.getenv("AI_PRINT_METRICS", "false").lower() == "true"):
+            from ai.selector_ai import print_ai_metrics_summary
+            print_ai_metrics_summary()
+    except Exception:
+        pass
     homepage_url = BASE_URLS[site_key].rstrip("/") + "/"
     state_file = get_state_file(site_key)
     crawl_state = await load_crawl_state(state_file, site_key)
@@ -430,10 +439,24 @@ async def process_story_item(
 
     # 5. Đánh dấu completed và clear state
     is_complete = False
-    status = details.get("status")  # type: ignore
+    # Hoan tat khi so file chuong >= tong so chuong tren site.
+    # Khong phu thuoc truong 'status' de tranh khong next du du lieu da day du.
     total = details.get("total_chapters_on_site")  # type: ignore
-    if status and total and len(files_actual) >= total:
+    if not total:
+        try:
+            total = await get_real_total_chapters(story_data_item, adapter)
+        except Exception:
+            pass
+    if total and (len(files_actual) + count_dead_chapters(story_global_folder_path)) >= total:
         is_complete = True
+        try:
+            txt_count_final = len(files_actual)
+            dead_count_final = count_dead_chapters(story_global_folder_path)
+            logger.info(
+                f"[DONE][STORY][FINAL] '{story_title}' txt+dead={txt_count_final + dead_count_final}/{total}"
+            )
+        except Exception:
+            pass
         completed = set(crawl_state.get("globally_completed_story_urls", []))
         completed.add(story_data_item["url"])
         crawl_state["globally_completed_story_urls"] = sorted(completed)

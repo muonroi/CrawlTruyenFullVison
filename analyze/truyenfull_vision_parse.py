@@ -14,6 +14,7 @@ from scraper import make_request
 from config.config import (
     BASE_URLS,
     MAX_STORIES_PER_GENRE_PAGE,
+    MAX_CHAPTER_PAGES_TO_CRAWL,
     get_random_headers,
 )
 import re
@@ -230,6 +231,15 @@ async def get_stories_from_genre_page(genre_page_url: str, site_key) -> Tuple[Li
         if not next_page_url.startswith("http"):#type: ignore
             next_page_url = urljoin(genre_page_url, next_page_url)#type: ignore
 
+    # Fallback sang AI neu parse rong
+    if not stories:
+        try:
+            from ai.selector_ai import ai_parse_category_fallback
+            ai_stories, ai_next = await ai_parse_category_fallback(genre_page_url, response.text)
+            if ai_stories:
+                return ai_stories, ai_next
+        except Exception as e:
+            logger.warning(f"[AI-FALLBACK][GENRE] Parse fail: {e}")
     return stories, next_page_url#type: ignore
 
 
@@ -280,13 +290,30 @@ async def get_chapters_from_story(
         total_page = get_input(soup, "total-page")
         if not (truyen_id and truyen_ascii and total_page):
             logger.error("Không lấy được đủ thông tin (truyen-id, truyen-ascii, total-page)")
+            try:
+                from ai.selector_ai import ai_parse_chapter_list_fallback
+                fb = await ai_parse_chapter_list_fallback(story_url, resp.text)
+                if fb:
+                    return fb
+            except Exception as e:
+                logger.warning(f"[AI-FALLBACK][CHAPTER-ID] Detect fail: {e}")
             return []
 
         truyen_name = story_title  # Bạn có thể dùng <title> nếu muốn, ở đây giữ nguyên title truyền vào
         total_page = int(total_page)#type: ignore
+        # Gioi han de phong vong lap vo han khi site tra ve nhieu trang bat thuong
+        limit_pages = total_page
+        try:
+            if MAX_CHAPTER_PAGES_TO_CRAWL:
+                limit_pages = min(total_page, int(MAX_CHAPTER_PAGES_TO_CRAWL))
+        except Exception:
+            limit_pages = total_page
+
+        seen_urls = set()
+        no_new_pages = 0
 
         # 2. Lặp từng page để lấy danh sách chương qua AJAX
-        for page in range(1, total_page + 1):
+        for page in range(1, limit_pages + 1):
             params = {
                 "type": "list_chapter",
                 "tid": truyen_id,
@@ -310,14 +337,38 @@ async def get_chapters_from_story(
                 logger.warning(f"Không có chap_list trong AJAX page {page}")
                 continue
             soup_chap = BeautifulSoup(chap_html, "html.parser")
+            before_count = len(seen_urls)
             for a in soup_chap.select("ul.list-chapter li a"):
-                chapters.append({
-                    "title": a.get("title") or a.get_text(strip=True),
-                    "url": a["href"]
-                })#type: ignore
+                href = a.get("href")
+                if href and href not in seen_urls:
+                    seen_urls.add(href)
+                    chapters.append({
+                        "title": a.get("title") or a.get_text(strip=True),
+                        "url": href
+                    })#type: ignore
+            # Fallback AI neu trang AJAX khong them duoc chuong nao (markup thay doi)
+            if len(seen_urls) == before_count:
+                try:
+                    from ai.selector_ai import ai_parse_chapter_list_fallback
+                    ai_chaps = await ai_parse_chapter_list_fallback(story_url, chap_html)
+                    for it in ai_chaps:
+                        if it.get('url') and it['url'] not in seen_urls:
+                            seen_urls.add(it['url'])
+                            chapters.append(it)
+                except Exception as e:
+                    logger.warning(f"[AI-FALLBACK][CHAPTER-LIST] Parse fail: {e}")
             # Nếu đã lấy đủ số chương metadata thì dừng (tránh request thừa)
             if total_chapters_on_site and len(chapters) >= total_chapters_on_site:
                 logger.info(f"Đã lấy đủ {total_chapters_on_site} chương, dừng crawl trang chương.")
+                break
+            # Neu 2 trang lien tiep khong co chuong moi => dung de tranh lap vo han
+            added = len(seen_urls) - before_count
+            if added <= 0:
+                no_new_pages += 1
+            else:
+                no_new_pages = 0
+            if no_new_pages >= 2:
+                logger.warning("Khong thay chuong moi trong 2 trang lien tiep, dung crawl danh sach chuong.")
                 break
             await smart_delay()
 
@@ -347,7 +398,7 @@ async def get_story_chapter_content(
         logger.error(f"Chương '{chapter_title}': Không nhận được phản hồi từ {chapter_url}")
         return None
     html = response.text
-    content = extract_chapter_content(html,site_key,chapter_title)
+    content = extract_chapter_content(html, site_key, chapter_title)
     if not content:
         logger.warning(f"Nội dung chương '{chapter_title}' trống sau khi clean header.")
         return None

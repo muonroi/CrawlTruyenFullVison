@@ -12,7 +12,7 @@ from config.config import LOADED_PROXIES
 from utils.notifier import send_discord_notify
 
 # Đặt biến này nếu muốn load từ API, để rỗng "" nếu chỉ dùng file txt
-PROXY_API_URL = "http://api.proxy.ip2world.com/getProxyIp?num=500&lb=1&return_type=json&protocol=http"
+PROXY_API_URL = os.getenv("PROXY_API_URL", "")
 
 proxy_mode = "random"
 current_proxy_index: int = 0
@@ -95,12 +95,12 @@ async def reload_proxies_if_changed(filename: str = None) -> None:
         _last_proxy_mtime = mtime
         logger.info("[Proxy] Reloaded proxy list from disk")
 
-def mark_bad_proxy(proxy: str):
+async def mark_bad_proxy(proxy: str):
     global FAILED_PROXY_TIMES
     COOLDOWN_PROXIES[proxy] = time.time() + PROXY_COOLDOWN_SECONDS
     if not should_blacklist_proxy(proxy, LOADED_PROXIES):
         logger.warning(f"[Proxy] Proxy xoay hoặc pool chỉ có 1 proxy, sẽ không blacklist: {proxy}. Chỉ sleep & retry.")
-        time.sleep(10)
+        await asyncio.sleep(10)
         return
 
     bad_proxy_counts.setdefault(proxy, 0)

@@ -12,6 +12,7 @@ BASE_URLS = {
     "truyenfull": os.getenv("BASE_TRUYENFULL", "https://truyenfull.vision"),
     "metruyenfull": os.getenv("BASE_METRUYENFULL", "https://metruyenfull.net"),
     "truyenyy": os.getenv("BASE_TRUYENYY", "https://truyenyy.co"),
+    "xtruyen": os.getenv("BASE_XTRUYEN", "https://xtruyen.vn"),
 }
 
 # ============ CRAWL CONFIG ============

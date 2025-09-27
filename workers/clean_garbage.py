@@ -3,6 +3,7 @@ import json
 import time
 from datetime import datetime, timedelta
 import shutil
+from utils.chapter_utils import count_dead_chapters
 
 DATA_FOLDER = "truyen_data"
 COMPLETED_FOLDER = "completed_stories"
@@ -111,7 +112,9 @@ def clean_abandoned_stories(min_percent=10, days=30):
             with open(meta_file, "r", encoding="utf-8") as f:
                 meta = json.load(f)
             total = meta.get("total_chapters_on_site", 0) or 0
-            crawled = len([f for f in os.listdir(story_path) if f.endswith('.txt')])
+            txt_count = len([f for f in os.listdir(story_path) if f.endswith('.txt')])
+            dead_count = count_dead_chapters(story_path)
+            crawled = txt_count + dead_count
             meta_time = meta.get("metadata_updated_at")
             if not meta_time: continue
             updated_at = datetime.strptime(meta_time, "%Y-%m-%d %H:%M:%S")

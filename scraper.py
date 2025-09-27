@@ -135,23 +135,39 @@ async def _make_request_playwright(
             context = await get_context(proxy_settings, headers)
             page = await context.new_page()
             logger.debug(f"[make_request] {attempt}/{max_retries} -> {url}")
-            await page.goto(url, timeout=timeout * 1000)
-            if wait_for_selector:
+            content = None
+            try:
+                await page.goto(url, timeout=timeout * 1000)
                 try:
-                    await page.wait_for_selector(wait_for_selector, timeout=timeout * 1000)
+                    await page.wait_for_load_state("networkidle", timeout=timeout * 1000)
                 except Exception:
                     pass
-            content = await page.content()
-            await page.close()
-            await recycle_idle_contexts()
-            if is_anti_bot_content(content):
-                logger.warning("[playwright] Anti-bot detected")
-                if USE_PROXY and proxy_settings:
-                    mark_bad_proxy(proxy_url)
-                await asyncio.sleep(random.uniform(2, 4))
-                await release_context(proxy_settings)
-                continue
-            await release_context(proxy_settings)
+                if wait_for_selector:
+                    try:
+                        await page.wait_for_selector(wait_for_selector, timeout=timeout * 1000)
+                    except Exception:
+                        pass
+                max_challenge_checks = 3
+                for _ in range(max_challenge_checks):
+                    content = await page.content()
+                    if not is_anti_bot_content(content):
+                        break
+                    logger.warning("[playwright] Anti-bot detected, waiting for challenge to resolve")
+                    await page.wait_for_timeout(4000)
+                else:
+                    logger.warning("[playwright] Anti-bot persisted after waits")
+                    if USE_PROXY and proxy_settings and proxy_url:
+                        await mark_bad_proxy(proxy_url)
+                    await asyncio.sleep(random.uniform(2, 4))
+                    if proxy_settings is not None:
+                        await release_context(proxy_settings)
+                    continue
+            finally:
+                try:
+                    await page.close()
+                except Exception:
+                    pass
+                await recycle_idle_contexts()
 
             class Resp:
                 def __init__(self, text):
@@ -169,7 +185,7 @@ async def _make_request_playwright(
     return None
 
 
-async def make_request(url, site_key, timeout: int = 30, max_retries: int = 5):
+async def make_request(url, site_key, timeout: int = 30, max_retries: int = 5, wait_for_selector: str | None = None):
     """Try httpx first then fallback to Playwright when blocked."""
     resp = await fetch(url, site_key, timeout)
     fallback_stats["httpx_success"].setdefault(site_key, 0)
@@ -183,4 +199,4 @@ async def make_request(url, site_key, timeout: int = 30, max_retries: int = 5):
         return R(resp.text)
     logger.info("[request] Fallback to Playwright due to block or bad status")
     fallback_stats["fallback_count"][site_key] += 1
-    return await _make_request_playwright(url, site_key, timeout, max_retries)
+    return await _make_request_playwright(url, site_key, timeout, max_retries, wait_for_selector=wait_for_selector)
