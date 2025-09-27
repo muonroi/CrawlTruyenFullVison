@@ -44,6 +44,13 @@ def should_blacklist_proxy(proxy_url, loaded_proxies):
 async def load_proxies(filename: str = None) -> List[str]:
     """Load proxies từ file txt hoặc từ API nếu PROXY_API_URL có giá trị"""
     global LOADED_PROXIES
+
+    if not USE_PROXY:
+        # Khi không sử dụng proxy, đảm bảo danh sách rỗng và không log nhầm số lượng proxy.
+        if LOADED_PROXIES:
+            LOADED_PROXIES.clear()
+        logger.info("[Proxy] USE_PROXY=false, bỏ qua việc load proxy.")
+        return LOADED_PROXIES
     if PROXY_API_URL:
         try:
             async with httpx.AsyncClient(timeout=10) as client:
@@ -80,6 +87,9 @@ async def load_proxies(filename: str = None) -> List[str]:
 async def reload_proxies_if_changed(filename: str = None) -> None:
     """Reload proxies nếu file đổi (hoặc luôn reload nếu dùng API)"""
     global _last_proxy_mtime
+
+    if not USE_PROXY:
+        return
     if PROXY_API_URL:
         # Luôn reload mỗi lần gọi
         await load_proxies()
