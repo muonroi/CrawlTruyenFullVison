@@ -265,8 +265,18 @@ async def get_all_stories_from_genre(
     return all_stories
 
 def get_input_value(soup, input_id, default=None):
-    tag = soup.find("input", {"id": input_id})
-    return tag["value"] if tag and tag.has_attr("value") else default
+    tag = soup.select_one(f"input#{input_id}")
+    if not tag:
+        for candidate in soup.find_all("input"):
+            if candidate.get("id") == input_id:
+                tag = candidate
+                break
+    if tag and tag.has_attr("value"):
+        value = tag.get("value")
+        if isinstance(value, list):
+            return value[0] if value else default
+        return value
+    return default
 
 async def get_chapters_from_story(
     story_url: str, story_title: str,
