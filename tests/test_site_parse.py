@@ -19,8 +19,7 @@ def load_funcs(path, names, extra=None):
     return [ns[n] for n in names]
 
 
-build_category_list_url, parse_chapters_from_soup = load_funcs(
-    'analyze/truyenyy_parse.py', ['build_category_list_url', 'parse_chapters_from_soup'])
+
 
 absolutize, = load_funcs('analyze/vivutruyen_parse.py', ['absolutize'])
 
@@ -52,20 +51,7 @@ FAKE_HTML = """
 """
 
 
-def test_truyenyy_build_url():
-    base = 'https://yy/truyen'
-    assert build_category_list_url(base, 1) == base
-    assert build_category_list_url(base, 3) == f'{base}?p=3'
 
-
-def test_truyenyy_parse_chapters():
-    html = """
-    <ul class='flex flex-col w-full divide-y'>
-        <li><a class='flex flex-row items-center' href='/c1'><p class='flex-1 font-[300] line-clamp-2'>T1</p></a></li>
-    </ul>"""
-    soup = BeautifulSoup(html, 'html.parser')
-    chs = parse_chapters_from_soup(soup, 'https://yy')
-    assert chs == [{'url': 'https://yy/c1', 'title': 'T1'}]
 
 
 def test_vivutruyen_absolutize():

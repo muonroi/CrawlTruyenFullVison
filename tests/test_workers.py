@@ -213,3 +213,48 @@ async def test_process_genre_item_batches(tmp_path, monkeypatch):
     await process_genre_item(None, genre, {}, adapter, "dummy")
 
     assert called == [f"s{i}" for i in range(5)]
+
+
+@pytest.mark.asyncio
+async def test_failed_download_sends_retry_job(monkeypatch, mock_kafka_producer):
+    """Tests that a failed chapter download correctly sends a 'retry_chapter' job to Kafka."""
+    # 1. Arrange
+    from utils.chapter_utils import async_download_and_save_chapter
+
+    # Mock the adapter to simulate a download failure
+    mock_adapter = MagicMock()
+    mock_adapter.get_chapter_content = AsyncMock(return_value=None)
+    monkeypatch.setattr("utils.chapter_utils.log_error_chapter", AsyncMock()) # Mock logger to avoid file IO
+
+    # Prepare dummy data for the function call
+    chapter_info = {"url": "http://fail.com/c1", "title": "Failed Chapter"}
+    story_data = {"title": "My Story", "url": "http://fail.com/story"}
+    filename = "/tmp/story/0001_failed.txt"
+    site_key = "dummy_site"
+
+    # 2. Act
+    await async_download_and_save_chapter(
+        chapter_info=chapter_info,
+        story_data_item=story_data,
+        current_discovery_genre_data={},
+        chapter_filename_full_path=filename,
+        chapter_filename_only="0001_failed.txt",
+        pass_description="test_pass",
+        chapter_display_idx_log="1/1",
+        crawl_state={},
+        successfully_saved=set(),
+        failed_list=[],
+        site_key=site_key,
+        adapter=mock_adapter
+    )
+
+    # 3. Assert
+    # Verify that our mock Kafka producer was called
+    mock_kafka_producer.assert_called_once()
+    
+    # Verify the content of the job
+    call_args = mock_kafka_producer.call_args[0][0]
+    assert call_args["type"] == "retry_chapter"
+    assert call_args["chapter_url"] == "http://fail.com/c1"
+    assert call_args["story_title"] == "My Story"
+    assert call_args["site"] == site_key

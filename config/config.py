@@ -9,9 +9,6 @@ load_dotenv()
 
 # ============ BASE URLs ============
 BASE_URLS = {
-    "truyenfull": os.getenv("BASE_TRUYENFULL", "https://truyenfull.vision"),
-    "metruyenfull": os.getenv("BASE_METRUYENFULL", "https://metruyenfull.net"),
-    "truyenyy": os.getenv("BASE_TRUYENYY", "https://truyenyy.co"),
     "xtruyen": os.getenv("BASE_XTRUYEN", "https://xtruyen.vn"),
 }
 
@@ -61,9 +58,9 @@ TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
 
 # ============ LIMIT CRAWL ============
-MAX_GENRES_TO_CRAWL = int(os.getenv("MAX_GENRES_TO_CRAWL", 0)) or None
+MAX_GENRES_TO_CRAWL = int(os.getenv("MAX_GENRES_TO_CRAWL", 2)) or None
 MAX_STORIES_PER_GENRE_PAGE = int(os.getenv("MAX_STORIES_PER_GENRE_PAGE", 0)) or None
-MAX_STORIES_TOTAL_PER_GENRE = int(os.getenv("MAX_STORIES_TOTAL_PER_GENRE", 0)) or None
+MAX_STORIES_TOTAL_PER_GENRE = int(os.getenv("MAX_STORIES_TOTAL_PER_GENRE", 10)) or None
 MAX_CHAPTER_PAGES_TO_CRAWL = int(os.getenv("MAX_CHAPTER_PAGES_TO_CRAWL", 0)) or None
 
 # ============ ASYNC LIMIT ============
@@ -79,17 +76,7 @@ PATTERN_FILE = os.getenv("PATTERN_FILE", "config/blacklist_patterns.txt")
 ANTI_BOT_PATTERN_FILE = os.getenv("ANTI_BOT_PATTERN_FILE", "config/anti_bot_patterns.txt")
 
 # ============ PARSING RULE ============
-def truyenyy_selector(soup):
-    # Bảo thủ: tìm article có cả "flex" và "flex-col"
-    for tag in soup.find_all("article"):
-        classes = tag.get("class", [])
-        if "flex" in classes and "flex-col" in classes:
-            return tag
-    return None
 SITE_SELECTORS = {
-    "truyenfull": lambda soup: soup.find("div", id=re.compile(r'\bchapter-c\b', re.I)),
-    "truyenyy": truyenyy_selector,
-    "metruyenfull": lambda soup: soup.select_one("div.chapter-content"),
 }
 HEADER_PATTERNS = [r"^nguồn:", r"^truyện:", r"^thể loại:", r"^chương:"]
 HEADER_RE = re.compile("|".join(HEADER_PATTERNS), re.IGNORECASE)
