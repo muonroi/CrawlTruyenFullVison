@@ -18,6 +18,14 @@ RUN apt-get update && apt-get install -y \
     libxrandr2 \
     libgbm1 \
     libasound2 \
+    libpango-1.0-0 \
+    libpangocairo-1.0-0 \
+    libcairo2 \
+    libatspi2.0-0 \
+    libfontconfig1 \
+    libfreetype6 \
+    fonts-unifont \
+    fonts-liberation \
     && rm -rf /var/lib/apt/lists/*
 
 # Thiết lập thư mục làm việc trong container
@@ -29,7 +37,7 @@ COPY requirements.txt requirements.txt
 RUN pip install --no-cache-dir -r requirements.txt
 
 # Cài đặt trình duyệt cho Playwright
-RUN playwright install --with-deps chromium
+RUN python -m playwright install chromium
 
 # Sao chép toàn bộ code của ứng dụng vào thư mục làm việc
 COPY . .

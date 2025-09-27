@@ -9,8 +9,17 @@ on:
 jobs:
   test:
     runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: .
     steps:
       - uses: actions/checkout@v4
+
+      - name: Debug paths
+        run: |
+          pwd
+          ls -la
+          git ls-files analyze/vivutruyen_parse.py || true
 
       - name: Set up Python
         uses: actions/setup-python@v5

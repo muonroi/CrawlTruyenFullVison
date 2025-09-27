@@ -30,8 +30,8 @@ services:
     container_name: crawler-consumer
     depends_on:
       - kafka
-    # Chạy Kafka dispatcher để lắng nghe và xử lý jobs
-    command: python kafka/kafka_dispatcher.py
+    # Chạy Kafka dispatcher dưới dạng module để giải quyết vấn đề import
+    command: python -m kafka.kafka_dispatcher
     environment:
       # Kết nối tới kafka qua mạng nội bộ của Docker
       - KAFKA_BROKERS=kafka:29092
@@ -52,9 +52,8 @@ services:
     container_name: crawler-producer
     depends_on:
       - kafka
-    # Chạy luồng crawl chính để tìm và gửi job.
-    # Target để crawl (ví dụ: all_sites, xtruyen) được điều khiển bởi biến CRAWL_TARGET trong file .env
-    command: python main.py ${CRAWL_TARGET:-all_sites}
+    # Chạy luồng crawl chính dưới dạng module
+    command: python -m main ${CRAWL_TARGET:-all_sites}
     environment:
       # Kết nối tới kafka qua mạng nội bộ của Docker
       - KAFKA_BROKERS=kafka:29092
