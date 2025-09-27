@@ -65,8 +65,9 @@ from utils.state_utils import (
 )
 from workers.crawler_missing_chapter import check_and_crawl_missing_all_stories
 from workers.crawler_single_missing_chapter import crawl_single_story_worker
-from workers.missing_chapter_worker import crawl_all_missing_stories
+
 from utils.chapter_utils import slugify_title
+from kafka.kafka_producer import send_job, close_producer
 from utils.skip_manager import (
     load_skipped_stories,
     mark_story_as_skipped,
@@ -488,6 +489,12 @@ async def process_story_item(
     except Exception as ex:
         logger.warning(f"[CHAPTER_META] Lỗi khi export chapter_metadata.json: {ex}")
 
+    # 7. Gửi job fallback để kiểm tra lại chương bị thiếu
+    await send_job({
+        "type": "check_missing_chapters",
+        "story_folder_path": story_global_folder_path
+    })
+
     return is_complete
 
 
@@ -844,10 +851,13 @@ if __name__ == "__main__":
     mode = os.getenv("MODE") or (sys.argv[1] if len(sys.argv) > 1 else None)
     crawl_mode = os.getenv("CRAWL_MODE") or (sys.argv[2] if len(sys.argv) > 2 else None)
 
-    if mode == "all_sites":
-        asyncio.run(run_all_sites(crawl_mode=crawl_mode))
-    elif mode:  # mode là site_key
-        asyncio.run(run_single_site(site_key=mode, crawl_mode=crawl_mode))
-    else:
-        print("❌ Cần truyền site_key hoặc 'all_sites' làm đối số.")
-        sys.exit(1)
+    try:
+        if mode == "all_sites":
+            asyncio.run(run_all_sites(crawl_mode=crawl_mode))
+        elif mode:  # mode là site_key
+            asyncio.run(run_single_site(site_key=mode, crawl_mode=crawl_mode))
+        else:
+            print("❌ Cần truyền site_key hoặc 'all_sites' làm đối số.")
+            sys.exit(1)
+    finally:
+        asyncio.run(close_producer())

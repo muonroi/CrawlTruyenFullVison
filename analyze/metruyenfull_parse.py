@@ -82,19 +82,23 @@ async def get_story_metadata(self, story_url):
         if a_tag.has_attr('href'):
             categories.append({'name': a_tag.get_text(strip=True), 'url': a_tag['href']})
 
-    # Số chương
+    # So chuong
     num_chapters = 0
     for label in soup.select('.info-holder .label-success'):
         txt = label.get_text()
-        if 'chương' in txt.lower():
+        if 'chuong' in txt.lower():
             match = re.search(r'(\d+)', txt)
             if match:
                 num_chapters = int(match.group(1))
-                logger.info(f"Lấy được số chương từ label: {num_chapters} chương")
+                logger.info(f"Lay duoc so chuong tu label: {num_chapters} chuong")
     # Fallback
     if not num_chapters or num_chapters < 100:
-        logger.warning(f"Không lấy được tổng số chương chuẩn, sẽ crawl paginate đếm số chương cho {story_url}")
-        chapters = await get_chapters_from_story(self, story_url, title, total_chapters_on_site=num_chapters, site_key=self.SITE_KEY)
+        logger.warning(f"Khong lay duoc tong so chuong chuan, se crawl paginate dem so chuong cho {story_url}")
+        chapters_result = get_chapters_from_story(self, story_url, title, total_chapters_on_site=num_chapters, site_key=self.SITE_KEY)
+        if asyncio.iscoroutine(chapters_result):
+            chapters = await chapters_result
+        else:
+            chapters = chapters_result
         num_chapters = len(chapters)
     
     # Cover
@@ -119,7 +123,7 @@ async def get_all_stories_from_category_with_page_check(self, genre_name, genre_
         return [], 0, 0
     html = resp.text
     total_pages = get_total_pages_metruyen_category(html)
-    logger.info(f"Category {total_pages} có trang.")
+    logger.info(f"Category {total_pages} co trang.")
     if max_pages:
         total_pages = min(total_pages, max_pages)
     all_stories = []
@@ -157,7 +161,7 @@ async def get_all_stories_from_category_with_page_check(self, genre_name, genre_
                 all_stories.append(s)
                 seen_urls.add(s['url'])
         pages_crawled += 1
-    logger.info(f"Category {genre_name}: crawl được {len(all_stories)} truyện/{pages_crawled}/{total_pages} trang.")
+    logger.info(f"Category {genre_name}: crawl duoc {len(all_stories)} truyen/{pages_crawled}/{total_pages} trang.")
     return all_stories, total_pages, pages_crawled
 
 
@@ -172,7 +176,7 @@ async def get_chapters_from_story(self, story_url, story_title, total_chapters_o
     ajax_url = "https://metruyenfull.net/wp-admin/admin-ajax.php"
 
     async with httpx.AsyncClient(headers=headers) as client:
-        # 1. Lấy trang đầu để lấy ID truyện
+        # 1. Lay trang dau de lay ID truyen
         print(f"Fetching initial page to get story ID: {story_url}")
         resp = await client.get(story_url)
         initial_soup = BeautifulSoup(resp.text, "html.parser")
@@ -180,11 +184,11 @@ async def get_chapters_from_story(self, story_url, story_title, total_chapters_o
         truyen_id_input = initial_soup.find("input", {"id": "truyen-id"}) or initial_soup.find("input",
                                                                                                {"id": "id_post"})
         if not (truyen_id_input and truyen_id_input.get("value")):# type: ignore
-            raise Exception("Không lấy được id truyện!")
+            raise Exception("Khong lay duoc id truyen!")
         truyen_id = truyen_id_input["value"] # type: ignore
         print(f"Found story ID: {truyen_id}")
 
-        # 2. Lấy tổng số trang từ key 'pagination' trong AJAX response
+        # 2. Lay tong so trang tu key 'pagination' trong AJAX response
         total_pages = 1
         print("Making a decisive AJAX call to find total pages...")
         try:
@@ -194,7 +198,7 @@ async def get_chapters_from_story(self, story_url, story_title, total_chapters_o
 
             ajax_data = resp.json()
 
-            # Lấy chuỗi HTML của phần phân trang từ key 'pagination'
+            # Lay chuoi HTML cua phan phan trang tu key 'pagination'
             pagination_html = ajax_data.get('pagination', '')
 
             if pagination_html:
@@ -202,14 +206,14 @@ async def get_chapters_from_story(self, story_url, story_title, total_chapters_o
                 total_page_input = pagination_soup.find("input", {"name": "total-page"})
                 if total_page_input and total_page_input.get("value", "").isdigit():# type: ignore
                     total_pages = int(total_page_input["value"])# type: ignore
-                    print(f"✅ Success! Total pages found: {total_pages}")
+                    print(f" Success! Total pages found: {total_pages}")
                 else:
-                    print("⚠️ Could not find 'total-page' input in pagination HTML.")
+                    print(" Could not find 'total-page' input in pagination HTML.")
             else:
-                print("⚠️ AJAX response did not contain 'pagination' key.")
+                print(" AJAX response did not contain 'pagination' key.")
 
         except Exception as e:
-            print(f"❌ Failed to determine total pages via AJAX. Assuming 1 page. Error: {e}")
+            print(f" Failed to determine total pages via AJAX. Assuming 1 page. Error: {e}")
             total_pages = 1
 
         # Limit chapter pages to avoid infinite loops
@@ -219,7 +223,7 @@ async def get_chapters_from_story(self, story_url, story_title, total_chapters_o
         except Exception:
             pass
 
-        # 3. Thu thập tất cả các chương
+        # 3. Thu thap tat ca cac chuong
         all_chapters = []
         seen = set()
         no_new_pages = 0
@@ -227,20 +231,20 @@ async def get_chapters_from_story(self, story_url, story_title, total_chapters_o
             print(f"Fetching chapters from page {page}/{total_pages}...")
             chapters_html = ''
             if page == 1:
-                # Trang 1 lấy HTML từ lần tải đầu tiên
+                # Trang 1 lay HTML tu lan tai dau tien
                 chapters_html = str(initial_soup)
             else:
-                # Các trang sau gọi AJAX và lấy HTML từ key 'list_chap'
+                # Cac trang sau goi AJAX va lay HTML tu key 'list_chap'
                 try:
                     payload = {"action": "tw_ajax", "type": "pagination", "id": truyen_id, "page": page}
                     resp = await client.post(ajax_url, data=payload)
                     ajax_data = resp.json()
                     chapters_html = ajax_data.get('list_chap', '')
                 except Exception as e:
-                    print(f"⚠️ Failed to fetch page {page}. Skipping. Error: {e}")
+                    print(f" Failed to fetch page {page}. Skipping. Error: {e}")
                     continue
 
-            # Trích xuất chương từ HTML thu được
+            # Trich xuat chuong tu HTML thu duoc
             if chapters_html:
                 page_soup = BeautifulSoup(chapters_html, 'html.parser')
                 before = len(seen)
@@ -273,7 +277,7 @@ async def get_chapters_from_story(self, story_url, story_title, total_chapters_o
                     print("[MTRF][CHAPTERS] Khong thay chuong moi trong 2 trang lien tiep, dung paginate.")
                     break
 
-        # 4. Xử lý trùng và sắp xếp
+        # 4. Xu ly trung va sap xep
         print("Deduplicating and sorting chapters...")
         uniq = []
         seen_urls = set()
@@ -283,7 +287,7 @@ async def get_chapters_from_story(self, story_url, story_title, total_chapters_o
                 seen_urls.add(ch['url'])
 
         def sort_key(chapter):
-            match = re.search(r"chương-(\d+)", chapter['title'], re.IGNORECASE) or re.search(r"(\d+)", chapter['title'])
+            match = re.search(r"chuong-(\d+)", chapter['title'], re.IGNORECASE) or re.search(r"(\d+)", chapter['title'])
             return int(match.group(1)) if match else float('inf')
 
         uniq.sort(key=sort_key)

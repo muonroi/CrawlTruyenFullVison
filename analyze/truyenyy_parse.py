@@ -18,7 +18,7 @@ def build_category_list_url(genre_url, page=1):
         return f"{base}"
 
 async def get_all_stories_from_genre_with_page_check(self, genre_name, genre_url, site_key, max_pages=None):
-    """Crawl toàn bộ truyện trong 1 category với kiểm soát lặp."""
+    """Crawl toan bo truyen trong 1 category voi kiem soat lap."""
     from urllib.parse import urljoin
 
     first_page_url = build_category_list_url(genre_url, page=1)
@@ -40,13 +40,13 @@ async def get_all_stories_from_genre_with_page_check(self, genre_name, genre_url
     for page in range(1, total_pages + 1):
         page_url = build_category_list_url(genre_url, page)
         if page_url in visited_pages:
-            logger.error("[YY][CATEGORY] Lặp trang, dừng crawl")
+            logger.error("[YY][CATEGORY] Lap trang, dung crawl")
             break
         visited_pages.add(page_url)
 
         resp = await make_request(page_url, self.SITE_KEY)
         if not resp or not getattr(resp, 'text', None):
-            logger.warning(f"[YY][CATEGORY] Không nhận được dữ liệu {page_url}")
+            logger.warning(f"[YY][CATEGORY] Khong nhan duoc du lieu {page_url}")
             break
 
         soup = BeautifulSoup(resp.text, "html.parser")
@@ -64,10 +64,10 @@ async def get_all_stories_from_genre_with_page_check(self, genre_name, genre_url
                     continue
             except Exception as e:
                 logger.warning(f"[AI-FALLBACK][YY][CATEGORY] Parse fail: {e}")
-            logger.warning(f"[YY][CATEGORY] Không tìm thấy list ở {page_url}")
+            logger.warning(f"[YY][CATEGORY] Khong tim thay list o {page_url}")
             break
         for li in ul.find_all("li", recursive=False):
-            # 1. Lấy url + cover
+            # 1. Lay url + cover
             a_img = li.select_one("a[href*='/truyen/']") #type: ignore
             cover = None
             url = None
@@ -77,15 +77,15 @@ async def get_all_stories_from_genre_with_page_check(self, genre_name, genre_url
                 if img_tag and img_tag.has_attr('src'):#type: ignore
                     cover = img_tag['src']#type: ignore
 
-            # 2. Lấy title
+            # 2. Lay title
             h3 = li.select_one("h3.font-title")#type: ignore
             title = h3.get_text(strip=True) if h3 else None
 
-            # 3. Lấy author
+            # 3. Lay author
             author_p = li.select_one("p.text-xs.font-thin")#type: ignore
             author = author_p.get_text(strip=True) if author_p else None
 
-            # 4. Lấy số chương
+            # 4. Lay so chuong
             chapter_p = li.select_one("div.rounded.border > p.text-xs")#type: ignore
             total_chapters = None
             if chapter_p:
@@ -93,7 +93,7 @@ async def get_all_stories_from_genre_with_page_check(self, genre_name, genre_url
                 if match:
                     total_chapters = int(match.group(1))
 
-            # Check đủ url + title mới append
+            # Check du url + title moi append
             if url and title:
                 if url not in seen_urls:
                     all_stories.append({
@@ -105,10 +105,10 @@ async def get_all_stories_from_genre_with_page_check(self, genre_name, genre_url
                     })
                     seen_urls.add(url)
                 else:
-                    logger.warning(f"[YY][CATEGORY] Bỏ qua truyện trùng {url}")
+                    logger.warning(f"[YY][CATEGORY] Bo qua truyen trung {url}")
 
         if not all_stories:
-            logger.warning(f"[YY][CATEGORY] Trang {page_url} không có truyện")
+            logger.warning(f"[YY][CATEGORY] Trang {page_url} khong co truyen")
             break
 
         first_li = ul.find('li', recursive=False)
@@ -124,7 +124,7 @@ async def get_all_stories_from_genre_with_page_check(self, genre_name, genre_url
         last_first_url = first_url
 
         if repeat_count >= 2:
-            logger.error("[YY][CATEGORY] Phát hiện lặp trang liên tiếp, dừng")
+            logger.error("[YY][CATEGORY] Phat hien lap trang lien tiep, dung")
             break
 
         pages_crawled += 1
@@ -135,7 +135,7 @@ async def get_all_stories_from_genre_with_page_check(self, genre_name, genre_url
 async def get_all_genres(self, homepage_url):
     resp = await make_request(homepage_url, self.SITE_KEY)
     if not resp or not getattr(resp, 'text', None):
-        logger.error(f"Không lấy được trang chủ {homepage_url}")
+        logger.error(f"Khong lay duoc trang chu {homepage_url}")
         return []
     soup = BeautifulSoup(resp.text, "html.parser")
     genres = []
@@ -143,11 +143,11 @@ async def get_all_genres(self, homepage_url):
         "section.grid.grid-cols-4.mt-6 > div.relative.text-xs.w-full.overflow-hidden.rounded-lg.bg-\\[\\#343a40\\].text-white.py-1 > div.grid.grid-cols-2"
     )
     if not container:
-        logger.error("Không tìm thấy container thể loại theo selector")
+        logger.error("Khong tim thay container the loai theo selector")
         return []
     for a in container.find_all("a", href=True):
         raw_name = a.get_text(strip=True)
-        # Loại bỏ số ở cuối và prefix YY nếu có
+        # Loai bo so o cuoi va prefix YY neu co
         name = re.sub(r"\d+$", "", raw_name).strip()
         name = re.sub(r"^YY", "", name).strip()
         href = (a.get('href') or '').rstrip('/') + '/danh-sach'#type: ignore
@@ -160,12 +160,12 @@ async def get_stories_from_genre_page(self, genre_url, page=1):
     url = f"{base}?p={page}" if page > 1 else base
     resp = await make_request(url, self.SITE_KEY)
     if not resp or not getattr(resp, 'text', None):
-        logger.error(f"Không lấy được trang {url}")
+        logger.error(f"Khong lay duoc trang {url}")
         return []
     soup = BeautifulSoup(resp.text, "html.parser")
     ul = soup.select_one("ul.flex.flex-col")
     if not ul:
-        logger.error(f"[YY][CATEGORY] Không tìm thấy ul.flex.flex-col ở {url}")
+        logger.error(f"[YY][CATEGORY] Khong tim thay ul.flex.flex-col o {url}")
         with open("debug_yy_cat.html", "w", encoding="utf-8") as f:
             f.write(soup.prettify()) #type: ignore
         return []
@@ -175,16 +175,16 @@ async def get_stories_from_genre_page(self, genre_url, page=1):
         h3 = li.select_one("h3.font-title")#type: ignore
         title = h3.get_text(strip=True) if h3 else ""
         if not a_tag or not title:
-            logger.warning(f"[YY][CATEGORY] Không lấy được url/title cho 1 item ở {url}")
+            logger.warning(f"[YY][CATEGORY] Khong lay duoc url/title cho 1 item o {url}")
             continue
         detail_url = urljoin(self.BASE_URL, a_tag['href'])#type: ignore
-        # Lấy tên truyện
+        # Lay ten truyen
         h3 = a_tag.select_one("h3.font-title")
         title = h3.get_text(strip=True) if h3 else ""
-        # Lấy tên tác giả
+        # Lay ten tac gia
         author_p = li.select_one("p.text-xs.font-thin")#type: ignore
         author = author_p.get_text(strip=True) if author_p else None
-        # Lấy số chương (nếu muốn)
+        # Lay so chuong (neu muon)
         chapter_p = li.select_one("div.rounded.border > p.text-xs")#type: ignore
         if chapter_p:
             import re
@@ -217,7 +217,7 @@ async def get_story_details(self, story_url, story_title, site_key):
     from datetime import datetime
     resp = await make_request(story_url, site_key)
     if not resp or not getattr(resp, 'text', None):
-        logger.error(f"Không lấy được chi tiết truyện {story_url}")
+        logger.error(f"Khong lay duoc chi tiet truyen {story_url}")
         return {}
     soup = BeautifulSoup(resp.text, "html.parser")
     details = {
@@ -232,21 +232,21 @@ async def get_story_details(self, story_url, story_title, site_key):
         "rating_count": None,
         "total_chapters_on_site": None,
     }
-    # --- Lấy title ---
+    # --- Lay title ---
     title_tag = soup.select_one("h1.font-title")
     details["title"] = title_tag.get_text(strip=True) if title_tag else story_title
-    # --- Lấy cover ---
+    # --- Lay cover ---
     cover_img = soup.select_one("div.rounded-md.w-\\[160px\\].h-\\[240px\\].overflow-hidden img")
     if cover_img and cover_img.has_attr("src"):
         details["cover"] = cover_img["src"]
-    # Lấy p.font-title đứng sau h1
+    # Lay p.font-title dung sau h1
     author = None
     if title_tag:
         author_p = title_tag.find_next_sibling("p", class_="font-title")
         if author_p:
             author = author_p.get_text(strip=True)
     if not author:
-        # fallback: lấy p.font-title đầu tiên không phải h1
+        # fallback: lay p.font-title dau tien khong phai h1
         all_p = soup.select("p.font-title")
         if all_p:
             author = all_p[0].get_text(strip=True)
@@ -265,23 +265,23 @@ async def get_story_details(self, story_url, story_title, site_key):
             if href and name:
                 categories.append({"name": name, "url": urljoin(self.BASE_URL, href)})#type: ignore
     details["categories"] = categories
-       # trạng thái, số chươngMore actions
+       # trang thai, so chuongMore actions
     for li in soup.select("div.lg\\:hidden ul.mt-2.text-start.flex-col > li"):
         text = li.get_text(strip=True)
         text_lower = text.lower()
-        if "trạng thái" in text_lower or "status" in text_lower:
-            # Tách phần value sau dấu : hoặc sau từ "trạng thái"
-            match = re.search(r"(?:trạng thái|status)\s*[:：]?\s*(.*)", text, re.IGNORECASE)
+        if "trang thai" in text_lower or "status" in text_lower:
+            # Tach phan value sau dau : hoac sau tu "trang thai"
+            match = re.search(r"(?:trang thai|status)\s*[::]?\s*(.*)", text, re.IGNORECASE)
             if match:
                 details["status"] = match.group(1).strip()
             else:
-                # fallback: lấy phần sau dấu :
+                # fallback: lay phan sau dau :
                 parts = text.split(":", 1)
                 if len(parts) > 1:
                     details["status"] = parts[1].strip()
                 else:
-                    details["status"] = text  # fallback giữ nguyên
-        elif "chương" in text_lower or "chapter" in text_lower:
+                    details["status"] = text  # fallback giu nguyen
+        elif "chuong" in text_lower or "chapter" in text_lower:
             match = re.search(r"(\d+)", text)
             if match:
                 details["total_chapters_on_site"] = int(match.group(1))
@@ -290,7 +290,7 @@ async def get_story_details(self, story_url, story_title, site_key):
     if canonical and canonical.get("href"): # type: ignore
         details["source"] = canonical["href"] # type: ignore
 
-    # --- Fallback đếm chương nếu không có hoặc chênh lệch nhiều ---
+    # --- Fallback dem chuong neu khong co hoac chenh lech nhieu ---
     chapters = await get_chapters_from_story(
         self,
         details["source"],
@@ -304,7 +304,7 @@ async def get_story_details(self, story_url, story_title, site_key):
         or actual_count > details["total_chapters_on_site"]
         or abs(actual_count - details["total_chapters_on_site"]) > 5
     ):
-        logger.warning(f"[YY][DETAIL] Cập nhật số chương từ {details['total_chapters_on_site']} -> {actual_count}")
+        logger.warning(f"[YY][DETAIL] Cap nhat so chuong tu {details['total_chapters_on_site']} -> {actual_count}")
         details["total_chapters_on_site"] = actual_count
 
 
@@ -315,7 +315,7 @@ async def get_story_details(self, story_url, story_title, site_key):
         "total_chapters": details["total_chapters_on_site"],
         "last_update": datetime.now().strftime('%Y-%m-%d %H:%M:%S')
     }]
-    # Chuẩn hóa trả về
+    # Chuan hoa tra ve
     for k in list(details.keys()):
         if details[k] is None:
             details[k] = "" if not isinstance(details[k], list) else []
@@ -333,7 +333,7 @@ def parse_chapters_from_soup(soup, base_url):
     if not nodes:
         nodes = soup.select('ul.flex.flex-col li')
     for div in nodes:
-        # Tìm các thẻ <a> chứa link chương
+        # Tim cac the <a> chua link chuong
         chapter_links = div.find_all('a', href=True)
         if not chapter_links:
             continue
@@ -351,9 +351,9 @@ def parse_chapters_from_soup(soup, base_url):
         if not href:
             continue
 
-        # Fallback nếu title bị thiếu
+        # Fallback neu title bi thieu
         if not title or title.strip() == '':
-            # Thử lấy text từ phần Chương Số
+            # Thu lay text tu phan Chuong So
             alt_link = div.find('a', href=True)
             if alt_link:
                 alt_text = alt_link.get_text(strip=True)
@@ -392,7 +392,7 @@ async def get_chapters_from_story(self, story_url, story_title, max_pages=None, 
         except Exception:
             pass
 
-    logger.info(f"[YY][CHAPTERS] Phát hiện {max_page} page chapter list cho {story_url}")
+    logger.info(f"[YY][CHAPTERS] Phat hien {max_page} page chapter list cho {story_url}")
 
     seen_urls = set()
     no_new_pages = 0
@@ -452,18 +452,18 @@ async def get_story_chapter_content(
     chapter_url: str, chapter_title: str,
     site_key: str
 ) -> Optional[str]:
-    logger.info(f"Đang tải nội dung chương '{chapter_title}': {chapter_url}")
+    logger.info(f"Dang tai noi dung chuong '{chapter_title}': {chapter_url}")
     response = await make_request(chapter_url, site_key)
     if not response or not getattr(response, 'text', None):
-        logger.error(f"Chương '{chapter_title}': Không nhận được phản hồi từ {chapter_url}")
+        logger.error(f"Chuong '{chapter_title}': Khong nhan duoc phan hoi tu {chapter_url}")
         return None
     html = response.text
     content = extract_chapter_content(html, site_key, chapter_title)
     if not content:
-        # Ghi debug nếu cần
+        # Ghi debug neu can
         with open("debug_truyenyy_empty_chapter.html", "w", encoding="utf-8") as f:
             f.write(html)
-        logger.warning(f"Nội dung chương '{chapter_title}' trống sau khi clean header.")
+        logger.warning(f"Noi dung chuong '{chapter_title}' trong sau khi clean header.")
         return None
     return content
 

@@ -18,6 +18,7 @@ from utils.chapter_utils import (
     export_chapter_metadata_sync,
     extract_real_chapter_number,
     get_chapter_filename,
+    get_missing_chapters, # Thêm import này
 )
 from utils.io_utils import create_proxy_template_if_not_exists, move_story_to_completed, async_rename, async_remove
 from utils.logger import logger
@@ -73,14 +74,19 @@ def autofix_metadata(folder, site_key=None):
     return meta
 
 
-async def crawl_single_story_worker(story_url: Optional[str]=None, title: Optional[str]=None):
+async def crawl_single_story_worker(story_url: Optional[str]=None, title: Optional[str]=None, story_folder_path: Optional[str]=None):
     await create_proxy_template_if_not_exists(PROXIES_FILE, PROXIES_FOLDER)
     await load_proxies(PROXIES_FILE)
 
-    assert story_url or title, "Cần truyền url hoặc title!"
-    # Xác định slug và folder
-    slug = slugify_title(os.path.basename(story_url.rstrip("/"))) if story_url else slugify_title(title)#type: ignore
-    folder = os.path.join(DATA_FOLDER, slug)
+    if story_folder_path:
+        folder = story_folder_path
+    elif story_url or title:
+        slug = slugify_title(os.path.basename(story_url.rstrip("/"))) if story_url else slugify_title(title) #type: ignore
+        folder = os.path.join(DATA_FOLDER, slug)
+    else:
+        raise ValueError("Cần truyền vào story_folder_path, story_url hoặc title!")
+
+    logger.info(f"[SingleStoryWorker] Bắt đầu xử lý: {folder}")
     meta_path = os.path.join(folder, "metadata.json")
     # Nếu chưa có folder → tạo mới
     if not os.path.exists(folder):
@@ -188,110 +194,35 @@ async def crawl_single_story_worker(story_url: Optional[str]=None, title: Option
     ])
 
 
-    # --- Check và rename lại file chương theo đúng thứ tự/tên title ---
-    existing_files = [f for f in os.listdir(folder) if f.endswith('.txt')]
-    for idx, ch in enumerate(chapters):
-        real_num = extract_real_chapter_number(ch.get('title', '')) or (idx+1)
-        expected_name = get_chapter_filename(ch.get("title", ""), real_num)
-        prefix = f"{real_num:04d}_"
-        found = None
-        for fname in existing_files:
-            if fname.startswith(prefix) and fname != expected_name:
-                old_path = os.path.join(folder, fname)
-                new_path = os.path.join(folder, expected_name)
-                if os.path.exists(old_path) and not os.path.exists(new_path):
-                    await async_rename(old_path, new_path)
-                    logger.info(f"[RENAME] {fname} -> {expected_name}")
-                break
-    
-    # Xóa các file chương có index = 0 (sau khi rename)
-    for fname in os.listdir(folder):
-        if fname.startswith("0000_") and fname.endswith(".txt"):
-            await async_remove(os.path.join(folder, fname))
-            logger.info(f"[REMOVE] Xoá file chương lỗi index 0: {fname}")
-
     # --- Load crawl state và check chương missing ---
     state_file = get_missing_worker_state_file(site_key)
     crawl_state = await load_crawl_state(state_file, site_key)
 
-    async def crawl_missing_until_complete(site_key, chapters_from_web, meta, folder, crawl_state, state_file, max_retry=3):
-        retry = 0
-        def get_existing_real_chapter_numbers(folder):
-            nums = set()
-            for f in os.listdir(folder):
-                m = re.match(r'(\d{4})_', f)
-                if m:
-                    nums.add(int(m.group(1)))
-            return nums
-        def get_missing_chapters(folder, chapters):
-            existing_nums = get_existing_real_chapter_numbers(folder)
-            # Load dead set to skip permanently failed chapters
-            dead_indexes = set()
-            dead_urls = set()
-            dead_path = os.path.join(folder, "dead_chapters.json")
-            try:
-                if os.path.exists(dead_path):
-                    with open(dead_path, "r", encoding="utf-8") as f:
-                        dead_list = json.load(f)
-                    for d in dead_list:
-                        if isinstance(d.get("index"), int):
-                            dead_indexes.add(int(d["index"]))
-                        if d.get("url"):
-                            dead_urls.add(d["url"]) 
-            except Exception:
-                pass
-            missing = []
-            for idx, ch in enumerate(chapters):
-                real_num = extract_real_chapter_number(ch.get('title', '')) or (idx+1)
-                if real_num in dead_indexes or (ch.get('url') in dead_urls if ch.get('url') else False):
-                    continue
-                fname = get_chapter_filename(ch.get("title", ""), real_num)
-                path = os.path.join(folder, fname)
-                if real_num not in existing_nums or not os.path.exists(path) or os.path.getsize(path) < 20:
-                    missing.append({**ch, "real_num": real_num, "idx": idx})
-            return missing
+    # Sử dụng hàm get_missing_chapters từ utils
+    missing_chapters = get_missing_chapters(folder, chapters)
 
-        while retry < max_retry:
-            missing_chapters = get_missing_chapters(folder, chapters_from_web)
-            if not missing_chapters:
-                logger.info(f"[COMPLETE] Đã đủ tất cả chương cho '{meta['title']}'")
-                return True
-            logger.info(f"[RETRY] {len(missing_chapters)} chương còn thiếu, crawl lần {retry+1}/{max_retry}")
-            num_batches = max(1, (len(missing_chapters)+119)//120)
-            # Crawl theo batch (1 batch/lần để tối ưu)
-            await crawl_missing_chapters_for_story(
-                site_key,
-                None,
-                missing_chapters,
-                meta,
-                meta.get("categories", [{}])[0] if meta.get("categories") else {},
-                folder,
-                crawl_state,
-                num_batches=num_batches,
-                state_file=state_file,
-                adapter=adapter,
-            )
-            # Kiểm tra lại
-            missing_chapters = get_missing_chapters(folder, chapters_from_web)
-            if not missing_chapters:
-                logger.info(f"[COMPLETE] Đã đủ tất cả chương sau lần crawl {retry+1}")
-                return True
-            retry += 1
-        logger.warning(f"[FAILED] Sau {max_retry} lần vẫn còn thiếu chương.")
-        return False
- 
-    # --- Bắt đầu crawl bù ---
-    await crawl_missing_until_complete(site_key, chapters, meta, folder, crawl_state, state_file, max_retry=3)
+    if missing_chapters:
+        logger.info(f"[RETRY] Tìm thấy {len(missing_chapters)} chương còn thiếu, bắt đầu crawl...")
+        # Gọi thẳng hàm crawl từ utils, nó đã có sẵn logic retry bên trong
+        await crawl_missing_chapters_for_story(
+            site_key,
+            None, # session không cần thiết khi dùng adapter
+            missing_chapters,
+            meta,
+            meta.get("categories", [{}])[0] if meta.get("categories") else {},
+            folder,
+            crawl_state,
+            num_batches=max(1, (len(missing_chapters) + 119) // 120),
+            state_file=state_file,
+            adapter=adapter,
+        )
+    else:
+        logger.info(f"[COMPLETE] Không có chương nào thiếu cho '{meta['title']}'.")
 
     # --- Recount lại sau crawl ---
     num_txt = count_txt_files(folder)
     real_total = len(chapters)
     logger.info(f"[CHECK] {meta.get('title')} - txt: {num_txt} / web: {real_total}")
-
-    # --- Export lại chapter_metadata.json ---
-    chapters_for_export = get_actual_chapters_for_export(folder)
-    export_chapter_metadata_sync(folder, chapters_for_export)
-    logger.info(f"[META] Đã cập nhật lại chapter_metadata.json ({len(chapters_for_export)} chương)")
 
     dead_count = count_dead_chapters(folder)
     # --- Move sang completed nếu đủ ---

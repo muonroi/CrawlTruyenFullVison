@@ -1,89 +1,58 @@
-from collections import defaultdict
-import json
 import asyncio
 import os
-from datetime import datetime
-from analyze.truyenfull_vision_parse import get_story_chapter_content
-from config.config import PROXIES_FILE, PROXIES_FOLDER
-from config.proxy_provider import load_proxies
-from scraper import initialize_scraper
-from utils.chapter_utils import async_save_chapter_with_hash_check
-from utils.io_utils import create_proxy_template_if_not_exists, ensure_directory_exists, safe_write_json
-from utils.notifier import send_discord_notify
+from utils.logger import logger
+from utils.chapter_utils import async_save_chapter_with_hash_check, get_category_name
+from utils.io_utils import ensure_directory_exists
 from adapters.factory import get_adapter
+from scraper import initialize_scraper
+from utils.anti_bot import is_anti_bot_content
 
-MAX_RETRY_FAILS = 5
-retry_fail_count = 0
+async def retry_single_chapter(chapter_data: dict):
+    """
+    Xử lý việc tải lại một chương duy nhất từ thông tin job trên Kafka.
+    """
+    site_key = chapter_data.get('site') or chapter_data.get('site_key')
+    url = chapter_data.get('chapter_url')
+    chapter_title = chapter_data.get('chapter_title')
+    story_title = chapter_data.get('story_title')
+    filename_path = chapter_data.get('filename')
 
+    if not all([site_key, url, chapter_title, story_title, filename_path]):
+        logger.error(f"[RetryWorker] Job thiếu thông tin cần thiết: {chapter_data}")
+        return
 
-async def retry_queue(filename='chapter_retry_queue.json', interval=900):
-    retry_fail_count = 0
-    await create_proxy_template_if_not_exists(PROXIES_FILE, PROXIES_FOLDER)
-    await load_proxies(PROXIES_FILE)
-    print(f"[RetryQueue] Bắt đầu quan sát file {filename}, mỗi {interval//60} phút...")
-    while True:
-        now = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-        if not os.path.exists(filename):
-            print(f"[{now}] [RetryQueue] Không tìm thấy file queue: {filename}. Đợi {interval//60} phút rồi kiểm tra lại...")
-            await asyncio.sleep(interval)
-            continue
-        try:
-            with open(filename, 'r', encoding='utf-8') as f:
-                queue = json.load(f)
-        except Exception as e:
-            print(f"[{now}] [RetryQueue] Lỗi đọc file {filename}: {e}. Đợi {interval//60} phút...")
-            await asyncio.sleep(interval)
-            continue
-        if not queue:
-            print(f"[{now}] [RetryQueue] Queue rỗng, đợi {interval//60} phút rồi kiểm tra lại...")
-            await asyncio.sleep(interval)
-            continue
+    logger.info(f"[RetryWorker] Bắt đầu retry chương: '{chapter_title}' của truyện '{story_title}'")
 
-        # --- Nhóm các chương lỗi theo từng site ---
-        site_to_items = defaultdict(list)
-        for item in queue:
-            site_key = item.get('site') or item.get('site_key')
-            if not site_key:
-                print(f"[RetryQueue] Chương thiếu trường site: {item}")
-                continue
-            site_to_items[site_key].append(item)
+    try:
+        adapter = get_adapter(site_key)
+        await initialize_scraper(site_key)
 
-        to_remove = []
-        for site_key, items in site_to_items.items():
-            adapter = get_adapter(site_key)
-            await initialize_scraper(site_key)  # <-- ĐÃ TRUYỀN ĐÚNG ADAPTER!
-            print(f"[{now}] [RetryQueue][{site_key}] Retry {len(items)} chương lỗi...")
-            for item in items:
-                url = item['chapter_url']
-                chapter_title = item['chapter_title']
-                story_title = item['story_title']
-                filename_path = item['filename']
+        content = await adapter.get_chapter_content(url, chapter_title, site_key)
 
-                print(f"Retry chương: {chapter_title} ({url}) ... của truyện: {story_title} (site: {site_key})")
-                content = await adapter.get_chapter_content(url, chapter_title, site_key)
-                if content:
-                    retry_fail_count = 0
-                    dir_path = os.path.dirname(filename_path)
-                    await ensure_directory_exists(dir_path)
-                    save_result = await async_save_chapter_with_hash_check(filename_path, content)
-                    print(f"-> Result: {save_result}")
-                    to_remove.append(item)
-                else:
-                    retry_fail_count += 1
-                    if retry_fail_count >= MAX_RETRY_FAILS:
-                        asyncio.create_task(send_discord_notify(
-                            f"[Crawl Notify][{site_key}] Retry quá nhiều lần nhưng toàn bộ đều lỗi (proxy/blocked)! Queue: {filename}"))
-                        retry_fail_count = 0
+        if content and not is_anti_bot_content(content):
+            # Lấy category từ chapter_data nếu có, nếu không thì để rỗng
+            story_data_item = chapter_data.get('story_data_item', {})
+            current_discovery_genre_data = chapter_data.get('current_discovery_genre_data', {})
+            category_name = get_category_name(story_data_item, current_discovery_genre_data)
 
-        # Xoá chương đã thành công khỏi queue
-        if to_remove:
-            queue = [item for item in queue if item not in to_remove]
-            await safe_write_json(filename, queue)
-            print(f"[{now}] [RetryQueue] Đã xoá {len(to_remove)} chương khỏi queue.")
+            # Gộp nội dung chuẩn file .txt
+            full_content = (
+                f"Nguồn: {url}\n\nTruyện: {story_title}\n"
+                f"Thể loại: {category_name}\n"
+                f"Chương: {chapter_title}\n\n"
+                f"{content}"
+            )
 
-        print(f"[{now}] [RetryQueue] Đợi {interval//60} phút trước khi kiểm tra lại queue.")
-        await asyncio.sleep(interval)
+            dir_path = os.path.dirname(filename_path)
+            await ensure_directory_exists(dir_path)
+            save_result = await async_save_chapter_with_hash_check(filename_path, full_content)
+            logger.info(f"[RetryWorker] ✅ Retry thành công chương '{chapter_title}'. Kết quả: {save_result}")
+        else:
+            reason = "anti-bot" if content and is_anti_bot_content(content) else "nội dung rỗng"
+            logger.warning(f"[RetryWorker] ❌ Retry thất bại, {reason}: '{chapter_title}'")
+            # Optional: Gửi tới một topic "dead letter" khác để xử lý thủ công
+            # from kafka.kafka_producer import send_job
+            # await send_job(chapter_data, topic="dead_letter_chapters")
 
-
-if __name__ == "__main__":
-    asyncio.run(retry_queue())
+    except Exception as e:
+        logger.exception(f"[RetryWorker] ❌ Lỗi nghiêm trọng khi retry chương '{chapter_title}': {e}")

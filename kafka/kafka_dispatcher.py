@@ -9,6 +9,7 @@ from core.config_loader import apply_env_overrides
 from workers.crawler_missing_chapter import loop_once_multi_sites
 from workers.crawler_single_missing_chapter import crawl_single_story_worker
 from main import WorkerSettings, retry_failed_genres, run_single_site, run_all_sites
+from workers.retry_failed_chapters import retry_single_chapter
 
 # ==== Config Kafka ====
 KAFKA_TOPIC = os.getenv("KAFKA_TOPIC", "crawl_truyen")
@@ -26,6 +27,8 @@ WORKER_HANDLERS = {
     ),
     "missing_check": loop_once_multi_sites,
     "healthcheck": lambda **job: healthcheck_adapter(site_key=job["site_key"]),
+    "retry_chapter": lambda **job: retry_single_chapter(job),
+    "check_missing_chapters": lambda **job: crawl_single_story_worker(story_folder_path=job.get("story_folder_path")),
 }
 
 

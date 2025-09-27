@@ -24,7 +24,7 @@ from urllib.parse import urljoin
 from bs4 import BeautifulSoup
 
 async def get_story_details(self,story_url: str, story_title_for_log: str) -> Dict[str, Any]:
-    logger.info(f"Truyện '{story_title_for_log}': Đang lấy thông tin chi tiết từ {story_url}")
+    logger.info(f"Truyen '{story_title_for_log}': Dang lay thong tin chi tiet tu {story_url}")
     details = {
         "title": None,
         "author": None,
@@ -39,7 +39,7 @@ async def get_story_details(self,story_url: str, story_title_for_log: str) -> Di
     }
     response = await make_request(story_url, self.SITE_KEY)
     if not response or not getattr(response, 'text', None):
-        logger.error(f"Truyện '{story_title_for_log}': Không nhận được phản hồi hoặc nội dung rỗng từ {story_url}")
+        logger.error(f"Truyen '{story_title_for_log}': Khong nhan duoc phan hoi hoac noi dung rong tu {story_url}")
         return details
     soup = BeautifulSoup(response.text, "html.parser")
 
@@ -85,7 +85,7 @@ async def get_story_details(self,story_url: str, story_title_for_log: str) -> Di
     for a_tag in soup.select('.info-holder a[itemprop="genre"]'):
         if a_tag.has_attr('href'):
             categories.append({'name': a_tag.get_text(strip=True), 'url': a_tag['href']})
-    # Fallback cho một số site có thể nằm ở ngoài info-holder
+    # Fallback cho mot so site co the nam o ngoai info-holder
     if not categories:
         for a_tag in soup.select('a[itemprop="genre"]'):
             if a_tag.has_attr('href'):
@@ -93,13 +93,13 @@ async def get_story_details(self,story_url: str, story_title_for_log: str) -> Di
     details["categories"] = categories
 
     # 6. Status
-    # Trạng thái có thể là text hoặc trong span (ví dụ label label-success)
+    # Trang thai co the la text hoac trong span (vi du label label-success)
     status = None
     for el in soup.select('.info-holder, .info'):
         for tag in el.find_all(["span", "label", "div", "h4"], recursive=True):
             txt = tag.get_text(strip=True).lower()
-            if "trạng thái" in txt or "status" in txt:
-                # Có thể lấy text phía sau, hoặc trong strong, span kế tiếp
+            if "trang thai" in txt or "status" in txt:
+                # Co the lay text phia sau, hoac trong strong, span ke tiep
                 nxt = tag.find_next(string=True)
                 if nxt:
                     status = nxt.strip()#type: ignore
@@ -120,34 +120,34 @@ async def get_story_details(self,story_url: str, story_title_for_log: str) -> Di
 
     # 8. Total chapters
     num_chapters = None
-    # (giữ lại code lấy label cũ nếu có)
-    # Tìm trong label, span, hoặc input
+    # (giu lai code lay label cu neu co)
+    # Tim trong label, span, hoac input
     for label in soup.select('.info-holder .label-success, .info .label-success, span.label.label-success'):
         txt = label.get_text()
-        if 'chương' in txt.lower():
-            match = re.search(r'(\d+)\s*[Cc]hương', txt)
+        if 'chuong' in txt.lower():
+            match = re.search(r'(\d+)\s*[Cc]huong', txt)
             if match:
                 num_chapters = int(match.group(1))
                 break
 
-    # Nếu không có hoặc < 50 thì paginate để đếm toàn bộ chương
+    # Neu khong co hoac < 50 thi paginate de dem toan bo chuong
     if not num_chapters or num_chapters < 100:
-        logger.warning(f"Không tìm thấy tổng số chương hoặc số nhỏ, paginate để đếm chính xác số chương!")
+        logger.warning(f"Khong tim thay tong so chuong hoac so nho, paginate de dem chinh xac so chuong!")
         from adapters.truyenfull_adapter import TruyenFullAdapter
-        # Dùng hàm crawl chapter list (nó sẽ tự động phân trang), LƯU Ý: truyền max_pages=None để lấy hết!
+        # Dung ham crawl chapter list (no se tu dong phan trang), LUU Y: truyen max_pages=None de lay het!
         chapters = await get_chapters_from_story(story_url,story_title_for_log,site_key="truyenfull")
         num_chapters = len(chapters) 
  
     details["total_chapters_on_site"] = num_chapters
 
-    # 9. Sources (bổ sung luôn field cho metadata autofix)
+    # 9. Sources (bo sung luon field cho metadata autofix)
     current_site = None
     for k, v in BASE_URLS.items():
         if v.rstrip('/') in story_url:
             current_site = k
             break
     if not current_site:
-        current_site = story_url.split('/')[2]  # fallback lấy domain nếu chưa match
+        current_site = story_url.split('/')[2]  # fallback lay domain neu chua match
 
     details["sources"] = [{
         "site": current_site,
@@ -156,7 +156,7 @@ async def get_story_details(self,story_url: str, story_title_for_log: str) -> Di
         "last_update": datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')
     }]
 
-    # Fix None -> "" (chuẩn hóa trả về cho autofix dễ merge)
+    # Fix None -> "" (chuan hoa tra ve cho autofix de merge)
     for k in list(details.keys()):
         if details[k] is None:
             details[k] = "" if not isinstance(details[k], list) else []
@@ -165,17 +165,17 @@ async def get_story_details(self,story_url: str, story_title_for_log: str) -> Di
 
 
 async def get_all_genres(self,homepage_url: str) -> List[Dict[str, str]]:
-    logger.info(f"Đang lấy danh sách thể loại từ: {homepage_url}")
+    logger.info(f"Dang lay danh sach the loai tu: {homepage_url}")
     response = await make_request(homepage_url, self.SITE_KEY)
     if not response or not getattr(response, 'text', None):
-        logger.error(f"Không nhận được phản hồi từ {homepage_url}")
+        logger.error(f"Khong nhan duoc phan hoi tu {homepage_url}")
         return []
     soup = BeautifulSoup(response.text, "html.parser")
     genres: List[Dict[str, str]] = []
     nav_menu = soup.find("ul", class_="control nav navbar-nav") or soup.find("div", class_="navbar-collapse")
     dropdown = None
     for a in nav_menu.find_all("a", class_=re.compile(r"dropdown-toggle|nav-link")):#type: ignore
-        if "thể loại" in a.get_text(strip=True).lower():
+        if "the loai" in a.get_text(strip=True).lower():
             parent = a.find_parent("li", class_="dropdown")
             dropdown = parent.find("div", class_=re.compile(r"dropdown-menu")) if parent else a.find_next_sibling("div", class_=re.compile(r"dropdown-menu"))#type: ignore
             break
@@ -188,28 +188,28 @@ async def get_all_genres(self,homepage_url: str) -> List[Dict[str, str]]:
     for g in genres:
         if g['url'] not in seen:
             unique.append(g); seen.add(g['url'])
-    logger.info(f"Tìm thấy {len(unique)} thể loại.")
+    logger.info(f"Tim thay {len(unique)} the loai.")
     return unique
 
 async def get_stories_from_genre_page(genre_page_url: str, site_key) -> Tuple[List[Dict[str, Any]], Optional[str]]:
-    logger.info(f"Đang lấy truyện từ trang: {genre_page_url}")
+    logger.info(f"Dang lay truyen tu trang: {genre_page_url}")
     response = await make_request(genre_page_url, site_key)
     if not response or not getattr(response, 'text', None):
-        logger.error(f"Không nhận được phản hồi từ {genre_page_url}")
+        logger.error(f"Khong nhan duoc phan hoi tu {genre_page_url}")
         return [], None
     soup = BeautifulSoup(response.text, "html.parser")#type: ignore
     stories: List[Dict[str, Any]] = []
 
-    # Parse từng truyện (mỗi .row trong .list.list-truyen.col-xs-12)
+    # Parse tung truyen (moi .row trong .list.list-truyen.col-xs-12)
     for row in soup.select(".list.list-truyen.col-xs-12 > .row[itemscope][itemtype='https://schema.org/Book']"):
-        # Lấy title và url
+        # Lay title va url
         a = row.select_one("h3.truyen-title a[href]")
         title = a.get_text(strip=True) if a else None
         url = a['href'] if a else None
-        # Lấy author
+        # Lay author
         author = row.select_one("span.author")
         author_name = author.get_text(strip=True) if author else None
-        # Lấy số chương (nếu muốn)
+        # Lay so chuong (neu muon)
         chapter_a = row.select_one("div.col-xs-2.text-info a[href]")
         chapter_text = chapter_a.get_text(strip=True) if chapter_a else None
 
@@ -223,11 +223,11 @@ async def get_stories_from_genre_page(genre_page_url: str, site_key) -> Tuple[Li
 
     # Parse next page
     next_page_url = None
-    # Lấy nút next (phải là trang tiếp)
-    pag_a = soup.select_one(".pagination.pagination-sm li a[title*='Trang tiếp']")
+    # Lay nut next (phai la trang tiep)
+    pag_a = soup.select_one(".pagination.pagination-sm li a[title*='Trang tiep']")
     if pag_a and pag_a.has_attr("href"):
         next_page_url = pag_a['href']
-        # Nếu link next là link tuyệt đối thì giữ nguyên, nếu là link tương đối thì join lại
+        # Neu link next la link tuyet doi thi giu nguyen, neu la link tuong doi thi join lai
         if not next_page_url.startswith("http"):#type: ignore
             next_page_url = urljoin(genre_page_url, next_page_url)#type: ignore
 
@@ -252,7 +252,7 @@ async def get_all_stories_from_genre(
     current_url = genre_url
     while current_url and current_url not in visited and (max_pages_to_crawl is None or page < max_pages_to_crawl):
         visited.add(current_url); page += 1
-        logger.info(f"Trang {page} của '{genre_name}': {current_url}")
+        logger.info(f"Trang {page} cua '{genre_name}': {current_url}")
         sts, nxt = await get_stories_from_genre_page(current_url, site_key)
         for s in sts:
             if s['url'] not in {x['url'] for x in all_stories}:
@@ -261,7 +261,7 @@ async def get_all_stories_from_genre(
             current_url = nxt
         else:
             break
-    logger.info(f"Tổng có {len(all_stories)} truyện.")
+    logger.info(f"Tong co {len(all_stories)} truyen.")
     return all_stories
 
 def get_input_value(soup, input_id, default=None):
@@ -270,15 +270,15 @@ def get_input_value(soup, input_id, default=None):
 
 async def get_chapters_from_story(
     story_url: str, story_title: str,
-    total_chapters_on_site: Optional[int] = None,  # Số chương thật sự trên site (từ metadata)
+    total_chapters_on_site: Optional[int] = None,  # So chuong that su tren site (tu metadata)
     site_key: str = "truyenfull"
 ) -> List[Dict[str, str]]:
-    logger.info(f"Truyện '{story_title}': Lấy chương từ {story_url}")
+    logger.info(f"Truyen '{story_title}': Lay chuong tu {story_url}")
     chapters: List[Dict[str, str]] = []
 
     headers = await get_random_headers(site_key)
     async with httpx.AsyncClient(headers=headers, timeout=20) as client:
-        # 1. Request trang đầu để lấy truyen-id, truyen-ascii, total-page
+        # 1. Request trang dau de lay truyen-id, truyen-ascii, total-page
         resp = await client.get(story_url)
         soup = BeautifulSoup(resp.text, "html.parser")
         def get_input(soup, key):
@@ -289,7 +289,7 @@ async def get_chapters_from_story(
         truyen_ascii = get_input(soup, "truyen-ascii")
         total_page = get_input(soup, "total-page")
         if not (truyen_id and truyen_ascii and total_page):
-            logger.error("Không lấy được đủ thông tin (truyen-id, truyen-ascii, total-page)")
+            logger.error("Khong lay duoc du thong tin (truyen-id, truyen-ascii, total-page)")
             try:
                 from ai.selector_ai import ai_parse_chapter_list_fallback
                 fb = await ai_parse_chapter_list_fallback(story_url, resp.text)
@@ -299,7 +299,7 @@ async def get_chapters_from_story(
                 logger.warning(f"[AI-FALLBACK][CHAPTER-ID] Detect fail: {e}")
             return []
 
-        truyen_name = story_title  # Bạn có thể dùng <title> nếu muốn, ở đây giữ nguyên title truyền vào
+        truyen_name = story_title  # Ban co the dung <title> neu muon, o day giu nguyen title truyen vao
         total_page = int(total_page)#type: ignore
         # Gioi han de phong vong lap vo han khi site tra ve nhieu trang bat thuong
         limit_pages = total_page
@@ -312,7 +312,7 @@ async def get_chapters_from_story(
         seen_urls = set()
         no_new_pages = 0
 
-        # 2. Lặp từng page để lấy danh sách chương qua AJAX
+        # 2. Lap tung page de lay danh sach chuong qua AJAX
         for page in range(1, limit_pages + 1):
             params = {
                 "type": "list_chapter",
@@ -330,11 +330,11 @@ async def get_chapters_from_story(
                     continue
                 data = resp.json()
             except Exception as ex:
-                logger.error(f"Lỗi khi gọi AJAX page {page}: {ex}")
+                logger.error(f"Loi khi goi AJAX page {page}: {ex}")
                 continue
             chap_html = data.get("chap_list")
             if not chap_html:
-                logger.warning(f"Không có chap_list trong AJAX page {page}")
+                logger.warning(f"Khong co chap_list trong AJAX page {page}")
                 continue
             soup_chap = BeautifulSoup(chap_html, "html.parser")
             before_count = len(seen_urls)
@@ -357,9 +357,9 @@ async def get_chapters_from_story(
                             chapters.append(it)
                 except Exception as e:
                     logger.warning(f"[AI-FALLBACK][CHAPTER-LIST] Parse fail: {e}")
-            # Nếu đã lấy đủ số chương metadata thì dừng (tránh request thừa)
+            # Neu da lay du so chuong metadata thi dung (tranh request thua)
             if total_chapters_on_site and len(chapters) >= total_chapters_on_site:
-                logger.info(f"Đã lấy đủ {total_chapters_on_site} chương, dừng crawl trang chương.")
+                logger.info(f"Da lay du {total_chapters_on_site} chuong, dung crawl trang chuong.")
                 break
             # Neu 2 trang lien tiep khong co chuong moi => dung de tranh lap vo han
             added = len(seen_urls) - before_count
@@ -372,7 +372,7 @@ async def get_chapters_from_story(
                 break
             await smart_delay()
 
-    # 3. Lọc trùng và sort lại theo số chương
+    # 3. Loc trung va sort lai theo so chuong
     uniq, seen = [], set()
     for ch in chapters:
         if ch['url'] not in seen:
@@ -380,43 +380,43 @@ async def get_chapters_from_story(
             seen.add(ch['url'])
     uniq.sort(key=lambda ch: float(re.search(r"(\d+)", ch['title']).group(1)) if re.search(r"(\d+)", ch['title']) else float('inf')) #type: ignore
 
-    # Cảnh báo nếu lấy được ít hơn số chương metadata
+    # Canh bao neu lay duoc it hon so chuong metadata
     if total_chapters_on_site and len(uniq) < total_chapters_on_site:
-        logger.warning(f"CHÚ Ý: Số chương lấy được ({len(uniq)}) < metadata ({total_chapters_on_site}) cho truyện '{story_title}'")
+        logger.warning(f"CHU Y: So chuong lay duoc ({len(uniq)}) < metadata ({total_chapters_on_site}) cho truyen '{story_title}'")
 
-    logger.info(f"Tìm thấy {len(uniq)} chương.")
+    logger.info(f"Tim thay {len(uniq)} chuong.")
     return uniq
 
 async def get_story_chapter_content(
     chapter_url: str, chapter_title: str,
     site_key
 ) -> Optional[str]:
-    logger.info(f"Đang tải nội dung chương '{chapter_title}': {chapter_url}")
+    logger.info(f"Dang tai noi dung chuong '{chapter_title}': {chapter_url}")
     loop = asyncio.get_event_loop()
     response = await make_request(chapter_url, site_key)
     if not response or not getattr(response, 'text', None):
-        logger.error(f"Chương '{chapter_title}': Không nhận được phản hồi từ {chapter_url}")
+        logger.error(f"Chuong '{chapter_title}': Khong nhan duoc phan hoi tu {chapter_url}")
         return None
     html = response.text
     content = extract_chapter_content(html, site_key, chapter_title)
     if not content:
-        logger.warning(f"Nội dung chương '{chapter_title}' trống sau khi clean header.")
+        logger.warning(f"Noi dung chuong '{chapter_title}' trong sau khi clean header.")
         return None
     return content or None
 
 async def get_all_stories_from_genre_with_page_check(genre_name, genre_url, site_key,max_pages=None):
     """
-    Crawl tất cả truyện trong 1 thể loại (category) của truyenfull.vision
-    Không phụ thuộc next_page_url, crawl từng page dựa vào pattern url và total_pages lấy từ phân trang.
-    Dùng make_request (đồng bộ) để đồng bộ với các hàm cũ.
+    Crawl tat ca truyen trong 1 the loai (category) cua truyenfull.vision
+    Khong phu thuoc next_page_url, crawl tung page dua vao pattern url va total_pages lay tu phan trang.
+    Dung make_request (dong bo) de dong bo voi cac ham cu.
     """
     resp = await make_request(genre_url, site_key)
     if not resp or not getattr(resp, 'text', None):
-        logger.error(f"Không nhận được phản hồi từ {genre_url}")
+        logger.error(f"Khong nhan duoc phan hoi tu {genre_url}")
         return [], 0, 0
     html = resp.text
     total_pages = get_total_pages_category(html)
-    logger.info(f"Category {total_pages} có trang.")
+    logger.info(f"Category {total_pages} co trang.")
     if max_pages:
         total_pages = min(total_pages, max_pages)
 
@@ -431,13 +431,13 @@ async def get_all_stories_from_genre_with_page_check(genre_name, genre_url, site
         logger.info(f"[Crawl] Page {page}: {page_url}")
         resp = await make_request(page_url, site_key)
         if not resp or not getattr(resp, 'text', None):
-            logger.warning(f"Không nhận được phản hồi từ {page_url}")
+            logger.warning(f"Khong nhan duoc phan hoi tu {page_url}")
             break
         html = resp.text
-        # Parse stories trên page này
+        # Parse stories tren page nay
         stories, _ = await get_stories_from_genre_page(genre_page_url=page_url, site_key=site_key)
         if not stories:
-            logger.warning(f"Không tìm thấy truyện nào ở {page_url}, dừng crawl category.")
+            logger.warning(f"Khong tim thay truyen nao o {page_url}, dung crawl category.")
             break
         if last_first_url and stories[0]['url'] == last_first_url:
             repeat_count += 1
@@ -445,7 +445,7 @@ async def get_all_stories_from_genre_with_page_check(genre_name, genre_url, site
             repeat_count = 0
         last_first_url = stories[0]['url']
         if repeat_count >= 2:
-            logger.error("Phát hiện lặp trang, dừng crawl để tránh vòng lặp vô tận")
+            logger.error("Phat hien lap trang, dung crawl de tranh vong lap vo tan")
             break
         for s in stories:
             if s['url'] not in seen_urls:
@@ -453,5 +453,5 @@ async def get_all_stories_from_genre_with_page_check(genre_name, genre_url, site
                 seen_urls.add(s['url'])
         pages_crawled += 1
 
-    logger.info(f"Category {genre_name}: crawl được {len(all_stories)} truyện/{pages_crawled}/{total_pages} trang.")
+    logger.info(f"Category {genre_name}: crawl duoc {len(all_stories)} truyen/{pages_crawled}/{total_pages} trang.")
     return all_stories, total_pages, pages_crawled

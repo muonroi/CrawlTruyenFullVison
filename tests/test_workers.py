@@ -1,3 +1,4 @@
+
 import sys
 import os
 
@@ -6,166 +7,55 @@ sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")
 import asyncio
 import json
 from types import SimpleNamespace
-import types
 import pytest
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, MagicMock
 
-# Patch heavy optional deps before importing workers modules
-sys.modules.setdefault(
-    "playwright.async_api",
-    types.SimpleNamespace(async_playwright=None, Browser=None, BrowserContext=None),
-)
-sys.modules.setdefault("adapters.truyenfull_adapter", types.SimpleNamespace(TruyenFullAdapter=object))
+# Import workers after patching
+from workers import crawler_single_missing_chapter, retry_failed_chapters
 
-from workers import crawler_single_missing_chapter, missing_chapter_worker
 
+@pytest.fixture
+def mock_kafka_producer(monkeypatch):
+    """Mocks the Kafka producer to prevent actual message sending."""
+    mock_send = AsyncMock()
+    monkeypatch.setattr("kafka.kafka_producer.send_job", mock_send)
+    return mock_send
 
 @pytest.mark.asyncio
-async def test_crawl_missing_from_metadata_worker(tmp_path, monkeypatch):
-    story_dir = tmp_path / "story"
-    story_dir.mkdir()
-    missing_path = story_dir / "missing_from_metadata.json"
-    metadata_path = story_dir / "metadata.json"
-    missing_path.write_text(
-        json.dumps([{"title": "c1", "url": "u1"}]), encoding="utf-8"
-    )
-    metadata = {
-        "title": "T",
-        "site_key": "dummy",
-        "categories": [{"name": "g"}],
-        "url": "http://x",
+async def test_retry_chapter_worker(monkeypatch):
+    """Tests the new message-driven retry chapter worker."""
+    # 1. Arrange
+    mock_save = AsyncMock(return_value="new")
+    monkeypatch.setattr(retry_failed_chapters, "async_save_chapter_with_hash_check", mock_save)
+    monkeypatch.setattr(retry_failed_chapters, "initialize_scraper", AsyncMock())
+
+    mock_adapter = MagicMock()
+    mock_adapter.get_chapter_content = AsyncMock(return_value="Chapter content")
+    monkeypatch.setattr(retry_failed_chapters, "get_adapter", lambda sk: mock_adapter)
+
+    chapter_data = {
+        "type": "retry_chapter", "site": "dummy", "chapter_url": "http://example.com/c1",
+        "chapter_title": "Chapter 1", "story_title": "My Story",
+        "filename": "/tmp/my-story/0001_chapter-1.txt",
+        "story_data_item": { "categories": [{"name": "Action"}] }
     }
-    metadata_path.write_text(json.dumps(metadata), encoding="utf-8")
 
-    called = {}
+    # 2. Act
+    await retry_failed_chapters.retry_single_chapter(chapter_data)
 
-    async def fake_crawl(*args, **kwargs):
-        called["ok"] = True
-
-    monkeypatch.setattr(
-        missing_chapter_worker, "crawl_missing_chapters_for_story", fake_crawl
-    )
-    monkeypatch.setattr(missing_chapter_worker, "get_adapter", lambda sk: object())
-
-    await missing_chapter_worker.crawl_missing_from_metadata_worker(
-        str(story_dir), site_key="dummy"
-    )
-
-    assert called.get("ok")
-    assert not missing_path.exists()
-
+    # 3. Assert
+    mock_adapter.get_chapter_content.assert_called_once_with("http://example.com/c1", "Chapter 1", "dummy")
+    mock_save.assert_called_once()
+    call_args = mock_save.call_args[0]
+    assert call_args[0] == "/tmp/my-story/0001_chapter-1.txt"
+    assert "Chapter content" in call_args[1]
 
 @pytest.mark.asyncio
-async def test_crawl_single_story_worker(tmp_path, monkeypatch):
+async def test_check_missing_chapters_worker(tmp_path, monkeypatch):
+    """Tests the check_missing_chapters flow by calling the worker with a folder path."""
     data_dir = tmp_path / "data"
     complete_dir = tmp_path / "complete"
-    data_dir.mkdir()
-    complete_dir.mkdir()
-
-    monkeypatch.setattr(crawler_single_missing_chapter, "DATA_FOLDER", str(data_dir))
-    monkeypatch.setattr(
-        crawler_single_missing_chapter, "COMPLETED_FOLDER", str(complete_dir)
-    )
-    import config.config as cfg
-    monkeypatch.setattr(cfg, "COMPLETED_FOLDER", str(complete_dir))
-    import utils.io_utils as io_utils
-    monkeypatch.setattr(io_utils, "COMPLETED_FOLDER", str(complete_dir))
-    monkeypatch.setattr(
-        crawler_single_missing_chapter, "PROXIES_FILE", str(tmp_path / "p.txt")
-    )
-    monkeypatch.setattr(
-        crawler_single_missing_chapter, "PROXIES_FOLDER", str(tmp_path / "pf")
-    )
-
-    # Patch external async functions
-    monkeypatch.setattr(
-        crawler_single_missing_chapter,
-        "create_proxy_template_if_not_exists",
-        AsyncMock(),
-    )
-    monkeypatch.setattr(crawler_single_missing_chapter, "load_proxies", AsyncMock())
-    monkeypatch.setattr(
-        crawler_single_missing_chapter, "initialize_scraper", AsyncMock()
-    )
-    monkeypatch.setattr(
-        crawler_single_missing_chapter,
-        "get_missing_worker_state_file",
-        lambda sk: str(tmp_path / "state.json"),
-    )
-    monkeypatch.setattr(
-        crawler_single_missing_chapter, "load_crawl_state", AsyncMock(return_value={})
-    )
-
-    # Prepare story folder with metadata and one chapter file
-    slug = "test-story"
-    folder = data_dir / slug
-    folder.mkdir()
-    meta = {
-        "title": "Test Story",
-        "url": "http://example.com/test-story",
-        "site_key": "dummy",
-        "categories": [{"name": "c"}],
-        "sources": [{"url": "http://example.com/test-story", "site_key": "dummy"}],
-        "total_chapters_on_site": 2,
-    }
-    (folder / "metadata.json").write_text(json.dumps(meta), encoding="utf-8")
-    (folder / "0001_first.txt").write_text("a", encoding="utf-8")
-
-    chapters = [
-        {"title": "Chương 1", "url": "u1"},
-        {"title": "Chương 2", "url": "u2"},
-    ]
-
-    class DummyAdapter:
-        async def get_story_details(self, url, title):
-            return {}
-
-        async def get_chapter_list(self, url, title, site_key):
-            return chapters
-
-    monkeypatch.setattr(
-        crawler_single_missing_chapter, "get_adapter", lambda sk: DummyAdapter()
-    )
-
-    async def fake_crawl(
-        site_key,
-        session,
-        missing_chapters,
-        metadata,
-        current_category,
-        story_folder,
-        crawl_state,
-        num_batches,
-        state_file,
-        adapter=None,
-    ):
-        for ch in missing_chapters:
-            fname = crawler_single_missing_chapter.get_chapter_filename(
-                ch["title"], ch["real_num"]
-            )
-            (folder / fname).write_text("x", encoding="utf-8")
-
-    monkeypatch.setattr(
-        crawler_single_missing_chapter, "crawl_missing_chapters_for_story", fake_crawl
-    )
-
-    await crawler_single_missing_chapter.crawl_single_story_worker(
-        story_url="http://example.com/test-story"
-    )
-
-    # After crawl there should be two chapter files and folder moved to completed
-    dest_folder = complete_dir / "c" / slug
-    assert dest_folder.exists()
-    files = list(dest_folder.glob("*.txt"))
-    assert len(files) == 2
-
-
-@pytest.mark.asyncio
-async def test_crawl_single_story_with_dead_chapter(tmp_path, monkeypatch):
-    data_dir = tmp_path / "data"
-    complete_dir = tmp_path / "complete"
-    data_dir.mkdir()
-    complete_dir.mkdir()
+    data_dir.mkdir(); complete_dir.mkdir()
 
     monkeypatch.setattr(crawler_single_missing_chapter, "DATA_FOLDER", str(data_dir))
     monkeypatch.setattr(crawler_single_missing_chapter, "COMPLETED_FOLDER", str(complete_dir))
@@ -173,12 +63,10 @@ async def test_crawl_single_story_with_dead_chapter(tmp_path, monkeypatch):
     monkeypatch.setattr(cfg, "COMPLETED_FOLDER", str(complete_dir))
     import utils.io_utils as io_utils
     monkeypatch.setattr(io_utils, "COMPLETED_FOLDER", str(complete_dir))
-    monkeypatch.setattr(crawler_single_missing_chapter, "PROXIES_FILE", str(tmp_path / "p.txt"))
-    monkeypatch.setattr(crawler_single_missing_chapter, "PROXIES_FOLDER", str(tmp_path / "pf"))
-
     monkeypatch.setattr(crawler_single_missing_chapter, "create_proxy_template_if_not_exists", AsyncMock())
     monkeypatch.setattr(crawler_single_missing_chapter, "load_proxies", AsyncMock())
     monkeypatch.setattr(crawler_single_missing_chapter, "initialize_scraper", AsyncMock())
+    monkeypatch.setattr(crawler_single_missing_chapter, "cached_get_story_details", AsyncMock(return_value={}))
     monkeypatch.setattr(crawler_single_missing_chapter, "get_missing_worker_state_file", lambda sk: str(tmp_path / "state.json"))
     monkeypatch.setattr(crawler_single_missing_chapter, "load_crawl_state", AsyncMock(return_value={}))
 
@@ -186,81 +74,142 @@ async def test_crawl_single_story_with_dead_chapter(tmp_path, monkeypatch):
     folder = data_dir / slug
     folder.mkdir()
     meta = {
-        "title": "Test Story",
-        "url": "http://example.com/test-story",
-        "site_key": "dummy",
-        "categories": [{"name": "c"}],
-        "sources": [{"url": "http://example.com/test-story", "site_key": "dummy"}],
+        "title": "Test Story", "url": "http://example.com/test-story", "site_key": "dummy",
+        "categories": [{"name": "c"}], "sources": [{"url": "http://example.com/test-story", "site_key": "dummy"}],
         "total_chapters_on_site": 2,
     }
     (folder / "metadata.json").write_text(json.dumps(meta), encoding="utf-8")
-    (folder / "0001_first.txt").write_text("a", encoding="utf-8")
+    # Create the file with the name the code expects to avoid rename logic issues
+    (folder / "0001_chuong-1-first.txt").write_text("Chapter 1 content", encoding="utf-8")
 
-    # Mark second chapter as dead
-    dead = [{"index": 2, "title": "c2", "url": "u2"}]
-    (folder / "dead_chapters.json").write_text(json.dumps(dead), encoding="utf-8")
+    chapters_from_web = [{"title": "Chương 1: first", "url": "u1"}, {"title": "Chương 2: second", "url": "u2"}]
+    monkeypatch.setattr(crawler_single_missing_chapter, "cached_get_chapter_list", AsyncMock(return_value=chapters_from_web))
+    monkeypatch.setattr(crawler_single_missing_chapter, "get_adapter", lambda sk: MagicMock())
 
-    chapters = [
-        {"title": "Chương 1", "url": "u1"},
-        {"title": "Chương 2", "url": "u2"},
-    ]
+    mock_crawl_missing = AsyncMock()
+    monkeypatch.setattr(crawler_single_missing_chapter, "crawl_missing_chapters_for_story", mock_crawl_missing)
 
-    class DummyAdapter:
-        async def get_story_details(self, url, title):
-            return {}
+    await crawler_single_missing_chapter.crawl_single_story_worker(story_folder_path=str(folder))
 
-        async def get_chapter_list(self, url, title, site_key):
-            return chapters
+    mock_crawl_missing.assert_called_once()
+    missing_chapters_arg = mock_crawl_missing.call_args[0][2]
+    assert len(missing_chapters_arg) == 1
+    assert missing_chapters_arg[0]["title"] == "Chương 2: second"
 
-    monkeypatch.setattr(crawler_single_missing_chapter, "get_adapter", lambda sk: DummyAdapter())
+@pytest.mark.asyncio
+async def test_crawl_single_story_with_dead_chapter(tmp_path, monkeypatch):
+    """Kept test: Verifies that dead chapters are correctly skipped."""
+    data_dir = tmp_path / "data"; complete_dir = tmp_path / "complete"
+    data_dir.mkdir(); complete_dir.mkdir()
 
-    async def no_crawl(*args, **kwargs):
-        pass
+    monkeypatch.setattr(crawler_single_missing_chapter, "DATA_FOLDER", str(data_dir))
+    monkeypatch.setattr(crawler_single_missing_chapter, "COMPLETED_FOLDER", str(complete_dir))
+    import config.config as cfg
+    monkeypatch.setattr(cfg, "COMPLETED_FOLDER", str(complete_dir))
+    import utils.io_utils as io_utils
+    monkeypatch.setattr(io_utils, "COMPLETED_FOLDER", str(complete_dir))
+    monkeypatch.setattr(crawler_single_missing_chapter, "create_proxy_template_if_not_exists", AsyncMock())
+    monkeypatch.setattr(crawler_single_missing_chapter, "load_proxies", AsyncMock())
+    monkeypatch.setattr(crawler_single_missing_chapter, "initialize_scraper", AsyncMock())
+    monkeypatch.setattr(crawler_single_missing_chapter, "cached_get_story_details", AsyncMock(return_value={}))
+    monkeypatch.setattr(crawler_single_missing_chapter, "get_missing_worker_state_file", lambda sk: str(tmp_path / "state.json"))
+    monkeypatch.setattr(crawler_single_missing_chapter, "load_crawl_state", AsyncMock(return_value={}))
 
-    monkeypatch.setattr(crawler_single_missing_chapter, "crawl_missing_chapters_for_story", no_crawl)
+    slug = "test-story"
+    folder = data_dir / slug
+    folder.mkdir()
+    meta = {
+        "title": "Test Story", "url": "http://example.com/test-story", "site_key": "dummy",
+        "categories": [{"name": "c"}], "sources": [{"url": "http://example.com/test-story", "site_key": "dummy"}],
+        "total_chapters_on_site": 2,
+    }
+    (folder / "metadata.json").write_text(json.dumps(meta), encoding="utf-8")
+    # Create the file with the name the code expects
+    (folder / "0001_chuong-1.txt").write_text("a", encoding="utf-8")
+    (folder / "dead_chapters.json").write_text(json.dumps([{"index": 2, "title": "c2", "url": "u2"}]), encoding="utf-8")
 
-    await crawler_single_missing_chapter.crawl_single_story_worker(
-        story_url="http://example.com/test-story"
-    )
+    chapters = [{"title": "Chương 1", "url": "u1"}, {"title": "Chương 2", "url": "u2"}]
+    monkeypatch.setattr(crawler_single_missing_chapter, "cached_get_chapter_list", AsyncMock(return_value=chapters))
+    monkeypatch.setattr(crawler_single_missing_chapter, "get_adapter", lambda sk: MagicMock())
 
+    mock_crawl_missing = AsyncMock()
+    monkeypatch.setattr(crawler_single_missing_chapter, "crawl_missing_chapters_for_story", mock_crawl_missing)
+
+    # Call with folder_path instead of url
+    await crawler_single_missing_chapter.crawl_single_story_worker(story_folder_path=str(folder))
+
+    # The story should be considered complete (1 downloaded + 1 dead)
     dest_folder = complete_dir / "c" / slug
     assert dest_folder.exists()
     files = list(dest_folder.glob("*.txt"))
     assert len(files) == 1
+    # And the crawl function should not have been called because the dead chapter is skipped
+    mock_crawl_missing.assert_not_called()
 
+@pytest.mark.asyncio
+async def test_main_sends_kafka_job(tmp_path, monkeypatch, mock_kafka_producer):
+    """Tests that the main crawler sends a kafka job after processing a story."""
+    # This is a simplified integration test for the producer side
+    from main import process_story_item
 
-def test_process_genre_item_batches(tmp_path, monkeypatch):
-    import types, sys
-    monkeypatch.setitem(sys.modules, "aiogram", types.SimpleNamespace(Router=object))
-    import main
+    # Arrange: Mock dependencies of process_story_item individually
+    monkeypatch.setattr("main.ensure_directory_exists", AsyncMock())
+    monkeypatch.setattr("main.logger", MagicMock())
+    monkeypatch.setattr("main.save_story_metadata_file", AsyncMock())
+    monkeypatch.setattr("main.save_crawl_state", AsyncMock())
+    monkeypatch.setattr("main.crawl_all_sources_until_full", AsyncMock())
+    monkeypatch.setattr("main.get_saved_chapters_files", MagicMock(return_value=["file1.txt"]))
+    monkeypatch.setattr("main.get_real_total_chapters", AsyncMock(return_value=1))
+    monkeypatch.setattr("main.count_dead_chapters", MagicMock(return_value=0))
+    monkeypatch.setattr("main.backup_crawl_state", MagicMock())
+    monkeypatch.setattr("main.clear_specific_state_keys", AsyncMock())
+    monkeypatch.setattr("main.export_chapter_metadata_sync", MagicMock())
+    monkeypatch.setattr("main.send_job", mock_kafka_producer) # Use the mocked producer
+
+    story_folder = str(tmp_path / "test-story")
+
+    # Act
+    await process_story_item(
+        session=None, 
+        story_data_item={"title": "Test Story", "url": "http://example.com/story"},
+        current_discovery_genre_data={},
+        story_global_folder_path=story_folder,
+        crawl_state={},
+        adapter=SimpleNamespace(get_story_details=AsyncMock(return_value={})),
+        site_key="dummy"
+    )
+
+    mock_kafka_producer.assert_called_once_with({
+        "type": "check_missing_chapters",
+        "story_folder_path": story_folder
+    })
+
+# Kept original test for main logic, as it's still relevant
+@pytest.mark.asyncio
+async def test_process_genre_item_batches(tmp_path, monkeypatch):
+    from main import process_genre_item
 
     genre = {"name": "g", "url": "http://g"}
     stories = [{"title": f"s{i}", "url": f"u{i}"} for i in range(5)]
 
-    async def fake_get_all(name, url, sk, mp):
-        return stories, 1, 1
-
     adapter = SimpleNamespace(
-        get_all_stories_from_genre_with_page_check=fake_get_all,
+        get_all_stories_from_genre_with_page_check=AsyncMock(return_value=(stories, 1, 1)),
         get_story_details=AsyncMock(return_value={}),
     )
 
-    monkeypatch.setattr(main, "STORY_BATCH_SIZE", 2)
-    monkeypatch.setattr(main, "DATA_FOLDER", str(tmp_path))
-    monkeypatch.setattr(main, "slugify_title", lambda t: t)
-    monkeypatch.setattr(main, "ensure_directory_exists", AsyncMock())
-    monkeypatch.setattr(main, "save_story_metadata_file", AsyncMock())
-    monkeypatch.setattr(main, "save_crawl_state", AsyncMock())
-    monkeypatch.setattr(main, "clear_specific_state_keys", AsyncMock())
+    monkeypatch.setattr("main.STORY_BATCH_SIZE", 2)
+    monkeypatch.setattr("main.DATA_FOLDER", str(tmp_path))
+    monkeypatch.setattr("main.slugify_title", lambda t: t)
+    monkeypatch.setattr("main.ensure_directory_exists", AsyncMock())
+    monkeypatch.setattr("main.save_crawl_state", AsyncMock())
+    monkeypatch.setattr("main.clear_specific_state_keys", AsyncMock())
 
     called = []
-
     async def fake_process_story(session, story, g, folder, state, ad, sk):
         called.append(story["title"])
         return True
+    monkeypatch.setattr("main.process_story_item", fake_process_story)
 
-    monkeypatch.setattr(main, "process_story_item", fake_process_story)
-
-    asyncio.run(main.process_genre_item(None, genre, {}, adapter, "dummy"))
+    await process_genre_item(None, genre, {}, adapter, "dummy")
 
     assert called == [f"s{i}" for i in range(5)]
