@@ -25,11 +25,8 @@ WORKDIR /app
 
 # Sao chép các file requirements trước để tận dụng Docker cache
 COPY requirements.txt requirements.txt
-COPY requirements-dev.txt requirements-dev.txt
-
 # Cài đặt các thư viện Python
 RUN pip install --no-cache-dir -r requirements.txt
-RUN pip install --no-cache-dir -r requirements-dev.txt
 
 # Cài đặt trình duyệt cho Playwright
 RUN playwright install --with-deps chromium
