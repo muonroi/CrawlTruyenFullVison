@@ -90,7 +90,7 @@ def _extract_post_id(body_classes: List[str]) -> Optional[str]:
     return None
 
 
-def parse_story_info(html_content: str, base_url: str) -> Dict[str, Any]:
+def parse_story_info(html_content: str, base_url: str = "") -> Dict[str, Any]:
     """Parse story detail page for metadata and inline chapter list."""
     soup = BeautifulSoup(html_content, 'lxml')
 
@@ -103,7 +103,9 @@ def parse_story_info(html_content: str, base_url: str) -> Dict[str, Any]:
     if description_block:
         for tag in description_block.select('script, style'):
             tag.decompose()
-        description = _clean_text_blocks(str(description_block))
+        raw_text = description_block.get_text(separator='\n')
+        lines = [line.strip() for line in raw_text.splitlines() if line.strip()]
+        description = '\n'.join(lines)
 
     genres = [
         {'name': a.get_text(strip=True), 'url': urljoin(base_url, a.get('href'))}
@@ -157,25 +159,35 @@ def parse_chapter_list(html_content: str, base_url: str) -> List[Dict[str, str]]
     return chapters
 
 
-def parse_chapter_content(html_content: str) -> Optional[str]:
-    """Extract readable chapter text, handling base64 + zlib payload."""
+def parse_chapter_content(html_content: str) -> Optional[Dict[str, Optional[str]]]:
+    """Extract chapter title and HTML content, handling base64 + zlib payload."""
     soup = BeautifulSoup(html_content, 'lxml')
-    script = soup.select_one('script#decompress-script')
+    title_tag = soup.select_one('h2') or soup.select_one('h1#chapter-heading')
+    title = title_tag.get_text(strip=True) if title_tag else None
 
+    content_html: Optional[str] = None
+
+    script = soup.select_one('script#decompress-script')
     if script and script.string:
         match = _BASE64_PATTERN.search(script.string)
         if match:
             try:
                 decoded = base64.b64decode(match.group(1))
                 inflated = zlib.decompress(decoded)
-                text = _clean_text_blocks(inflated.decode('utf-8', errors='ignore'))
-                if text:
-                    return text
+                candidate = inflated.decode('utf-8', errors='ignore').strip()
+                if candidate:
+                    if '<p' not in candidate.lower():
+                        normalized = _clean_text_blocks(candidate)
+                        parts = [p for p in normalized.split('\n') if p.strip()]
+                        content_html = ''.join(f'<p>{part}</p>' for part in parts)
+                    else:
+                        content_html = candidate
             except Exception:
-                pass
+                content_html = None
 
-    content_div = soup.select_one('#chapter-reading-content')
-    if content_div:
-        return _clean_text_blocks(str(content_div))
+    if not content_html:
+        content_div = soup.select_one('#chapter-reading-content')
+        if content_div:
+            content_html = str(content_div)
 
-    return None
+    return {'title': title, 'content': content_html}

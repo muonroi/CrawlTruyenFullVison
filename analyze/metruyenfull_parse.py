@@ -57,6 +57,8 @@ async def get_stories_from_category(self, category_url):
     return stories
 
 async def get_story_metadata(self, story_url):
+    import asyncio
+
     resp = await make_request(story_url, self.SITE_KEY)
     if not resp:
         return None
@@ -84,10 +86,15 @@ async def get_story_metadata(self, story_url):
 
     # So chuong
     num_chapters = 0
+    import unicodedata
+
     for label in soup.select('.info-holder .label-success'):
         txt = label.get_text()
-        if 'chuong' in txt.lower():
-            match = re.search(r'(\d+)', txt)
+        normalized = ''.join(
+            ch for ch in unicodedata.normalize('NFD', txt.lower()) if not unicodedata.combining(ch)
+        )
+        if 'chuong' in normalized:
+            match = re.search(r'(\d+)', normalized)
             if match:
                 num_chapters = int(match.group(1))
                 logger.info(f"Lay duoc so chuong tu label: {num_chapters} chuong")

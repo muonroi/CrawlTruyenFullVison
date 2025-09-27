@@ -620,15 +620,6 @@ async def async_save_chapter_with_lock(filename, content):
         await async_save_chapter_with_hash_check(filename, content)
 
 
-def _normalize_for_matching(text: str) -> str:
-    """Return an accent-free representation for robust matching."""
-    if not text:
-        return ''
-    cleaned = text.translate(str.maketrans({'Đ': 'D', 'đ': 'd'}))
-    normalized = unicodedata.normalize('NFD', cleaned)
-    return ''.join(ch for ch in normalized if not unicodedata.combining(ch))
-
-
 def extract_real_chapter_number(title: str) -> int | None:
     """
     Trich xuat so chuong thuc te tu tieu de chuong.
@@ -637,7 +628,11 @@ def extract_real_chapter_number(title: str) -> int | None:
     if not title:
         return None
 
-    normalized = _normalize_for_matching(title)
+    import unicodedata
+
+    cleaned = title.translate(str.maketrans({'Đ': 'D', 'đ': 'd'}))
+    normalized = unicodedata.normalize('NFD', cleaned)
+    normalized = ''.join(ch for ch in normalized if not unicodedata.combining(ch))
 
     match = re.search(r'(?:chuong|chapter|chap|ch)\s*[:\-]?\s*(\d{1,5})', normalized, re.IGNORECASE)
     if match:
@@ -655,7 +650,11 @@ def remove_title_number(title: str) -> str:
     if not title:
         return ''
 
-    normalized = _normalize_for_matching(title)
+    import unicodedata
+
+    cleaned = title.translate(str.maketrans({'Đ': 'D', 'đ': 'd'}))
+    normalized = unicodedata.normalize('NFD', cleaned)
+    normalized = ''.join(ch for ch in normalized if not unicodedata.combining(ch))
 
     prefix_pattern = re.compile(r'^(?:chuong|chapter|chap|ch)\s*\d+\s*[:\-\.\)]?\s*', re.IGNORECASE)
     match = prefix_pattern.match(normalized)
@@ -712,8 +711,26 @@ def export_chapter_metadata_sync(story_folder, chapters) -> None:
 
 
 def remove_chapter_number_from_title(title):
-    """Backward compatible wrapper that removes the chapter number prefix."""
-    return remove_title_number(title)
+    """Backward compatible function that removes leading chapter numbers."""
+    import unicodedata
+
+    if not title:
+        return ''
+
+    cleaned = title.translate(str.maketrans({'Đ': 'D', 'đ': 'd'}))
+    normalized = unicodedata.normalize('NFD', cleaned)
+    normalized = ''.join(ch for ch in normalized if not unicodedata.combining(ch))
+
+    prefix_pattern = re.compile(r'^(?:chuong|chapter|chap|ch)\s*\d+\s*[:\-\.\)]?\s*', re.IGNORECASE)
+    match = prefix_pattern.match(normalized)
+    if match:
+        return title[match.end():].strip()
+
+    match = re.match(r'^\s*\d+\s*[:\-\.\)]?\s*', normalized)
+    if match:
+        return title[match.end():].strip()
+
+    return title.strip()
 
 
 def get_actual_chapters_for_export(story_folder):
