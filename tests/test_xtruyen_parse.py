@@ -23,11 +23,12 @@ class TestXTruyenParse(unittest.TestCase):
     def test_parse_story_info(self):
         self.assertIsNotNone(self.detail_story_html, "detail_story.txt not found")
         story_info = parse_story_info(self.detail_story_html)
-        
+
         self.assertEqual(story_info['title'], 'THỜI BUỔI NÀY AI CÒN ĐƯƠNG ĐỨNG ĐẮN HỒ YÊU')
         self.assertEqual(story_info['author'], 'Ngã Lai Tạng Ba Binh Tuyến')
         self.assertTrue(story_info['description'].startswith('Ta kêu Trần Nguyên'))
         self.assertEqual(story_info['post_id'], '10235224')
+        self.assertEqual(story_info['ajax_nonce'], 'fee264d54b')
 
     def test_parse_chapter_content(self):
         self.assertIsNotNone(self.content_chapter_html, "content_chapter.txt not found")
