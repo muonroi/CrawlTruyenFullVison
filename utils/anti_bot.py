@@ -17,14 +17,20 @@ def is_anti_bot_content(text: str) -> bool:
         return False
 
     lower_text = text.lower()
+    # Refined signature phrases to be more specific and avoid false positives.
     signature_phrases = [
         "bạn đã bị chặn",
         "checking your browser",
-        "just a moment",
-        "cloudflare",
-        "ddos protection",
+        "ddos protection by cloudflare",  # More specific
+        "verifying you are human",
+        "enable javascript and cookies to continue",
+        "cloudflare's security check"
     ]
     if any(sig in lower_text for sig in signature_phrases):
+        return True
+
+    # The simple "cloudflare" check is too broad. A more nuanced check is needed.
+    if "just a moment" in lower_text and "cloudflare" in lower_text:
         return True
 
     if len(text) < 100:
