@@ -32,7 +32,7 @@ def extract_chapter_content(
         logger.error(f"{debug_prefix} Error when detect/decode encoding: {e}")
 
     # Parse and locate chapter container
-    soup = BeautifulSoup(html, "html5lib")
+    soup = BeautifulSoup(html, "html.parser")
     chapter_div = None
 
     # Try id-based heuristic first (chapter-c variants)
