@@ -232,14 +232,27 @@ def parse_story_info(html_content: str, base_url: str = "") -> Dict[str, Any]:
 def parse_chapter_list(html_content: str, base_url: str) -> List[Dict[str, str]]:
     """Parse chapter listing (either inline HTML or AJAX snippet)."""
     soup = BeautifulSoup(html_content, _DEFAULT_PARSER)
-    anchors = soup.select('ul.main li.wp-manga-chapter a[href]')
+    
+    anchors = []
+    chapter_list_container = soup.select_one('ul.version-chap')
+    if chapter_list_container:
+        # More specific selector to target only actual chapter links inside list items
+        anchors = chapter_list_container.select('li a[href]')
+    
+    # Fallback to old selectors if the new one finds nothing
     if not anchors:
-        anchors = soup.select('li.wp-manga-chapter a[href]')
+        anchors = soup.select('ul.main li.wp-manga-chapter a[href]')
+        if not anchors:
+            anchors = soup.select('li.wp-manga-chapter a[href]')
 
     chapters: List[Dict[str, str]] = []
     for a in anchors:
-        title = a.get_text(strip=True)
         href = a.get('href')
+        # Explicitly filter out javascript links
+        if href and href.strip().startswith('javascript:'):
+            continue
+
+        title = a.get_text(strip=True)
         if not title or not href:
             continue
         chapters.append({
