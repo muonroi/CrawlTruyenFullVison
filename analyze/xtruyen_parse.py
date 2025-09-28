@@ -10,6 +10,12 @@ from bs4 import BeautifulSoup
 
 _BASE64_PATTERN = re.compile(r'base64\s*=\s*"([^"]+)"', re.IGNORECASE)
 _DOUBLE_BREAK_PATTERN = re.compile(r'(?:&nbsp;)*(?:\s*<br\s*/?>\s*){2,}', re.IGNORECASE)
+_AJAX_NONCE_PATTERNS = (
+    re.compile(r'ajax_nonce"\s*:\s*"([^"]+)"', re.IGNORECASE),
+    re.compile(r'"nonce"\s*:\s*"([^"]+)"', re.IGNORECASE),
+    re.compile(r'data-nonce\s*=\s*"([^"]+)"', re.IGNORECASE),
+    re.compile(r'"security"\s*:\s*"([^"]+)"', re.IGNORECASE),
+)
 
 
 def _extract_base64_payload(script_text: str) -> Optional[str]:
@@ -196,6 +202,13 @@ def parse_story_info(html_content: str, base_url: str = "") -> Dict[str, Any]:
         except (json.JSONDecodeError, AttributeError):
             pass
 
+    ajax_nonce = None
+    for pattern in _AJAX_NONCE_PATTERNS:
+        match = pattern.search(html_content)
+        if match:
+            ajax_nonce = match.group(1)
+            break
+
     return {
         'title': title_tag.get_text(strip=True) if title_tag else None,
         'author': author_tag.get_text(strip=True) if author_tag else None,
@@ -210,6 +223,7 @@ def parse_story_info(html_content: str, base_url: str = "") -> Dict[str, Any]:
         'rating_value': rating_value,
         'rating_count': rating_count,
         'source': source,
+        'ajax_nonce': ajax_nonce,
     }
 
 

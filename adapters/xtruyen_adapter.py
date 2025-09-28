@@ -154,6 +154,11 @@ class XTruyenAdapter(BaseSiteAdapter):
 
         ajax_url = f"{self.base_url}/wp-admin/admin-ajax.php"
         form_data = {'action': 'manga_get_chapters', 'manga': post_id}
+
+        ajax_nonce = details.get('ajax_nonce')
+        if ajax_nonce:
+            form_data['security'] = ajax_nonce
+            form_data.setdefault('nonce', ajax_nonce)
         
         headers = {
             'X-Requested-With': 'XMLHttpRequest',
