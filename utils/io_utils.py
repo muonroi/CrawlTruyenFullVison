@@ -101,7 +101,9 @@ async def move_story_to_completed(story_folder, genre_name, retries: int = 3) ->
 
     for attempt in range(1, retries + 1):
         try:
-            await asyncio.to_thread(shutil.move, story_folder, dest_folder)
+            # Use copytree and rmtree for a more robust move operation
+            await asyncio.to_thread(shutil.copytree, story_folder, dest_folder)
+            await asyncio.to_thread(shutil.rmtree, story_folder)
             logger.info(f"[INFO] Đã chuyển truyện sang {dest_genre_folder}")
             return True
         except Exception as ex:
