@@ -1,8 +1,18 @@
 import asyncio
+import importlib
+import importlib.util
 import random
 from typing import Any, Dict, Optional
 
-from playwright.async_api import async_playwright, Browser, BrowserContext
+try:
+    _PLAYWRIGHT_SPEC = importlib.util.find_spec("playwright.async_api")
+except (ModuleNotFoundError, ValueError):  # pragma: no cover - optional dependency missing
+    _PLAYWRIGHT_SPEC = None
+if _PLAYWRIGHT_SPEC:
+    from playwright.async_api import async_playwright, Browser, BrowserContext  # type: ignore
+else:  # pragma: no cover - fallback when Playwright is unavailable
+    async_playwright = None  # type: ignore
+    Browser = BrowserContext = None  # type: ignore
 from utils.http_client import fetch
 from utils.anti_bot import is_anti_bot_content
 
@@ -37,6 +47,10 @@ async def initialize_scraper(
 ) -> None:
     """Khởi tạo browser Playwright một lần và tái sử dụng."""
     global browser, playwright_obj
+    if async_playwright is None:
+        logger.warning("Playwright not installed; initialize_scraper skipped")
+        return
+
     async with _init_lock:
         try:
             if playwright_obj is None:
@@ -50,6 +64,9 @@ async def initialize_scraper(
             browser = None
 
 async def get_context(proxy_settings, headers) -> BrowserContext:
+    if async_playwright is None:
+        raise RuntimeError("Playwright support is not available")
+
     key = str(proxy_settings)
     ctx = _context_pool.get(key)
     if ctx:
@@ -111,6 +128,10 @@ async def _make_request_playwright(
     global browser
     headers = await get_random_headers(site_key)
     last_exception = None
+
+    if async_playwright is None:
+        logger.warning("Playwright not installed; cannot fetch %s", url)
+        return None
 
     for attempt in range(1, max_retries + 1):
         proxy_url = None
@@ -200,6 +221,10 @@ async def _make_request_playwright_post(
 
     payload = {str(k): str(v) for k, v in (data or {}).items()}
     last_exception: Exception | None = None
+
+    if async_playwright is None:
+        logger.warning("Playwright not installed; cannot POST %s", url)
+        return None
 
     for attempt in range(1, max_retries + 1):
         proxy_url = None

@@ -26,7 +26,6 @@ from utils.batch_utils import get_optimal_batch_size, smart_delay, split_batches
 from utils.anti_bot import is_anti_bot_content
 from utils.state_utils import save_crawl_state
 from utils.errors import CrawlError
-from playwright.async_api import async_playwright
 SEM = asyncio.Semaphore(ASYNC_SEMAPHORE_LIMIT)
 
 BATCH_SEMAPHORE_LIMIT = 5

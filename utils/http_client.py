@@ -1,10 +1,19 @@
 import asyncio
 import random
 from typing import Any, Dict, Optional
-
+import importlib
+import importlib.util
 
 import httpx
-from playwright.async_api import async_playwright
+
+try:
+    _PLAYWRIGHT_SPEC = importlib.util.find_spec("playwright.async_api")
+except (ModuleNotFoundError, ValueError):  # pragma: no cover
+    _PLAYWRIGHT_SPEC = None
+if _PLAYWRIGHT_SPEC:
+    from playwright.async_api import async_playwright  # type: ignore
+else:  # pragma: no cover
+    async_playwright = None  # type: ignore
 
 from config.config import (
     DELAY_ON_RETRY,
@@ -81,6 +90,10 @@ async def fetch(
 
 async def fetch_with_playwright(url: str) -> str | None:
     """Fetches page content using Playwright routed through the project's proxy config."""
+    if async_playwright is None:
+        logger.warning("Playwright not installed; fetch_with_playwright skipped for %s", url)
+        return None
+
     headers = await get_random_headers('xtruyen')
     user_agent = headers.get('User-Agent')
 
