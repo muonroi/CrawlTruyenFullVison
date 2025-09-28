@@ -1,14 +1,43 @@
-﻿import asyncio
+from __future__ import annotations
+import asyncio
 import glob
 import json
 import random
 import sys
 import time
-import aiohttp
+import importlib.util
+try:
+    _AIOHTTP_SPEC = importlib.util.find_spec("aiohttp")
+except ModuleNotFoundError:  # pragma: no cover - optional dependency missing
+    _AIOHTTP_SPEC = None
+
+if _AIOHTTP_SPEC:
+    import aiohttp  # type: ignore
+else:  # pragma: no cover - optional dependency missing
+    aiohttp = None  # type: ignore
 import os
 from typing import Dict, Any, Optional, Tuple
-from aiogram import Router
-from pydantic import BaseModel
+try:
+    _AIOGRAM_SPEC = importlib.util.find_spec("aiogram")
+except ModuleNotFoundError:  # pragma: no cover - optional dependency missing
+    _AIOGRAM_SPEC = None
+
+if _AIOGRAM_SPEC:
+    from aiogram import Router  # type: ignore
+else:  # pragma: no cover - simple stand-in
+    class Router:  # type: ignore
+        def __init__(self, *args, **kwargs) -> None:
+            pass
+try:
+    from pydantic import BaseModel  # type: ignore
+except ModuleNotFoundError:  # pragma: no cover - fallback
+    class BaseModel:  # type: ignore
+        def __init__(self, **kwargs) -> None:
+            for key, value in kwargs.items():
+                setattr(self, key, value)
+
+        def model_dump(self) -> dict:
+            return self.__dict__.copy()
 from adapters.base_site_adapter import BaseSiteAdapter
 from adapters.factory import get_adapter
 from config.proxy_provider import load_proxies

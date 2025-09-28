@@ -60,7 +60,7 @@ TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
 # ============ LIMIT CRAWL ============
 MAX_GENRES_TO_CRAWL = int(os.getenv("MAX_GENRES_TO_CRAWL", 2)) or None
 MAX_STORIES_PER_GENRE_PAGE = int(os.getenv("MAX_STORIES_PER_GENRE_PAGE", 0)) or None
-MAX_STORIES_TOTAL_PER_GENRE = int(os.getenv("MAX_STORIES_TOTAL_PER_GENRE", 1)) or None
+MAX_STORIES_TOTAL_PER_GENRE = int(os.getenv("MAX_STORIES_TOTAL_PER_GENRE", 0)) or None
 MAX_CHAPTER_PAGES_TO_CRAWL = int(os.getenv("MAX_CHAPTER_PAGES_TO_CRAWL", 0)) or None
 
 # ============ ASYNC LIMIT ============
