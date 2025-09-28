@@ -201,6 +201,17 @@ def parse_chapter_content(html_content: str) -> Optional[Dict[str, Optional[str]
 
     content_html: Optional[str] = None
 
+    container = soup.select_one('#chapter-reading-content, .reading-content')
+    if container:
+        for tag in container.select('script, style'):
+            tag.decompose()
+        inner_html = ''.join(str(child) for child in container.contents).strip()
+        text_content = container.get_text(strip=True)
+        if inner_html and text_content:
+            content_html = inner_html
+        elif container.has_attr('data-content') and container['data-content'].strip():
+            content_html = container['data-content'].strip()
+
     script = soup.select_one('script#decompress-script')
     if script and script.string:
         match = _BASE64_PATTERN.search(script.string)
@@ -209,7 +220,7 @@ def parse_chapter_content(html_content: str) -> Optional[Dict[str, Optional[str]
                 decoded = base64.b64decode(match.group(1))
                 inflated = zlib.decompress(decoded)
                 candidate = inflated.decode('utf-8', errors='ignore').strip()
-                if candidate:
+                if candidate and not content_html:
                     if '<p' not in candidate.lower():
                         normalized = _clean_text_blocks(candidate)
                         parts = [p for p in normalized.split('\n') if p.strip()]
@@ -220,7 +231,7 @@ def parse_chapter_content(html_content: str) -> Optional[Dict[str, Optional[str]
                 content_html = None
 
     if not content_html:
-        content_div = soup.select_one('#chapter-reading-content')
+        content_div = soup.select_one('#chapter-reading-content, .reading-content')
         if content_div:
             content_html = str(content_div)
 
