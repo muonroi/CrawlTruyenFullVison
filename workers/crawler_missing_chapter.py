@@ -26,7 +26,7 @@ from utils.chapter_utils import (
 from utils.domain_utils import  get_site_key_from_url, is_url_for_site, resolve_site_key
 from utils.logger import logger
 from utils.io_utils import create_proxy_template_if_not_exists, move_story_to_completed
-from utils.notifier import send_discord_notify
+from utils.notifier import send_telegram_notify
 from utils.cache_utils import cached_get_story_details, cached_get_chapter_list
 from utils.state_utils import get_missing_worker_state_file, load_crawl_state
 from filelock import FileLock
@@ -107,7 +107,7 @@ async def loop_once_multi_sites(force_unskip=False):
     except Exception as e:
         logger.error(f"[ERROR] Lỗi khi kiểm tra/crawl missing: {e}")
     logger.info(f"===== [DONE] =====\n")
-    await send_discord_notify(f"✅ DONE: Đã crawl/check missing xong toàn bộ ({now})")
+    await send_telegram_notify(f"✅ DONE: Đã crawl/check missing xong toàn bộ ({now})")
 async def crawl_missing_until_complete(
     adapter, site_key, session, chapters_from_web, metadata, current_category, story_folder, crawl_state, state_file, max_retry=3
 ):
@@ -169,7 +169,7 @@ async def crawl_missing_until_complete(
             f"[MISSING] '{metadata['title']}' vẫn thiếu {len(missing_chapters)} chương sau khi thử mọi nguồn"
         )
         logger.warning(warn_msg)
-        await send_discord_notify(warn_msg)
+        await send_telegram_notify(warn_msg)
         try:
             with open(MISSING_SUMMARY_LOG, "a", encoding="utf-8") as f:
                 f.write(f"{metadata.get('title')}\t{story_folder}\t{len(missing_chapters)}\n")
@@ -502,7 +502,7 @@ async def check_and_crawl_missing_all_stories(adapter, home_page_url, site_key, 
                     f"[WARNING] Sau crawl bù, truyện '{title}' vẫn thiếu chương: {chapter_count}+{dead_count}/{real_total}"
                 )
                 logger.warning(warning_msg)
-                await send_discord_notify(warning_msg)
+                await send_telegram_notify(warning_msg)
                 notified_titles.add(title)
 
         # Fix metadata nếu thiếu trường quan trọng (chỉ gọi 1 lần)
@@ -551,7 +551,7 @@ async def check_genre_complete_and_notify(genre_name, genre_url, site_key):
                     completed_titles.append(meta.get("title"))
     missing = [story for story in stories_on_web if story["title"] not in completed_titles]
     if not missing:
-        await send_discord_notify(f"🎉 Đã crawl xong **TẤT CẢ** truyện của thể loại [{genre_name}] trên web!")
+        await send_telegram_notify(f"🎉 Đã crawl xong **TẤT CẢ** truyện của thể loại [{genre_name}] trên web!")
 
 async def fix_metadata_with_retry(metadata, metadata_path, story_folder, site_key=None, adapter=None):
     from scraper import make_request

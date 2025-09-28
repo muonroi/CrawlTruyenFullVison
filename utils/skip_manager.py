@@ -6,7 +6,7 @@ from typing import Dict, Any
 
 from config.config import SKIPPED_STORIES_FILE
 from utils.logger import logger
-from utils.notifier import send_discord_notify
+from utils.notifier import send_telegram_notify
 from utils.chapter_utils import slugify_title
 
 SKIPPED_STORIES: Dict[str, Dict[str, Any]] = {}
@@ -61,7 +61,7 @@ def mark_story_as_skipped(story: Dict[str, Any], reason: str = "") -> None:
     msg = f"[SKIP] {story.get('title')} - {reason} ({now})".strip()
     logger.warning(msg)
     try:
-        asyncio.create_task(send_discord_notify(msg))
+        asyncio.create_task(send_telegram_notify(msg, status="warning"))
     except RuntimeError:
         # in case called outside event loop
         pass

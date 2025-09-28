@@ -100,6 +100,8 @@ async def consume():
             value_deserializer=lambda m: json.loads(m.decode("utf-8")),
             auto_offset_reset="earliest",
             group_id=KAFKA_GROUP_ID,
+            session_timeout_ms=30000,
+            max_poll_interval_ms=600000,  # 10 phút
         )
         try:
             await consumer.start()

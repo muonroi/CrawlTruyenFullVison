@@ -56,6 +56,9 @@ LOCK = asyncio.Lock()
 # ============ TELEGRAM ============
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
+TELEGRAM_THREAD_ID = os.getenv("TELEGRAM_THREAD_ID")
+TELEGRAM_PARSE_MODE = os.getenv("TELEGRAM_PARSE_MODE", "Markdown")
+TELEGRAM_DISABLE_WEB_PAGE_PREVIEW = os.getenv("TELEGRAM_DISABLE_WEB_PAGE_PREVIEW", "true").lower() == "true"
 
 # ============ LIMIT CRAWL ============
 MAX_GENRES_TO_CRAWL = int(os.getenv("MAX_GENRES_TO_CRAWL", "0")) or None
@@ -137,3 +140,4 @@ def load_blacklist_patterns(file_path):
             else:
                 contains_list.append(line.lower())
     return patterns, contains_list
+

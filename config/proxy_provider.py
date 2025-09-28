@@ -9,7 +9,7 @@ from typing import List, Optional
 from config.config import USE_PROXY
 from utils.logger import logger
 from config.config import LOADED_PROXIES
-from utils.notifier import send_discord_notify
+from utils.notifier import send_telegram_notify
 
 # Đặt biến này nếu muốn load từ API, để rỗng "" nếu chỉ dùng file txt
 PROXY_API_URL = os.getenv("PROXY_API_URL", "")
@@ -78,7 +78,7 @@ async def load_proxies(filename: str = None) -> List[str]:
             LOADED_PROXIES.clear()
             LOADED_PROXIES.extend(raw_entries)
             if not LOADED_PROXIES:
-                asyncio.create_task(send_discord_notify("[Crawl Notify] Không có proxy nào được load vào hệ thống!"))
+                asyncio.create_task(send_telegram_notify("[Crawl Notify] Không có proxy nào được load vào hệ thống!", status="warning"))
         except Exception as e:
             print(f"Proxy load error: {e}")
     return LOADED_PROXIES
@@ -121,7 +121,7 @@ async def mark_bad_proxy(proxy: str):
         FAILED_PROXY_TIMES.append(time.time())
         FAILED_PROXY_TIMES[:] = [t for t in FAILED_PROXY_TIMES if time.time() - t < 60]
         if len(FAILED_PROXY_TIMES) >= MAX_FAIL_RATE:
-            asyncio.create_task(send_discord_notify("[Crawl Notify] Cảnh báo: Số lượng proxy bị ban liên tục vượt ngưỡng, hãy kiểm tra lại hệ thống/proxy!"))
+            asyncio.create_task(send_telegram_notify("[Crawl Notify] Cảnh báo: Số lượng proxy bị ban liên tục vượt ngưỡng, hãy kiểm tra lại hệ thống/proxy!", status="error"))
             FAILED_PROXY_TIMES.clear()
 
 def get_random_proxy_url(username: str = None, password: str = None) -> Optional[str]:

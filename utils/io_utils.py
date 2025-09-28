@@ -104,6 +104,21 @@ async def move_story_to_completed(story_folder, genre_name, retries: int = 3) ->
     if os.path.exists(dest_folder):
         return True
 
+    # Xoá các file .lock còn sót lại trước khi di chuyển
+    try:
+        for item_name in os.listdir(story_folder):
+            if item_name.endswith('.lock'):
+                lock_path = os.path.join(story_folder, item_name)
+                try:
+                    os.remove(lock_path)
+                    logger.debug(f"[CLEANUP] Đã xoá file lock: {lock_path}")
+                except FileNotFoundError:
+                    continue
+                except Exception as ex:
+                    logger.warning(f"[CLEANUP] Không xoá được lock {lock_path}: {ex}")
+    except FileNotFoundError:
+        return False
+
     for attempt in range(1, retries + 1):
         try:
             # Manual move: create dest, move files, remove src. This is more robust in some CI environments.
