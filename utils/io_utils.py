@@ -23,7 +23,12 @@ async def ensure_directory_exists(dir_path: str) -> bool:
     exists = await loop.run_in_executor(None, os.path.exists, dir_path)
     if not exists:
         try:
-            await loop.run_in_executor(None, os.makedirs, dir_path, True)
+            # Use exist_ok=True to avoid creating directories with incorrect
+            # permissions (passing ``True`` positionally sets the mode).
+            await loop.run_in_executor(
+                None,
+                lambda: os.makedirs(dir_path, exist_ok=True),
+            )
             logger.info(f"Đã tạo thư mục: {dir_path}")
             return True
         except Exception as e:
