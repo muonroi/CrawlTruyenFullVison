@@ -23,7 +23,12 @@ async def ensure_directory_exists(dir_path: str) -> bool:
     exists = await loop.run_in_executor(None, os.path.exists, dir_path)
     if not exists:
         try:
-            await loop.run_in_executor(None, os.makedirs, dir_path, True)
+            # Use exist_ok=True to avoid creating directories with incorrect
+            # permissions (passing ``True`` positionally sets the mode).
+            await loop.run_in_executor(
+                None,
+                lambda: os.makedirs(dir_path, exist_ok=True),
+            )
             logger.info(f"Đã tạo thư mục: {dir_path}")
             return True
         except Exception as e:
@@ -101,11 +106,21 @@ async def move_story_to_completed(story_folder, genre_name, retries: int = 3) ->
 
     for attempt in range(1, retries + 1):
         try:
-            await asyncio.to_thread(shutil.move, story_folder, dest_folder)
-            logger.info(f"[INFO] Đã chuyển truyện sang {dest_genre_folder}")
+            # Manual move: create dest, move files, remove src. This is more robust in some CI environments.
+            if not os.path.exists(dest_folder):
+                os.makedirs(dest_folder)
+            
+            for item_name in os.listdir(story_folder):
+                src_item = os.path.join(story_folder, item_name)
+                dst_item = os.path.join(dest_folder, item_name)
+                shutil.move(src_item, dst_item)
+            
+            shutil.rmtree(story_folder)
+
+            logger.info(f"[INFO] Đã di chuyển truyện sang {dest_folder}")
             return True
         except Exception as ex:
-            logger.error(f"Lỗi move {story_folder} -> {dest_folder} ({attempt}/{retries}): {ex}")
+            logger.error(f"Lỗi di chuyển {story_folder} -> {dest_folder} ({attempt}/{retries}): {ex}")
             await asyncio.sleep(2)
     return False
 

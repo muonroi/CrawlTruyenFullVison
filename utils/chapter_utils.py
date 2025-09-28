@@ -7,6 +7,7 @@ import datetime
 import math
 from typing import Any, Dict, List
 import re
+import unicodedata
 from filelock import FileLock
 from unidecode import unidecode
 import aiofiles
@@ -25,7 +26,6 @@ from utils.batch_utils import get_optimal_batch_size, smart_delay, split_batches
 from utils.anti_bot import is_anti_bot_content
 from utils.state_utils import save_crawl_state
 from utils.errors import CrawlError
-from playwright.async_api import async_playwright
 SEM = asyncio.Semaphore(ASYNC_SEMAPHORE_LIMIT)
 
 BATCH_SEMAPHORE_LIMIT = 5
@@ -36,7 +36,7 @@ async def mark_dead_chapter(story_folder_path, ch_info):
     if os.path.exists(dead_path):
         with open(dead_path, "r", encoding="utf-8") as f:
             dead_list = json.load(f)
-    # Đảm bảo không ghi trùng
+    # Dam bao khong ghi trung
     if any(x.get("url") == ch_info.get("url") for x in dead_list):
         return
     dead_list.append({
@@ -87,7 +87,7 @@ async def crawl_missing_chapters_for_story(
         tasks = []
         for i, (idx, ch, fname_only) in enumerate(batch):
             full_path = os.path.join(story_folder_path, fname_only)
-            logger.info(f"[Batch {batch_idx}/{num_batches_now}] Đang crawl chương {idx+1}: {ch['title']}")
+            logger.info(f"[Batch {batch_idx}/{num_batches_now}] Dang crawl chuong {idx+1}: {ch['title']}")
 
             async def wrapped(ch=ch, idx=idx, fname_only=fname_only, full_path=full_path):
                 async with sem:
@@ -99,7 +99,7 @@ async def crawl_missing_chapters_for_story(
                                 current_discovery_genre_data,
                                 full_path,
                                 fname_only,
-                                "Crawl bù missing",
+                                "Crawl bu missing",
                                 f"{idx+1}/{len(chapters)}",
                                 crawl_state,
                                 successful,
@@ -112,7 +112,7 @@ async def crawl_missing_chapters_for_story(
                             timeout=300
                         )
                     except Exception as ex:
-                        logger.error(f"[Batch {batch_idx}] Lỗi khi crawl chương {idx+1}: {ch['title']} - {ex}")
+                        logger.error(f"[Batch {batch_idx}] Loi khi crawl chuong {idx+1}: {ch['title']} - {ex}")
                         failed.append({
                             'chapter_data': ch,
                             'filename': full_path,
@@ -128,7 +128,7 @@ async def crawl_missing_chapters_for_story(
     while retry_count < normal_rounds:
         saved_files = get_saved_chapters_files(story_folder_path)
         if len(saved_files) >= total_chapters:
-            logger.info(f"ĐÃ ĐỦ {len(saved_files)}/{total_chapters} chương cho '{story_data_item['title']}'")
+            logger.info(f"DA DU {len(saved_files)}/{total_chapters} chuong cho '{story_data_item['title']}'")
             break
 
         missing_chapters = []
@@ -146,13 +146,13 @@ async def crawl_missing_chapters_for_story(
             break
 
         logger.warning(
-            f"Truyện '{story_data_item['title']}' còn thiếu {len(missing_chapters)} chương (retry: {retry_count + 1})"
+            f"Truyen '{story_data_item['title']}' con thieu {len(missing_chapters)} chuong (retry: {retry_count + 1})"
         )
 
         batch_size = int(os.getenv("BATCH_SIZE") or get_optimal_batch_size(len(missing_chapters)))
         num_batches_now = max(1, (len(missing_chapters) + batch_size - 1) // batch_size)
         batches = split_batches(missing_chapters, num_batches_now)
-        logger.info(f"Crawl {len(missing_chapters)} chương với {num_batches_now} batch (batch size={batch_size})")
+        logger.info(f"Crawl {len(missing_chapters)} chuong voi {num_batches_now} batch (batch size={batch_size})")
 
         for batch_idx, batch in enumerate(batches):
             if not batch:
@@ -183,12 +183,12 @@ async def crawl_missing_chapters_for_story(
         await smart_delay()
 
         if retry_count >= max_global_retry:
-            logger.error(f"[FATAL] Vượt quá retry cho truyện {story_data_item['title']}, sẽ bỏ qua.")
+            logger.error(f"[FATAL] Vuot qua retry cho truyen {story_data_item['title']}, se bo qua.")
             break
 
         if retry_count % 20 == 0:
             logger.error(
-                f"[ALERT] Truyện '{story_data_item['title']}' còn các chương sau mãi chưa crawl được: {[f for _,_,f in missing_chapters]}"
+                f"[ALERT] Truyen '{story_data_item['title']}' con cac chuong sau mai chua crawl duoc: {[f for _,_,f in missing_chapters]}"
             )
 
     # --- Final retry for remaining failed chapters ---
@@ -204,7 +204,7 @@ async def crawl_missing_chapters_for_story(
 
     if final_missing:
         logger.warning(
-            f"[FINAL] Thử lại {len(final_missing)} chương lỗi cuối cùng"
+            f"[FINAL] Thu lai {len(final_missing)} chuong loi cuoi cung"
         )
         batch_size = int(
             os.getenv("BATCH_SIZE") or get_optimal_batch_size(len(final_missing))
@@ -242,7 +242,7 @@ async def crawl_missing_chapters_for_story(
                 old.append(item)
         with open(report_path, "w", encoding="utf-8") as f:
             json.dump(old, f, ensure_ascii=False, indent=2)
-        logger.warning(f"[REPORT] Đã ghi {len(permanent_missing)} chương lỗi vĩnh viễn vào {report_path}")
+        logger.warning(f"[REPORT] Da ghi {len(permanent_missing)} chuong loi vinh vien vao {report_path}")
 
     if skipped_chapters:
         with open(skip_file, "w", encoding="utf-8") as f:
@@ -269,8 +269,8 @@ def clean_header_only_chapter(text: str):
 
 async def async_save_chapter_with_hash_check(filename, content: str):
     """
-    Lưu file chương, kiểm tra hash để tránh ghi lại nếu nội dung không đổi.
-    Trả về: "new" (chưa tồn tại, đã ghi), "unchanged" (tồn tại, giống hệt), "updated" (tồn tại, đã cập nhật).
+    Luu file chuong, kiem tra hash de tranh ghi lai neu noi dung khong doi.
+    Tra ve: "new" (chua ton tai, da ghi), "unchanged" (ton tai, giong het), "updated" (ton tai, da cap nhat).
     """
     hash_val = hashlib.sha256(content.encode('utf-8')).hexdigest()
     file_exists = os.path.exists(filename)
@@ -279,17 +279,17 @@ async def async_save_chapter_with_hash_check(filename, content: str):
             old_content = await f.read()
         old_hash = hashlib.sha256(old_content.encode('utf-8')).hexdigest()
         if old_hash == hash_val:
-            logger.debug(f"Chương '{filename}' đã tồn tại với nội dung giống hệt, bỏ qua ghi lại.")
+            logger.debug(f"Chuong '{filename}' da ton tai voi noi dung giong het, bo qua ghi lai.")
             return "unchanged"
         else:
             content = clean_header_only_chapter(content)
             await safe_write_file(filename, content)  
-            logger.info(f"Chương '{filename}' đã được cập nhật do nội dung thay đổi.")
+            logger.info(f"Chuong '{filename}' da duoc cap nhat do noi dung thay doi.")
             return "updated"
     else:
         content = clean_header_only_chapter(content)
         await safe_write_file(filename, content)
-        logger.info(f"Chương '{filename}' mới đã được lưu.")
+        logger.info(f"Chuong '{filename}' moi da duoc luu.")
         return "new"
 
 
@@ -311,10 +311,10 @@ def deduplicate_by_index(filename: str) -> None:
     for f in files:
         if f != best and os.path.exists(f):
             os.remove(f)
-            logger.info(f"[DEDUP] Đã xoá file chương trùng: {os.path.basename(f)}")
+            logger.info(f"[DEDUP] Da xoa file chuong trung: {os.path.basename(f)}")
     if best != filename and not os.path.exists(filename):
         os.rename(best, filename)
-        logger.info(f"[DEDUP] Đổi tên {os.path.basename(best)} → {base}")
+        logger.info(f"[DEDUP] Doi ten {os.path.basename(best)} - {base}")
 
     
 
@@ -334,22 +334,15 @@ async def log_error_chapter(item, filename="error_chapters.json"):
 
 
 
-async def queue_failed_chapter(chapter_data, filename='chapter_retry_queue.json'):
-    """Ghi chương lỗi vào queue JSON để retry."""
-    path = os.path.join(os.getcwd(), filename)
-    # Đọc danh sách cũ
-    try:
-        with open(path, "r", encoding="utf-8") as f:
-            data = json.load(f)
-    except (json.JSONDecodeError, FileNotFoundError):
-        print(f"[ERROR] File {path} bị lỗi hoặc rỗng, sẽ tạo lại file mới.")
-        data = []
-    for item in data:
-        if item.get("url") == chapter_data.get("url"):
-            return
-    chapter_data.setdefault("error_time", datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
-    data.append(chapter_data)  # type: ignore
-    await safe_write_json(filename, data)
+async def queue_failed_chapter(chapter_data):
+    """Ghi chuong loi vao Kafka topic de retry."""
+    from kafka.kafka_producer import send_job
+    
+    # Them job type de dispatcher co the nhan dien
+    job_to_send = chapter_data.copy()
+    job_to_send['type'] = 'retry_chapter'
+    
+    await send_job(job_to_send)
 
 async def async_download_and_save_chapter(
     chapter_info: Dict[str, Any],
@@ -368,30 +361,30 @@ async def async_download_and_save_chapter(
     adapter=None,# type: ignore
 ) -> None:
     url = chapter_info['url']
-    logger.info(f"        {pass_description} - Chương {chapter_display_idx_log}: Đang tải '{chapter_info['title']}' ({url})")
+    logger.info(f"        {pass_description} - Chuong {chapter_display_idx_log}: Dang tai '{chapter_info['title']}' ({url})")
     async with SEM:
         content = await adapter.get_chapter_content(url, chapter_info['title'], site_key)# type: ignore
 
     if content and not is_anti_bot_content(content):
         try:
             category_name = get_category_name(story_data_item, current_discovery_genre_data)
-            # Gộp nội dung chuẩn file .txt
+            # Gop noi dung chuan file .txt
             chapter_content = (
-                f"Nguồn: {url}\n\nTruyện: {story_data_item['title']}\n"
-                f"Thể loại: {category_name}\n"
-                f"Chương: {chapter_info['title']}\n\n"
+                f"Nguon: {url}\n\nTruyen: {story_data_item['title']}\n"
+                f"The loai: {category_name}\n"
+                f"Chuong: {chapter_info['title']}\n\n"
                 f"{content}"
             )
 
-            # Sử dụng hàm hash check
+            # Su dung ham hash check
             save_result = await async_save_chapter_with_hash_check(chapter_filename_full_path, chapter_content)
             deduplicate_by_index(chapter_filename_full_path)
             if save_result == "new":
-                logger.info(f"          Đã lưu ({pass_description}): {chapter_filename_only}")
+                logger.info(f"          Da luu ({pass_description}): {chapter_filename_only}")
             elif save_result == "unchanged":
-                logger.debug(f"          Chương '{chapter_filename_only}' đã tồn tại, không thay đổi nội dung.")
+                logger.debug(f"          Chuong '{chapter_filename_only}' da ton tai, khong thay doi noi dung.")
             elif save_result == "updated":
-                logger.info(f"          Chương '{chapter_filename_only}' đã được cập nhật do nội dung thay đổi.")
+                logger.info(f"          Chuong '{chapter_filename_only}' da duoc cap nhat do noi dung thay doi.")
 
             if save_result in ("new", "updated", "unchanged"):
                 successfully_saved.add(chapter_filename_full_path)
@@ -402,14 +395,14 @@ async def async_download_and_save_chapter(
                     file_to_save = state_file or get_state_file(site_key)
                     await save_crawl_state(crawl_state, file_to_save)
         except Exception as e:
-            logger.error(f"          Lỗi lưu '{chapter_filename_only}': {e}")
+            logger.error(f"          Loi luu '{chapter_filename_only}': {e}")
             await log_error_chapter({
                 "story_title": story_data_item['title'],
                 "chapter_title": chapter_info['title'],
                 "chapter_url": chapter_info['url'],
                 "error_msg": str(e)
             })
-            # --- Queue retry chương lỗi ---
+            # --- Queue retry chuong loi ---
             await queue_failed_chapter({
                 "chapter_url": chapter_info['url'],
                 "chapter_title": chapter_info['title'],
@@ -417,7 +410,7 @@ async def async_download_and_save_chapter(
                 "story_url": story_data_item['url'],
                 "filename": chapter_filename_full_path,
                 'site': site_key,
-                "reason": f"Lỗi lưu: {e}",
+                "reason": f"Loi luu: {e}",
                 "error_type": CrawlError.WRITE_FAIL.value,
             })
             failed_list.append({
@@ -426,7 +419,7 @@ async def async_download_and_save_chapter(
                 'filename_only': chapter_filename_only,
                 'original_idx': original_idx
             })
-                # Đánh dấu dead nếu đã quá số lần retry (ví dụ: 3)
+                # Danh dau dead neu da qua so lan retry (vi du: 3)
             try:
                 await mark_dead_chapter(os.path.dirname(chapter_filename_full_path), {
                     "index": original_idx,
@@ -435,21 +428,21 @@ async def async_download_and_save_chapter(
                     "reason": "empty content"
                 })
             except Exception as ex:
-                logger.warning(f"Lỗi khi ghi dead_chapters.json: {ex}")
+                logger.warning(f"Loi khi ghi dead_chapters.json: {ex}")
     else:
         if content and is_anti_bot_content(content):
-            logger.warning(f"          Nội dung chương bị phát hiện anti-bot '{chapter_info['title']}'")
+            logger.warning(f"          Noi dung chuong bi phat hien anti-bot '{chapter_info['title']}'")
             reason = 'anti-bot'
         else:
-            logger.warning(f"          Không lấy được nội dung '{chapter_info['title']}'")
-            reason = 'Không lấy được nội dung'
+            logger.warning(f"          Khong lay duoc noi dung '{chapter_info['title']}'")
+            reason = 'Khong lay duoc noi dung'
         await log_error_chapter({
             "story_title": story_data_item['title'],
             "chapter_title": chapter_info['title'],
             "chapter_url": chapter_info['url'],
             "error_msg": reason,
         })
-        # --- Queue retry chương lỗi ---
+        # --- Queue retry chuong loi ---
         await queue_failed_chapter({
             "chapter_url": chapter_info['url'],
             "chapter_title": chapter_info['title'],
@@ -510,7 +503,7 @@ def get_existing_chapter_nums(story_folder):
     files = [f for f in os.listdir(story_folder) if f.endswith('.txt')]
     chapter_nums = set()
     for f in files:
-        # 0001_Tên chương.txt => lấy 0001
+        # 0001_Ten chuong.txt => lay 0001
         num = f.split('_')[0]
         chapter_nums.add(num)
     return chapter_nums
@@ -540,10 +533,10 @@ async def get_max_page_by_playwright(url, site_key=None):
 
 def get_missing_chapters(story_folder: str, chapters: list[dict]) -> list[dict]:
     """
-    So sánh file txt hiện có với danh sách từ chapter_metadata.json (ưu tiên),
-    nếu không có thì dùng chapters truyền vào (danh sách chapter từ web)
+    So sanh file txt hien co voi danh sach tu chapter_metadata.json (uu tien),
+    neu khong co thi dung chapters truyen vao (danh sach chapter tu web)
     """
-    # Ưu tiên đọc từ chapter_metadata.json (nếu có)
+    # Uu tien doc tu chapter_metadata.json (neu co)
     chapter_meta_path = os.path.join(story_folder, "chapter_metadata.json")
     chapter_items = None
     if os.path.exists(chapter_meta_path):
@@ -573,10 +566,10 @@ def get_missing_chapters(story_folder: str, chapters: list[dict]) -> list[dict]:
 
     missing = []
     for idx, ch in enumerate(chapter_items):
-        # Dùng đúng tên file quy chuẩn từ chapter_metadata.json
+        # Dung dung ten file quy chuan tu chapter_metadata.json
         expected_file = ch.get("file")
         if not expected_file:
-            # fallback nếu chapter_metadata chưa chuẩn hóa
+            # fallback neu chapter_metadata chua chuan hoa
             real_num = ch.get("index", idx+1)
             title = ch.get("title", "") or ""
             expected_file = get_chapter_filename(title, real_num)
@@ -585,8 +578,8 @@ def get_missing_chapters(story_folder: str, chapters: list[dict]) -> list[dict]:
         ch_index = ch.get("index", idx + 1)
         if (ch_url and ch_url in dead_urls) or (isinstance(ch_index, int) and ch_index in dead_indexes):
             continue
-        if expected_file not in existing_files or not os.path.exists(file_path) or os.path.getsize(file_path) < 20:
-            # append đủ thông tin cho crawl lại
+        if expected_file not in existing_files or not os.path.exists(file_path) or os.path.getsize(file_path) == 0:
+            # append du thong tin cho crawl lai
             ch_for_missing = {**ch, "idx": idx}
             missing.append(ch_for_missing)
     return missing
@@ -594,8 +587,8 @@ def get_missing_chapters(story_folder: str, chapters: list[dict]) -> list[dict]:
 
 def slugify_title(title: str) -> str:
     s = unidecode(title)
-    s = re.sub(r'[^\w\s-]', '', s.lower())  # bỏ ký tự đặc biệt, lowercase
-    s = re.sub(r'[\s]+', '-', s)            # khoảng trắng thành dấu -
+    s = re.sub(r'[^\w\s-]', '', s.lower())  # bo ky tu dac biet, lowercase
+    s = re.sub(r'[\s]+', '-', s)            # khoang trang thanh dau -
     return s.strip('-_')
 
 
@@ -628,25 +621,55 @@ async def async_save_chapter_with_lock(filename, content):
 
 def extract_real_chapter_number(title: str) -> int | None:
     """
-    Trích xuất số chương thực tế từ tiêu đề chương.
-    Hỗ trợ các định dạng: Chương 123, Chapter 456, 001. Tên chương, ...
+    Trich xuat so chuong thuc te tu tieu de chuong.
+    Ho tro cac dinh dang: Chuong 123, Chapter 456, 001. Ten chuong, ...
     """
     if not title:
         return None
 
-    match = re.search(r'(?:chương|chapter|chap|ch)\s*[:\-]?\s*(\d{1,5})', title, re.IGNORECASE)
+    import unicodedata
+
+    cleaned = title.translate(str.maketrans({'Đ': 'D', 'đ': 'd'}))
+    normalized = unicodedata.normalize('NFD', cleaned)
+    normalized = ''.join(ch for ch in normalized if not unicodedata.combining(ch))
+
+    match = re.search(r'(?:chuong|chapter|chap|ch)\s*[:\-]?\s*(\d{1,5})', normalized, re.IGNORECASE)
     if match:
         return int(match.group(1))
 
-    match = re.match(r'^\s*(\d{1,5})[\.\-\s]', title)
+    match = re.match(r'^\s*(\d{1,5})[.\-\s]', normalized)
     if match:
         return int(match.group(1))
 
     return None
 
+
+def remove_title_number(title: str) -> str:
+    """Remove the leading chapter number prefix while keeping the rest intact."""
+    if not title:
+        return ''
+
+    import unicodedata
+
+    cleaned = title.translate(str.maketrans({'Đ': 'D', 'đ': 'd'}))
+    normalized = unicodedata.normalize('NFD', cleaned)
+    normalized = ''.join(ch for ch in normalized if not unicodedata.combining(ch))
+
+    prefix_pattern = re.compile(r'^(?:chuong|chapter|chap|ch)\s*\d+\s*[:\-\.\)]?\s*', re.IGNORECASE)
+    match = prefix_pattern.match(normalized)
+    if match:
+        return title[match.end():].strip()
+
+    match = re.match(r'^\s*\d+\s*[:\-\.\)]?\s*', normalized)
+    if match:
+        return title[match.end():].strip()
+
+    return title.strip()
+
+
 def get_chapter_filename(title: str, real_num: int) -> str:
     """
-    Tạo tên file chương chuẩn: 0001_ten-chuong.txt (không dấu, cách bằng -)
+    Tao ten file chuong chuan: 0001_ten-chuong.txt (khong dau, cach bang -)
     """
     from unidecode import unidecode
     s = unidecode(title)
@@ -656,101 +679,90 @@ def get_chapter_filename(title: str, real_num: int) -> str:
     return f"{real_num:04d}_{clean_title}.txt"
 
 
-def export_chapter_metadata_sync(story_folder, chapters) -> List[Dict[str, Any]]:
+def export_chapter_metadata_sync(story_folder, chapters) -> None:
     """
-    Xuất lại file chapter_metadata.json. Nếu thiếu file chương tương ứng thì đánh dấu missing để crawl lại.
-    Trả về danh sách chương missing để xử lý sau.
+    Xuat lai file chapter_metadata.json voi danh sach chapter day du tu web.
     """
-    files = [f for f in os.listdir(story_folder) if f.endswith('.txt')]
-    files_set = set(files)
-    valid_chapters = []
-    missing_chapters = []
-
+    chapter_list_to_write = []
     for idx, ch in enumerate(chapters):
-        real_num = ch.get("index", idx + 1)
+        # Luon gan so thu tu thuc te neu co, neu khong thi dung index
+        real_num = extract_real_chapter_number(ch.get("title", "")) or (idx + 1)
         title = ch.get("title", "")
         url = ch.get("url", "")
+        
+        # Tao ten file chuan hoa
         expected_name = get_chapter_filename(title, real_num)
-        expected_path = os.path.join(story_folder, expected_name)
+        
+        chapter_list_to_write.append({
+            "index": real_num,
+            "title": title,
+            "url": url,
+            "file": expected_name
+        })
 
-        if expected_name not in files_set or not os.path.exists(expected_path):
-            # Tìm theo prefix số chương
-            prefix = f"{real_num:04d}_"
-            found = next((f for f in files if f.startswith(prefix)), None)
-            if found and found != expected_name:
-                os.rename(os.path.join(story_folder, found), expected_path)
-                logger.info(f"[RENAME][META] {found} -> {expected_name}")
-                files_set.remove(found)
-                files_set.add(expected_name)
-            elif not found:
-                missing_chapters.append({
-                    "index": real_num,
-                    "title": title,
-                    "url": url
-                })
-                continue  # bỏ qua không thêm vào valid
-
-        ch["file"] = expected_name
-        ch["index"] = real_num
-        valid_chapters.append(ch)
-
-    # Lưu lại metadata chuẩn
+    # Ghi toan bo danh sach da duoc chuan hoa ra file
     chapter_meta_path = os.path.join(story_folder, "chapter_metadata.json")
     with open(chapter_meta_path, "w", encoding="utf-8") as f:
-        json.dump(valid_chapters, f, ensure_ascii=False, indent=4)
-    logger.info(f"[META] Exported chapter_metadata.json ({len(valid_chapters)} chương) for {os.path.basename(story_folder)}")
+        json.dump(chapter_list_to_write, f, ensure_ascii=False, indent=4)
+    logger.info(f"[META] Exported chapter_metadata.json ({len(chapter_list_to_write)} chuong) for {os.path.basename(story_folder)}")
 
-    # Nếu có missing, ghi ra file để trigger crawl lại
-    if missing_chapters:
-        missing_path = os.path.join(story_folder, "missing_from_metadata.json")
-        with open(missing_path, "w", encoding="utf-8") as f:
-            json.dump(missing_chapters, f, ensure_ascii=False, indent=2)
-        logger.warning(f"[MISSING][META] Phát hiện {len(missing_chapters)} chương bị thiếu file, đã ghi vào: {missing_path}")
-
-    return missing_chapters
 
 
 
 def remove_chapter_number_from_title(title):
-    # Tách đầu "Chương xx: " hoặc "Chap xx - ", "Chapter xx - " ... (các biến thể phổ biến)
-    new_title = re.sub(
-        r"^(chương|chapter|chap|ch)\s*\d+\s*[:\-\.]?\s*", "",
-        title,
-        flags=re.IGNORECASE
-    )
-    return new_title.strip()
+    """Backward compatible function that removes leading chapter numbers."""
+    import unicodedata
+
+    if not title:
+        return ''
+
+    cleaned = title.translate(str.maketrans({'Đ': 'D', 'đ': 'd'}))
+    normalized = unicodedata.normalize('NFD', cleaned)
+    normalized = ''.join(ch for ch in normalized if not unicodedata.combining(ch))
+
+    prefix_pattern = re.compile(r'^(?:chuong|chapter|chap|ch)\s*\d+\s*[:\-\.\)]?\s*', re.IGNORECASE)
+    match = prefix_pattern.match(normalized)
+    if match:
+        return title[match.end():].strip()
+
+    match = re.match(r'^\s*\d+\s*[:\-\.\)]?\s*', normalized)
+    if match:
+        return title[match.end():].strip()
+
+    return title.strip()
+
 
 def get_actual_chapters_for_export(story_folder):
     """
-    Quét thư mục lấy danh sách file chương thực tế,
-    tách số chương (index), title, tên file cho chuẩn metadata.
+    Quet thu muc lay danh sach file chuong thuc te,
+    tach so chuong (index), title, ten file cho chuan metadata.
     """
     chapters = []
     files = [f for f in os.listdir(story_folder) if f.endswith('.txt')]
-    files.sort()  # Đảm bảo theo thứ tự tăng dần
+    files.sort()  # Dam bao theo thu tu tang dan
 
     for fname in files:
-        # Định dạng 0001_Tên chương.txt hoặc 0001.Tên chương.txt
+        # Dinh dang 0001_Ten chuong.txt hoac 0001.Ten chuong.txt
         m = re.match(r"(\d{4})[_\.](.*)\.txt", fname)
         if m:
             index = int(m.group(1))
             raw_title = m.group(2).strip()
             title = remove_chapter_number_from_title(raw_title)
         else:
-            # Nếu không đúng định dạng, fallback
+            # Neu khong dung dinh dang, fallback
             index = len(chapters) + 1
-            raw_title = fname[:-4]  # bỏ .txt
+            raw_title = fname[:-4]  # bo .txt
             title = remove_chapter_number_from_title(raw_title)
         chapters.append({
             "index": index,
             "title": title,
             "file": fname,
-            "url": ""  # Nếu lấy được thì bổ sung thêm, còn không để rỗng
+            "url": ""  # Neu lay duoc thi bo sung them, con khong de rong
         })
     return chapters
 
 async def get_real_total_chapters(metadata, adapter: BaseSiteAdapter):
-    # Ưu tiên lấy từ sources nếu có
+    # Uu tien lay tu sources neu co
     if metadata.get("sources"):
         for source in metadata["sources"]:
             url = source.get("url")
@@ -760,7 +772,7 @@ async def get_real_total_chapters(metadata, adapter: BaseSiteAdapter):
             chapters = await adapter.get_chapter_list(story_url=url, story_title=metadata.get("title"), site_key=site_key, total_chapters=metadata.get("total_chapters_on_site"))
             if chapters and len(chapters) > 0:
                 return len(chapters)
-    # Nếu không có sources, fallback dùng url + site_key hiện tại trong metadata
+    # Neu khong co sources, fallback dung url + site_key hien tai trong metadata
     url = metadata.get("url")
     site_key = metadata.get("site_key")
     if url and site_key:

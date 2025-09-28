@@ -62,24 +62,27 @@ class XTruyenAdapter(BaseSiteAdapter):
         genre_url: str,
         site_key: str,
         max_pages: Optional[int] = None,
-    ) -> List[Dict[str, str]]:
+    ) -> Tuple[List[Dict[str, str]], int, int]:
         logger.info(f"[{self.site_key}] Crawling stories for genre '{genre_name}'")
         first_page_stories, total_pages = await self.get_stories_in_genre(genre_url, page=1)
         if not first_page_stories:
             logger.warning(f"[{self.site_key}] No stories detected on first page of {genre_name}")
-            return []
+            return [], 0, 0
 
         all_stories = list(first_page_stories)
         limit = max_pages or total_pages or 1
+        crawled_pages = 1
+
         for page in range(2, limit + 1):
             stories, _ = await self.get_stories_in_genre(genre_url, page)
+            crawled_pages += 1
             if not stories:
                 logger.info(f"[{self.site_key}] Stop paging {genre_name}: empty page {page}")
                 break
             all_stories.extend(stories)
             await asyncio.sleep(0.5)
         logger.info(f"[{self.site_key}] Total stories for {genre_name}: {len(all_stories)}")
-        return all_stories
+        return all_stories, total_pages, crawled_pages
 
     async def get_all_stories_from_genre(
         self, genre_name: str, genre_url: str, max_pages: Optional[int] = None
@@ -123,30 +126,41 @@ class XTruyenAdapter(BaseSiteAdapter):
         max_pages: Optional[int] = None,
         total_chapters: Optional[int] = None,
     ) -> List[Dict[str, str]]:
+        """Gets the chapter list by parsing the story page HTML, avoiding the fragile AJAX call."""
+        logger.debug(f"[{self.site_key}] Getting chapter list for '{story_title}' from story page HTML.")
+        
+        html = await self._fetch_text(story_url, wait_for_selector="div.summary__content")
+        if not html:
+            logger.error(f"[{self.site_key}] Could not fetch story page {story_url} to get chapter list.")
+            return []
+
+        chapters = parse_chapter_list(html, self.base_url)
+        
+        logger.info(f"[{self.site_key}] Found {len(chapters)} chapters for '{story_title}' from HTML.")
+
+        for ch in chapters:
+            ch.setdefault('site_key', self.site_key)
+
+        # Update cache if possible
         async with self._details_lock:
-            details = self._details_cache.get(story_url)
-            if not details:
-                details = await self._get_story_details_internal(story_url)
-                if details:
-                    self._details_cache[story_url] = details
-            if not details:
-                logger.error(f"[{self.site_key}] Cannot fetch chapter list for {story_title}")
-                return []
-            chapters = details.get('chapters', [])
-            if not chapters:
-                html = await self._fetch_text(story_url, wait_for_selector="div.summary__content")
-                if html:
-                    chapters = parse_chapter_list(html, self.base_url)
-                    details['chapters'] = chapters
-            for ch in chapters:
-                ch.setdefault('site_key', self.site_key)
-            return chapters
+            if story_url in self._details_cache:
+                self._details_cache[story_url]['chapters'] = chapters
+
+        return chapters
 
     async def get_chapter_content(self, chapter_url: str, chapter_title: str, site_key: str) -> Optional[str]:
         html = await self._fetch_text(chapter_url, wait_for_selector="#chapter-reading-content")
         if not html:
             return None
-        content = parse_chapter_content(html)
-        if not content:
+
+        parsed = parse_chapter_content(html)
+        if not parsed:
+            logger.warning(f"[{self.site_key}] Unable to parse content for chapter '{chapter_title}'")
+            return None
+
+        content_html = parsed.get('content') if isinstance(parsed, dict) else None
+        if not content_html or not content_html.strip():
             logger.warning(f"[{self.site_key}] Empty content for chapter '{chapter_title}'")
-        return content
+            return None
+
+        return content_html

@@ -9,7 +9,7 @@ from adapters.factory import get_adapter
 from config.config import BASE_URLS, COMPLETED_FOLDER, DATA_FOLDER, LOADED_PROXIES, PROXIES_FILE, PROXIES_FOLDER
 from config.proxy_provider import load_proxies
 from scraper import initialize_scraper 
-from utils.async_utils import sync_chapter_with_yy_first_batch
+
 from utils.chapter_utils import (
     SEM,
     count_txt_files,
@@ -255,33 +255,9 @@ async def check_and_crawl_missing_all_stories(adapter, home_page_url, site_key, 
         with open(metadata_path, "r", encoding="utf-8") as f:
             metadata = json.load(f)
 
-        has_yy = any(
-            (src.get("site_key") == "truyenyy" or src.get("site") == "truyenyy")
-            for src in metadata.get("sources", [])
-            if isinstance(src, dict)
-        )
-
-        if has_yy:
-            if site_key != "truyenyy":
-                logger.debug(f"[SKIP] '{metadata.get('title')}' đã có truyenyy, chỉ để truyenyy crawl.")
-                continue
-        else:
-            await sync_chapter_with_yy_first_batch(story_folder, metadata)
-            with open(metadata_path, "r", encoding="utf-8") as f:
-                metadata = json.load(f)
-            has_yy_after = any(
-                (src.get("site_key") == "truyenyy" or src.get("site") == "truyenyy")
-                for src in metadata.get("sources", [])
-                if isinstance(src, dict)
-            )
-            if has_yy_after:
-                if site_key != "truyenyy":
-                    logger.debug(f"[SKIP] '{metadata.get('title')}' đã sync được truyenyy, chỉ để truyenyy crawl.")
-                    continue
-            else:
-                if site_key != metadata.get("site_key"):
-                    logger.debug(f"[SKIP] '{metadata.get('title')}' không có yy, chỉ crawl site gốc {metadata.get('site_key')}.")
-                    continue
+        if site_key != metadata.get("site_key"):
+            logger.debug(f"[SKIP] '{metadata.get('title')}' không có yy, chỉ crawl site gốc {metadata.get('site_key')}.")
+            continue
         need_autofix = False
         metadata = None
         if auto_fixed_titles:

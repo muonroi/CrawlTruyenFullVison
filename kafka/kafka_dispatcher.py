@@ -2,6 +2,7 @@ import asyncio
 import json
 import os
 from aiokafka import AIOKafkaConsumer
+from aiokafka.errors import KafkaConnectionError
 from adapters.factory import get_adapter
 from config.proxy_provider import shuffle_proxies
 from utils.logger import logger
@@ -9,6 +10,7 @@ from core.config_loader import apply_env_overrides
 from workers.crawler_missing_chapter import loop_once_multi_sites
 from workers.crawler_single_missing_chapter import crawl_single_story_worker
 from main import WorkerSettings, retry_failed_genres, run_single_site, run_all_sites
+from workers.retry_failed_chapters import retry_single_chapter
 
 # ==== Config Kafka ====
 KAFKA_TOPIC = os.getenv("KAFKA_TOPIC", "crawl_truyen")
@@ -26,6 +28,8 @@ WORKER_HANDLERS = {
     ),
     "missing_check": loop_once_multi_sites,
     "healthcheck": lambda **job: healthcheck_adapter(site_key=job["site_key"]),
+    "retry_chapter": lambda **job: retry_single_chapter(job),
+    "check_missing_chapters": lambda **job: crawl_single_story_worker(story_folder_path=job.get("story_folder_path")),
 }
 
 
@@ -83,25 +87,48 @@ async def dispatch_job(job: dict):
 
 async def consume():
     logger.info(f"[Kafka] 🔌 Kết nối đến Kafka tại {KAFKA_BOOTSTRAP_SERVERS} | topic={KAFKA_TOPIC}")
-    consumer = AIOKafkaConsumer(
-        KAFKA_TOPIC,
-        bootstrap_servers=KAFKA_BOOTSTRAP_SERVERS,
-        value_deserializer=lambda m: json.loads(m.decode("utf-8")),
-        auto_offset_reset="earliest",
-        group_id=KAFKA_GROUP_ID,
-    )
-    await consumer.start()
+    max_retries = int(os.getenv("KAFKA_BOOTSTRAP_MAX_RETRIES", "0"))
+    retry_delay = float(os.getenv("KAFKA_BOOTSTRAP_RETRY_DELAY", "5"))
+    attempt = 0
+    consumer = None
+
+    while True:
+        attempt += 1
+        consumer = AIOKafkaConsumer(
+            KAFKA_TOPIC,
+            bootstrap_servers=KAFKA_BOOTSTRAP_SERVERS,
+            value_deserializer=lambda m: json.loads(m.decode("utf-8")),
+            auto_offset_reset="earliest",
+            group_id=KAFKA_GROUP_ID,
+        )
+        try:
+            await consumer.start()
+            if attempt > 1:
+                logger.info(f"[Kafka] Kết nối Kafka thành công sau {attempt} lần thử.")
+            break
+        except KafkaConnectionError as ex:
+            logger.warning(f"[Kafka] Không kết nối được Kafka (attempt {attempt}): {ex}")
+            await consumer.stop()
+            if max_retries and attempt >= max_retries:
+                logger.error("[Kafka] Vượt quá số lần retry kết nối Kafka. Thử lại sau.")
+                raise
+            await asyncio.sleep(retry_delay)
+        except Exception:
+            await consumer.stop()
+            raise
 
     try:
         logger.info(f"[Kafka] Đang lắng nghe jobs trên topic `{KAFKA_TOPIC}`...")
         async for msg in consumer:
             job = msg.value
-            await dispatch_job(job) #type: ignore
+            await dispatch_job(job)  # type: ignore
     except Exception as ex:
         logger.exception(f"[Kafka] Lỗi toàn cục trong consumer: {ex}")
     finally:
-        await consumer.stop()
+        if consumer:
+            await consumer.stop()
         logger.info("[Kafka] Đã dừng consumer.")
+
 
 
 async def healthcheck_adapter(site_key: str):

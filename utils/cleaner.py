@@ -22,13 +22,7 @@ def clean_chapter_content(chapter_div):
 
 def ensure_sources_priority(sources: list) -> list:
     """Thêm priority mặc định vào các nguồn (nếu chưa có)."""
-    default_priority = {
-        "truyenyy": 1,
-        "truyenfull": 2,
-        "metruyenfull": 3,
-    }
     for source in sources:
         if "priority" not in source or source["priority"] is None:
-            sk = source.get("site_key", "").lower()
-            source["priority"] = default_priority.get(sk, 100)
+            source["priority"] = 100
     return sources

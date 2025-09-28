@@ -1,8 +1,18 @@
 import asyncio
+import importlib
+import importlib.util
 import random
-from typing import Dict, Optional
+from typing import Any, Dict, Optional
 
-from playwright.async_api import async_playwright, Browser, BrowserContext
+try:
+    _PLAYWRIGHT_SPEC = importlib.util.find_spec("playwright.async_api")
+except (ModuleNotFoundError, ValueError):  # pragma: no cover - optional dependency missing
+    _PLAYWRIGHT_SPEC = None
+if _PLAYWRIGHT_SPEC:
+    from playwright.async_api import async_playwright, Browser, BrowserContext  # type: ignore
+else:  # pragma: no cover - fallback when Playwright is unavailable
+    async_playwright = None  # type: ignore
+    Browser = BrowserContext = None  # type: ignore
 from utils.http_client import fetch
 from utils.anti_bot import is_anti_bot_content
 
@@ -37,6 +47,10 @@ async def initialize_scraper(
 ) -> None:
     """Khởi tạo browser Playwright một lần và tái sử dụng."""
     global browser, playwright_obj
+    if async_playwright is None:
+        logger.warning("Playwright not installed; initialize_scraper skipped")
+        return
+
     async with _init_lock:
         try:
             if playwright_obj is None:
@@ -50,6 +64,9 @@ async def initialize_scraper(
             browser = None
 
 async def get_context(proxy_settings, headers) -> BrowserContext:
+    if async_playwright is None:
+        raise RuntimeError("Playwright support is not available")
+
     key = str(proxy_settings)
     ctx = _context_pool.get(key)
     if ctx:
@@ -111,6 +128,10 @@ async def _make_request_playwright(
     global browser
     headers = await get_random_headers(site_key)
     last_exception = None
+
+    if async_playwright is None:
+        logger.warning("Playwright not installed; cannot fetch %s", url)
+        return None
 
     for attempt in range(1, max_retries + 1):
         proxy_url = None
@@ -185,9 +206,147 @@ async def _make_request_playwright(
     return None
 
 
-async def make_request(url, site_key, timeout: int = 30, max_retries: int = 5, wait_for_selector: str | None = None):
+async def _make_request_playwright_post(
+    url: str,
+    site_key: str,
+    timeout: int = 30,
+    max_retries: int = 5,
+    data: Optional[Dict[str, Any]] = None,
+    extra_headers: Optional[Dict[str, str]] = None,
+):
+    global browser
+    headers = await get_random_headers(site_key)
+    if extra_headers:
+        headers.update(extra_headers)
+
+    payload = {str(k): str(v) for k, v in (data or {}).items()}
+    last_exception: Exception | None = None
+
+    if async_playwright is None:
+        logger.warning("Playwright not installed; cannot POST %s", url)
+        return None
+
+    for attempt in range(1, max_retries + 1):
+        proxy_url = None
+        try:
+            if not browser:
+                await initialize_scraper(site_key)
+                if not browser:
+                    raise RuntimeError("Playwright browser not initialized")
+
+            proxy_settings = None
+            if USE_PROXY:
+                proxy_url = get_proxy_url(GLOBAL_PROXY_USERNAME, GLOBAL_PROXY_PASSWORD)
+                if proxy_url:
+                    from urllib.parse import urlparse
+
+                    p = urlparse(proxy_url)
+                    proxy_settings = {"server": f"{p.scheme}://{p.hostname}:{p.port}"}
+                    if p.username:
+                        proxy_settings["username"] = p.username
+                    if p.password:
+                        proxy_settings["password"] = p.password
+
+            context = await get_context(proxy_settings, headers)
+
+            referer = (extra_headers or {}).get("Referer")
+            if referer:
+                page = await context.new_page()
+                try:
+                    await page.goto(referer, timeout=timeout * 1000)
+                    try:
+                        await page.wait_for_load_state("networkidle", timeout=timeout * 1000)
+                    except Exception:
+                        pass
+                finally:
+                    try:
+                        await page.close()
+                    except Exception:
+                        pass
+
+            request_headers = dict(headers)
+            request_headers.setdefault("X-Requested-With", "XMLHttpRequest")
+            request_headers.setdefault("Content-Type", "application/x-www-form-urlencoded; charset=UTF-8")
+
+            response = await context.request.post(
+                url,
+                data=payload,
+                headers=request_headers,
+                timeout=timeout * 1000,
+            )
+            text = await response.text()
+            status = response.status
+
+            if status == 200 and text and not is_anti_bot_content(text):
+                return text
+
+            logger.warning(
+                f"[playwright][POST] Potential anti-bot or bad status for {url} (status: {status})"
+            )
+            if USE_PROXY and proxy_settings and proxy_url and should_blacklist_proxy(proxy_url, LOADED_PROXIES):
+                await mark_bad_proxy(proxy_url)
+                await release_context(proxy_settings)
+            await asyncio.sleep(random.uniform(1, 3))
+        except Exception as ex:
+            last_exception = ex
+            logger.warning(f"[make_request][POST] Lỗi lần {attempt} khi truy cập {url}: {ex}")
+            if USE_PROXY and proxy_settings and proxy_url and should_blacklist_proxy(proxy_url, LOADED_PROXIES):
+                await remove_bad_proxy(proxy_url)
+                await release_context(proxy_settings)
+            await asyncio.sleep(random.uniform(1, 3))
+        finally:
+            await recycle_idle_contexts()
+
+    if last_exception:
+        logger.error(f"[make_request][POST] Playwright exhausted retries for {url}: {last_exception}")
+
+    return None
+
+
+async def make_request(
+    url: str,
+    site_key: str,
+    timeout: int = 30,
+    max_retries: int = 5,
+    wait_for_selector: Optional[str] = None,
+    method: str = 'GET',
+    data: Optional[Dict[str, Any]] = None,
+    extra_headers: Optional[Dict[str, str]] = None
+):
     """Try httpx first then fallback to Playwright when blocked."""
-    resp = await fetch(url, site_key, timeout)
+    if method.upper() == 'POST':
+        resp = await fetch(url, site_key, timeout, method=method, data=data, extra_headers=extra_headers)
+        fallback_stats["httpx_success"].setdefault(site_key, 0)
+        fallback_stats["fallback_count"].setdefault(site_key, 0)
+        if resp and resp.status_code == 200:
+            class R:
+                def __init__(self, text):
+                    self.text = text
+
+            fallback_stats["httpx_success"][site_key] += 1
+            return R(resp.text)
+
+        logger.warning(f"[{site_key}] POST request to {url} failed with httpx. Trying Playwright fallback.")
+        fallback_stats["fallback_count"][site_key] += 1
+        text = await _make_request_playwright_post(
+            url,
+            site_key,
+            timeout=timeout,
+            max_retries=max_retries,
+            data=data or {},
+            extra_headers=extra_headers or {},
+        )
+        if text is None:
+            logger.error(f"[{site_key}] POST request to {url} failed with httpx and Playwright fallback.")
+            return None
+
+        class R:
+            def __init__(self, text):
+                self.text = text
+
+        return R(text)
+
+    resp = await fetch(url, site_key, timeout, extra_headers=extra_headers)
     fallback_stats["httpx_success"].setdefault(site_key, 0)
     fallback_stats["fallback_count"].setdefault(site_key, 0)
     if resp and resp.status_code == 200 and resp.text and not is_anti_bot_content(resp.text):

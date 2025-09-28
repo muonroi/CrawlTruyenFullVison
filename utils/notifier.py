@@ -1,11 +1,23 @@
-import aiohttp
+import importlib
+import importlib.util
+from typing import Any, Dict
+
 from config.config import DISCORD_WEBHOOK_URL
+
+_AIOHTTP_SPEC = importlib.util.find_spec("aiohttp")
+if _AIOHTTP_SPEC:
+    aiohttp = importlib.import_module("aiohttp")  # type: ignore
+else:
+    aiohttp = None
 
 async def send_discord_notify(message: str):
     """Gửi thông báo đến Discord webhook."""
     if not DISCORD_WEBHOOK_URL:
         return
-    payload = {"content": message}
+    payload: Dict[str, Any] = {"content": message}
+    if aiohttp is None:
+        print(f"[Discord Notify] aiohttp not available. Message: {message}")
+        return
     try:
         async with aiohttp.ClientSession() as session:
             async with session.post(DISCORD_WEBHOOK_URL, json=payload, timeout=10) as resp:
@@ -17,22 +29,4 @@ async def notify_genre_completed(genre_name):
     message = f"Tất cả truyện của thể loại '{genre_name}' đã crawl xong!"
     await send_discord_notify(message)
 
-async def send_retry_queue_report(queue_file="chapter_retry_queue.json"):
-    """Gửi báo cáo tổng hợp số chương lỗi trong queue."""
-    import json, os
-    if not os.path.exists(queue_file):
-        return
-    try:
-        with open(queue_file, "r", encoding="utf-8") as f:
-            data = json.load(f)
-    except Exception:
-        return
-    if not data:
-        return
-    counts = {}
-    for item in data:
-        site = item.get("site") or "unknown"
-        counts[site] = counts.get(site, 0) + 1
-    lines = [f"{k}: {v}" for k, v in counts.items()]
-    msg = "[Queue Report] Chương lỗi còn lại: " + ", ".join(lines)
-    await send_discord_notify(msg)
+

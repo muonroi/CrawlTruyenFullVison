@@ -1,8 +1,19 @@
 import asyncio
 import random
+from typing import Any, Dict, Optional
+import importlib
+import importlib.util
 
 import httpx
-from playwright.async_api import async_playwright
+
+try:
+    _PLAYWRIGHT_SPEC = importlib.util.find_spec("playwright.async_api")
+except (ModuleNotFoundError, ValueError):  # pragma: no cover
+    _PLAYWRIGHT_SPEC = None
+if _PLAYWRIGHT_SPEC:
+    from playwright.async_api import async_playwright  # type: ignore
+else:  # pragma: no cover
+    async_playwright = None  # type: ignore
 
 from config.config import (
     DELAY_ON_RETRY,
@@ -36,24 +47,37 @@ def get_async_client_for_proxy(proxy_url):
     )
 
 
-async def fetch(url: str, site_key: str, timeout: int | None = None) -> httpx.Response | None:
+async def fetch(
+    url: str, site_key: str, timeout: int | None = None, method: str = 'GET', data: Optional[Dict[str, Any]] = None, extra_headers: Optional[Dict[str, str]] = None
+) -> httpx.Response | None:
     timeout = timeout or TIMEOUT_REQUEST
     await reload_proxies_if_changed(PROXIES_FILE)
 
     for attempt in range(1, RETRY_ATTEMPTS + 1):
         headers = await get_random_headers(site_key)
+        if extra_headers:
+            headers.update(extra_headers)
+
         proxy_url = get_proxy_url(GLOBAL_PROXY_USERNAME, GLOBAL_PROXY_PASSWORD)
         try:
+            client_kwargs = {'headers': headers, 'timeout': timeout}
             if USE_PROXY and proxy_url:
                 async with get_async_client_for_proxy(proxy_url) as client:
-                    resp = await client.get(url, headers=headers, timeout=timeout)
+                    if method.upper() == 'POST':
+                        resp = await client.post(url, data=data, **client_kwargs)
+                    else:
+                        resp = await client.get(url, **client_kwargs)
             else:
-                async with httpx.AsyncClient(headers=headers, timeout=timeout) as client:
-                    resp = await client.get(url)
+                async with httpx.AsyncClient(**client_kwargs) as client:
+                    if method.upper() == 'POST':
+                        resp = await client.post(url, data=data)
+                    else:
+                        resp = await client.get(url)
+
             await asyncio.sleep(random.uniform(0, REQUEST_DELAY))
             if resp.status_code == 200 and resp.text and not is_anti_bot_content(resp.text):
                 return resp
-            logger.warning(f"[httpx] Potential anti-bot or bad status for {url}")
+            logger.warning(f"[httpx] Potential anti-bot or bad status for {url} (status: {resp.status_code})")
             if proxy_url and should_blacklist_proxy(proxy_url, LOADED_PROXIES):
                 await mark_bad_proxy(proxy_url)
         except Exception as e:
@@ -66,6 +90,10 @@ async def fetch(url: str, site_key: str, timeout: int | None = None) -> httpx.Re
 
 async def fetch_with_playwright(url: str) -> str | None:
     """Fetches page content using Playwright routed through the project's proxy config."""
+    if async_playwright is None:
+        logger.warning("Playwright not installed; fetch_with_playwright skipped for %s", url)
+        return None
+
     headers = await get_random_headers('xtruyen')
     user_agent = headers.get('User-Agent')
 

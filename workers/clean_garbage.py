@@ -13,7 +13,7 @@ RECYCLE_BIN = "recycle_bin"
 DEBUG_FILES = ["debug_empty_chapter.html"]
 LOG_FILE = "crawler.log"
 LOG_ROTATE_PREFIX = "crawler.log."
-ERROR_JSONS = ["error_chapters.json", "chapter_retry_queue.json", "missing_chapters.json"]
+ERROR_JSONS = ["error_chapters.json", "missing_chapters.json"]
 
 # Tạo thư mục recycle_bin nếu chưa có
 os.makedirs(RECYCLE_BIN, exist_ok=True)
