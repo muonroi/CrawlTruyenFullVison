@@ -62,24 +62,27 @@ class XTruyenAdapter(BaseSiteAdapter):
         genre_url: str,
         site_key: str,
         max_pages: Optional[int] = None,
-    ) -> List[Dict[str, str]]:
+    ) -> Tuple[List[Dict[str, str]], int, int]:
         logger.info(f"[{self.site_key}] Crawling stories for genre '{genre_name}'")
         first_page_stories, total_pages = await self.get_stories_in_genre(genre_url, page=1)
         if not first_page_stories:
             logger.warning(f"[{self.site_key}] No stories detected on first page of {genre_name}")
-            return []
+            return [], 0, 0
 
         all_stories = list(first_page_stories)
         limit = max_pages or total_pages or 1
+        crawled_pages = 1
+
         for page in range(2, limit + 1):
             stories, _ = await self.get_stories_in_genre(genre_url, page)
+            crawled_pages += 1
             if not stories:
                 logger.info(f"[{self.site_key}] Stop paging {genre_name}: empty page {page}")
                 break
             all_stories.extend(stories)
             await asyncio.sleep(0.5)
         logger.info(f"[{self.site_key}] Total stories for {genre_name}: {len(all_stories)}")
-        return all_stories
+        return all_stories, total_pages, crawled_pages
 
     async def get_all_stories_from_genre(
         self, genre_name: str, genre_url: str, max_pages: Optional[int] = None
@@ -129,18 +132,61 @@ class XTruyenAdapter(BaseSiteAdapter):
                 details = await self._get_story_details_internal(story_url)
                 if details:
                     self._details_cache[story_url] = details
-            if not details:
-                logger.error(f"[{self.site_key}] Cannot fetch chapter list for {story_title}")
-                return []
-            chapters = details.get('chapters', [])
-            if not chapters:
-                html = await self._fetch_text(story_url, wait_for_selector="div.summary__content")
-                if html:
-                    chapters = parse_chapter_list(html, self.base_url)
+
+        if not details:
+            logger.error(f"[{self.site_key}] Cannot fetch details for {story_title}, cannot get chapter list.")
+            return []
+
+        if details.get('chapters'):
+            logger.debug(f"[{self.site_key}] Using cached chapter list for '{story_title}'.")
+            return details['chapters']
+
+        post_id = details.get('post_id')
+        if not post_id:
+            logger.warning(f"[{self.site_key}] No post_id for '{story_title}'. Falling back to parsing initial HTML.")
+            html = await self._fetch_text(story_url, wait_for_selector="div.summary__content")
+            if html:
+                chapters = parse_chapter_list(html, self.base_url)
+                if chapters:
                     details['chapters'] = chapters
-            for ch in chapters:
-                ch.setdefault('site_key', self.site_key)
-            return chapters
+                return chapters
+            return []
+
+        ajax_url = f"{self.base_url}/wp-admin/admin-ajax.php"
+        form_data = {'action': 'manga_get_chapters', 'manga': post_id}
+        
+        headers = {
+            'X-Requested-With': 'XMLHttpRequest',
+            'Referer': story_url
+        }
+
+        logger.info(f"[{self.site_key}] Fetching full chapter list for '{story_title}' via AJAX.")
+        
+        response = await make_request(
+            ajax_url,
+            self.site_key,
+            method='POST',
+            data=form_data,
+            extra_headers=headers
+        )
+
+        if not response or not response.text:
+            logger.error(f"[{self.site_key}] Failed to fetch chapter list via AJAX for '{story_title}'.")
+            return []
+
+        chapter_html = response.text
+        chapters = parse_chapter_list(chapter_html, self.base_url)
+        
+        logger.info(f"[{self.site_key}] Found {len(chapters)} chapters for '{story_title}' via AJAX.")
+
+        for ch in chapters:
+            ch.setdefault('site_key', self.site_key)
+        
+        async with self._details_lock:
+            if story_url in self._details_cache:
+                self._details_cache[story_url]['chapters'] = chapters
+
+        return chapters
 
     async def get_chapter_content(self, chapter_url: str, chapter_title: str, site_key: str) -> Optional[str]:
         html = await self._fetch_text(chapter_url, wait_for_selector="#chapter-reading-content")

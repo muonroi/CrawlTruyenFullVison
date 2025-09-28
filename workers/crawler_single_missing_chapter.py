@@ -128,7 +128,7 @@ async def crawl_single_story_worker(story_url: Optional[str]=None, title: Option
     with open(meta_path, "r", encoding="utf-8") as f:
         meta = json.load(f)
     meta = autofix_sources(meta, meta_path)
-    site_key = meta.get("site_key")
+    site_key = meta.get("site_key") or (get_site_key_from_url(meta.get("url")) if meta.get("url") else None)
     adapter = get_adapter(site_key)
 
     # --- Always update lại metadata từ web ---

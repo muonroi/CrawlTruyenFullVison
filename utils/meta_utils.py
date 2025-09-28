@@ -33,6 +33,16 @@ async def save_story_metadata_file(
 
     # Merge categories
     current_cats = metadata_to_save.get("categories", [])
+    
+    # Sanitize current_cats to handle old string-only format
+    sanitized_cats = []
+    for cat in current_cats:
+        if isinstance(cat, str):
+            sanitized_cats.append({'name': cat, 'url': None})
+        elif isinstance(cat, dict):
+            sanitized_cats.append(cat)
+    current_cats = sanitized_cats
+
     seen_urls = {cat.get("url") for cat in current_cats if cat.get("url")}
     if current_discovery_genre_data and current_discovery_genre_data.get("url") not in seen_urls:
         current_cats.append({

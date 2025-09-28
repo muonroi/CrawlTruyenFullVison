@@ -1,4 +1,5 @@
 import base64
+import json
 import re
 import zlib
 from typing import Any, Dict, List, Optional, Tuple
@@ -113,14 +114,44 @@ def parse_story_info(html_content: str, base_url: str = "") -> Dict[str, Any]:
         if a.get_text(strip=True)
     ]
 
-    status_block = soup.select_one('.post-status div, .summary-content div')
-    status_text = status_block.get_text(strip=True) if status_block else None
+    status_text = None
+    post_items = soup.select('.post-content_item')
+    for item in post_items:
+        heading = item.select_one('.summary-heading h3')
+        if heading and 'Trạng thái' in heading.get_text():
+            status_div = item.select_one('.summary-content div')
+            if status_div:
+                status_text = status_div.get_text(strip=True)
+                break
 
     body = soup.body or soup
     post_id = _extract_post_id(body.get('class', [])) if hasattr(body, 'get') else None
 
     chapters = parse_chapter_list(html_content, base_url)
-    total_chapters = len(chapters) or None
+    
+    total_chapters = None
+    chapter_list_ul = soup.select_one('ul.main.version-chap')
+    if chapter_list_ul and chapter_list_ul.get('data-last'):
+        last_chapter_str = chapter_list_ul['data-last']
+        match = re.search(r'\d+$', last_chapter_str)
+        if match:
+            total_chapters = int(match.group())
+
+    if total_chapters is None:
+        total_chapters = len(chapters) or None
+
+    rating_value = None
+    rating_count = None
+    source = 'xtruyen.vn'
+    json_ld_script = soup.find('script', type='application/ld+json')
+    if json_ld_script and json_ld_script.string:
+        try:
+            data = json.loads(json_ld_script.string)
+            if 'aggregateRating' in data:
+                rating_value = data['aggregateRating'].get('ratingValue')
+                rating_count = data['aggregateRating'].get('reviewCount')
+        except (json.JSONDecodeError, AttributeError):
+            pass
 
     return {
         'title': title_tag.get_text(strip=True) if title_tag else None,
@@ -128,11 +159,14 @@ def parse_story_info(html_content: str, base_url: str = "") -> Dict[str, Any]:
         'description': description,
         'post_id': post_id,
         'status': status_text,
-        'categories': [g['name'] for g in genres],
+        'categories': genres,
         'genres_full': genres,
         'cover': cover_tag.get('src') if cover_tag and cover_tag.get('src') else None,
         'chapters': chapters,
         'total_chapters_on_site': total_chapters,
+        'rating_value': rating_value,
+        'rating_count': rating_count,
+        'source': source,
     }
 
 

@@ -1,6 +1,6 @@
 import asyncio
 import random
-from typing import Dict, Optional
+from typing import Any, Dict, Optional
 
 from playwright.async_api import async_playwright, Browser, BrowserContext
 from utils.http_client import fetch
@@ -185,9 +185,28 @@ async def _make_request_playwright(
     return None
 
 
-async def make_request(url, site_key, timeout: int = 30, max_retries: int = 5, wait_for_selector: str | None = None):
+async def make_request(
+    url: str,
+    site_key: str,
+    timeout: int = 30,
+    max_retries: int = 5,
+    wait_for_selector: Optional[str] = None,
+    method: str = 'GET',
+    data: Optional[Dict[str, Any]] = None,
+    extra_headers: Optional[Dict[str, str]] = None
+):
     """Try httpx first then fallback to Playwright when blocked."""
-    resp = await fetch(url, site_key, timeout)
+    if method.upper() == 'POST':
+        resp = await fetch(url, site_key, timeout, method=method, data=data, extra_headers=extra_headers)
+        if resp and resp.status_code == 200:
+            class R:
+                def __init__(self, text):
+                    self.text = text
+            return R(resp.text)
+        logger.error(f"[{site_key}] POST request to {url} failed with httpx and has no Playwright fallback.")
+        return None
+
+    resp = await fetch(url, site_key, timeout, extra_headers=extra_headers)
     fallback_stats["httpx_success"].setdefault(site_key, 0)
     fallback_stats["fallback_count"].setdefault(site_key, 0)
     if resp and resp.status_code == 200 and resp.text and not is_anti_bot_content(resp.text):
