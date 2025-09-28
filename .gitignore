@@ -8,7 +8,9 @@
 *.json
 /backup/
 /backup_truyen_data/
-/tmp_data/
+/tmp_data/*
+!/tmp_data/xtruyen/
+!/tmp_data/xtruyen/*
 # Các mục khác bạn có thể đã có hoặc muốn thêm:
 # Môi trường ảo Python
 /.venv/

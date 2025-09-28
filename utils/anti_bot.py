@@ -13,14 +13,26 @@ def is_anti_bot_content(text: str) -> bool:
     """
     Kiểm tra xem nội dung HTML có phải là trang anti-bot hay không bằng nhiều phương pháp.
     """
-    if not text or len(text) < 100:
-        return False # Bỏ qua nếu nội dung quá ngắn hoặc rỗng
+    if not text:
+        return False
 
     lower_text = text.lower()
+    signature_phrases = [
+        "bạn đã bị chặn",
+        "checking your browser",
+        "just a moment",
+        "cloudflare",
+        "ddos protection",
+    ]
+    if any(sig in lower_text for sig in signature_phrases):
+        return True
+
+    if len(text) < 100:
+        return False  # Bỏ qua nếu nội dung quá ngắn hoặc rỗng
 
     # ===== Phương pháp 2: Phân tích cấu trúc HTML (tốn tài nguyên hơn) =====
     try:
-        soup = BeautifulSoup(text, 'lxml')
+        soup = BeautifulSoup(text, 'html.parser')
 
         # 2a. Kiểm tra tiêu đề trang
         title_tag = soup.find('title')

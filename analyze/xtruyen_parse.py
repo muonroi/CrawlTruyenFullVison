@@ -7,6 +7,8 @@ from urllib.parse import urljoin
 
 from bs4 import BeautifulSoup
 
+_DEFAULT_PARSER = "html.parser"
+
 
 _BASE64_PATTERN = re.compile(r'base64\s*=\s*"([^"]+)"', re.IGNORECASE)
 _DOUBLE_BREAK_PATTERN = re.compile(r'(?:&nbsp;)*(?:\s*<br\s*/?>\s*){2,}', re.IGNORECASE)
@@ -40,7 +42,7 @@ def _sanitize_content_fragment(raw_html: str) -> str:
     normalized = _DOUBLE_BREAK_PATTERN.sub('<br><br>', raw_html.strip())
     if not normalized:
         return ''
-    wrapper = BeautifulSoup(f'<div id="__payload_root__">{normalized}</div>', 'lxml')
+    wrapper = BeautifulSoup(f'<div id="__payload_root__">{normalized}</div>', _DEFAULT_PARSER)
     root = wrapper.select_one('#__payload_root__')
     if not root:
         return normalized
@@ -62,7 +64,7 @@ def _sanitize_content_fragment(raw_html: str) -> str:
 
 def _clean_text_blocks(html_fragment: str) -> str:
     """Normalize HTML fragment into plain text paragraphs."""
-    fragment_soup = BeautifulSoup(html_fragment, 'lxml')
+    fragment_soup = BeautifulSoup(html_fragment, _DEFAULT_PARSER)
     for tag in fragment_soup.select('script, style'):
         tag.decompose()
     # Replace <br> with newline for readability
@@ -75,7 +77,7 @@ def _clean_text_blocks(html_fragment: str) -> str:
 
 def parse_genres(html_content: str, base_url: str) -> List[Dict[str, str]]:
     """Parse homepage HTML to extract genre/category links."""
-    soup = BeautifulSoup(html_content, 'lxml')
+    soup = BeautifulSoup(html_content, _DEFAULT_PARSER)
     genres: List[Dict[str, str]] = []
     seen: set[str] = set()
 
@@ -99,7 +101,7 @@ def parse_genres(html_content: str, base_url: str) -> List[Dict[str, str]]:
 
 def parse_story_list(html_content: str, base_url: str) -> Tuple[List[Dict[str, str]], int]:
     """Parse a genre page to obtain stories and pagination info."""
-    soup = BeautifulSoup(html_content, 'lxml')
+    soup = BeautifulSoup(html_content, _DEFAULT_PARSER)
     stories: List[Dict[str, str]] = []
 
     for item in soup.select('div.popular-item-wrap'):
@@ -142,7 +144,7 @@ def _extract_post_id(body_classes: List[str]) -> Optional[str]:
 
 def parse_story_info(html_content: str, base_url: str = "") -> Dict[str, Any]:
     """Parse story detail page for metadata and inline chapter list."""
-    soup = BeautifulSoup(html_content, 'lxml')
+    soup = BeautifulSoup(html_content, _DEFAULT_PARSER)
 
     title_tag = soup.select_one('.post-title h1, h1.post-title, h1.entry-title')
     author_tag = soup.select_one('.author-content a, .author-name a')
@@ -229,7 +231,7 @@ def parse_story_info(html_content: str, base_url: str = "") -> Dict[str, Any]:
 
 def parse_chapter_list(html_content: str, base_url: str) -> List[Dict[str, str]]:
     """Parse chapter listing (either inline HTML or AJAX snippet)."""
-    soup = BeautifulSoup(html_content, 'lxml')
+    soup = BeautifulSoup(html_content, _DEFAULT_PARSER)
     anchors = soup.select('ul.main li.wp-manga-chapter a[href]')
     if not anchors:
         anchors = soup.select('li.wp-manga-chapter a[href]')
@@ -252,7 +254,7 @@ def parse_chapter_list(html_content: str, base_url: str) -> List[Dict[str, str]]
 
 def parse_chapter_content(html_content: str) -> Optional[Dict[str, Optional[str]]]:
     """Extract chapter title and HTML content, handling base64 + zlib payload."""
-    soup = BeautifulSoup(html_content, 'lxml')
+    soup = BeautifulSoup(html_content, _DEFAULT_PARSER)
     title_tag = soup.select_one('h2') or soup.select_one('h1#chapter-heading')
     title = title_tag.get_text(strip=True) if title_tag else None
 
@@ -264,13 +266,22 @@ def parse_chapter_content(html_content: str) -> Optional[Dict[str, Optional[str]
         if payload:
             sanitized = _sanitize_content_fragment(payload)
             if sanitized:
-                if '<p' not in sanitized.lower():
+                lower = sanitized.lower()
+                if '<p' in lower:
+                    content_html = sanitized
+                elif '<br' in lower:
+                    parts = [
+                        segment.strip()
+                        for segment in re.split(r'<br\s*/?>', sanitized)
+                        if segment.strip()
+                    ]
+                    if parts:
+                        content_html = ''.join(f'<p>{part}</p>' for part in parts)
+                else:
                     normalized = _clean_text_blocks(sanitized)
                     if normalized:
                         parts = [line for line in normalized.split('\n') if line.strip()]
                         content_html = ''.join(f'<p>{part}</p>' for part in parts) or None
-                else:
-                    content_html = sanitized
 
     if not content_html:
         content_div = soup.select_one('#chapter-reading-content')
