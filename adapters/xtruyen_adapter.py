@@ -192,7 +192,15 @@ class XTruyenAdapter(BaseSiteAdapter):
         html = await self._fetch_text(chapter_url, wait_for_selector="#chapter-reading-content")
         if not html:
             return None
-        content = parse_chapter_content(html)
-        if not content:
+
+        parsed = parse_chapter_content(html)
+        if not parsed:
+            logger.warning(f"[{self.site_key}] Unable to parse content for chapter '{chapter_title}'")
+            return None
+
+        content_html = parsed.get('content') if isinstance(parsed, dict) else None
+        if not content_html or not content_html.strip():
             logger.warning(f"[{self.site_key}] Empty content for chapter '{chapter_title}'")
-        return content
+            return None
+
+        return content_html
