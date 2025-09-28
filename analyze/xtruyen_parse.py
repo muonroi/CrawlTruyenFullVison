@@ -9,6 +9,49 @@ from bs4 import BeautifulSoup
 
 
 _BASE64_PATTERN = re.compile(r'base64\s*=\s*"([^"]+)"', re.IGNORECASE)
+_DOUBLE_BREAK_PATTERN = re.compile(r'(?:&nbsp;)*(?:\s*<br\s*/?>\s*){2,}', re.IGNORECASE)
+
+
+def _extract_base64_payload(script_text: str) -> Optional[str]:
+    match = _BASE64_PATTERN.search(script_text)
+    if not match:
+        return None
+    encoded = match.group(1)
+    try:
+        inflated = zlib.decompress(base64.b64decode(encoded))
+    except zlib.error:
+        try:
+            inflated = zlib.decompress(base64.b64decode(encoded), -zlib.MAX_WBITS)
+        except zlib.error:
+            return None
+    try:
+        return inflated.decode('utf-8', errors='ignore')
+    except UnicodeDecodeError:
+        return inflated.decode('utf-8', errors='ignore')
+
+
+def _sanitize_content_fragment(raw_html: str) -> str:
+    normalized = _DOUBLE_BREAK_PATTERN.sub('<br><br>', raw_html.strip())
+    if not normalized:
+        return ''
+    wrapper = BeautifulSoup(f'<div id="__payload_root__">{normalized}</div>', 'lxml')
+    root = wrapper.select_one('#__payload_root__')
+    if not root:
+        return normalized
+
+    for selector in ('div.ads', 'div[data-cl-spot]', 'script', 'style'):
+        for tag in root.select(selector):
+            tag.decompose()
+
+    for anchor in root.select('a[href="/hdsd/xaudio.php"]'):
+        container = anchor.find_parent('div')
+        if container:
+            container.decompose()
+        else:
+            anchor.decompose()
+
+    cleaned = root.decode_contents().strip()
+    return cleaned
 
 
 def _clean_text_blocks(html_fragment: str) -> str:
@@ -203,25 +246,22 @@ def parse_chapter_content(html_content: str) -> Optional[Dict[str, Optional[str]
 
     script = soup.select_one('script#decompress-script')
     if script and script.string:
-        match = _BASE64_PATTERN.search(script.string)
-        if match:
-            try:
-                decoded = base64.b64decode(match.group(1))
-                inflated = zlib.decompress(decoded)
-                candidate = inflated.decode('utf-8', errors='ignore').strip()
-                if candidate:
-                    if '<p' not in candidate.lower():
-                        normalized = _clean_text_blocks(candidate)
-                        parts = [p for p in normalized.split('\n') if p.strip()]
-                        content_html = ''.join(f'<p>{part}</p>' for part in parts)
-                    else:
-                        content_html = candidate
-            except Exception:
-                content_html = None
+        payload = _extract_base64_payload(script.string)
+        if payload:
+            sanitized = _sanitize_content_fragment(payload)
+            if sanitized:
+                if '<p' not in sanitized.lower():
+                    normalized = _clean_text_blocks(sanitized)
+                    if normalized:
+                        parts = [line for line in normalized.split('\n') if line.strip()]
+                        content_html = ''.join(f'<p>{part}</p>' for part in parts) or None
+                else:
+                    content_html = sanitized
 
     if not content_html:
         content_div = soup.select_one('#chapter-reading-content')
         if content_div:
-            content_html = str(content_div)
+            extracted = content_div.decode_contents().strip()
+            content_html = extracted or None
 
     return {'title': title, 'content': content_html}
