@@ -101,13 +101,21 @@ async def move_story_to_completed(story_folder, genre_name, retries: int = 3) ->
 
     for attempt in range(1, retries + 1):
         try:
-            # Use copytree and rmtree for a more robust move operation
-            await asyncio.to_thread(shutil.copytree, story_folder, dest_folder)
-            await asyncio.to_thread(shutil.rmtree, story_folder)
-            logger.info(f"[INFO] Đã chuyển truyện sang {dest_genre_folder}")
+            # Manual move: create dest, move files, remove src. This is more robust in some CI environments.
+            if not os.path.exists(dest_folder):
+                os.makedirs(dest_folder)
+            
+            for item_name in os.listdir(story_folder):
+                src_item = os.path.join(story_folder, item_name)
+                dst_item = os.path.join(dest_folder, item_name)
+                shutil.move(src_item, dst_item)
+            
+            shutil.rmtree(story_folder)
+
+            logger.info(f"[INFO] Đã di chuyển truyện sang {dest_folder}")
             return True
         except Exception as ex:
-            logger.error(f"Lỗi move {story_folder} -> {dest_folder} ({attempt}/{retries}): {ex}")
+            logger.error(f"Lỗi di chuyển {story_folder} -> {dest_folder} ({attempt}/{retries}): {ex}")
             await asyncio.sleep(2)
     return False
 
