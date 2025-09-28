@@ -1,6 +1,7 @@
 import asyncio
-from typing import Any, Dict, List, Optional, Tuple
-from urllib.parse import parse_qs, urlencode, urlparse, urlunparse
+import re
+from typing import Any, Dict, List, Optional, Set, Tuple
+from urllib.parse import parse_qs, urlencode, urljoin, urlparse, urlunparse
 
 from adapters.base_site_adapter import BaseSiteAdapter
 from analyze.xtruyen_parse import (
@@ -26,11 +27,103 @@ def _with_page_parameter(url: str, page: int) -> str:
 
 
 class XTruyenAdapter(BaseSiteAdapter):
+    _CHAPTER_LIST_BATCH = 200
+
     def __init__(self) -> None:
         self.site_key = "xtruyen"
         self.base_url = BASE_URLS.get(self.site_key, "https://xtruyen.vn")
         self._details_cache: Dict[str, Dict[str, Any]] = {}
         self._details_lock = asyncio.Lock()
+
+    @staticmethod
+    def _chapter_sort_key(chapter: Dict[str, str]) -> Tuple[int, str]:
+        url = chapter.get('url', '')
+        title = chapter.get('title', '')
+        number_match = re.search(r'(?:chuong|chapter)[^0-9]*([0-9]+)', url, re.IGNORECASE)
+        if not number_match:
+            number_match = re.search(r'(?:ch(?:u|\u01b0)\u01a1ng|chapter)\s*([0-9]+)', title, re.IGNORECASE)
+        number = int(number_match.group(1)) if number_match else 0
+        return number, url
+
+    async def _fetch_chapters_via_ajax(
+        self,
+        story_url: str,
+        manga_id: Optional[str],
+        ajax_nonce: Optional[str],
+        total_expected: Optional[int],
+    ) -> List[Dict[str, str]]:
+        if not manga_id:
+            logger.warning(f"[{self.site_key}] Missing manga_id for story {story_url}, cannot load chapters via AJAX.")
+            return []
+
+        ajax_url = urljoin(self.base_url, '/wp-admin/admin-ajax.php')
+        collected: List[Dict[str, str]] = []
+        seen_urls: Set[str] = set()
+        start = 1
+
+        extra_headers = {'Referer': story_url}
+        base_payload: Dict[str, Any] = {
+            'action': 'load_chapter_list_from_to',
+            'manga_id': manga_id,
+        }
+        if ajax_nonce:
+            # Some Madara deployments expect nonce under different keys; send both to be safe.
+            base_payload.setdefault('security', ajax_nonce)
+            base_payload.setdefault('nonce', ajax_nonce)
+
+        while True:
+            payload = dict(base_payload)
+            payload['from'] = start
+            payload['to'] = start + self._CHAPTER_LIST_BATCH - 1
+
+            logger.debug(
+                f"[{self.site_key}] AJAX chapters request for manga {manga_id}: from={payload['from']} to={payload['to']}"
+            )
+
+            response = await make_request(
+                ajax_url,
+                self.site_key,
+                method='POST',
+                data=payload,
+                extra_headers=extra_headers,
+            )
+
+            if not response or not getattr(response, 'text', None):
+                logger.debug(f"[{self.site_key}] Empty AJAX response for manga {manga_id} (from={payload['from']}).")
+                break
+
+            html_snippet = response.text.strip()
+            if not html_snippet:
+                break
+
+            batch_chapters = parse_chapter_list(html_snippet, self.base_url)
+            new_items = []
+            for chapter in batch_chapters:
+                chapter_url = chapter.get('url')
+                if not chapter_url or chapter_url in seen_urls:
+                    continue
+                seen_urls.add(chapter_url)
+                chapter.setdefault('site_key', self.site_key)
+                new_items.append(chapter)
+
+            if not new_items:
+                logger.debug(f"[{self.site_key}] No new chapters detected in AJAX batch for manga {manga_id}.")
+                break
+
+            collected.extend(new_items)
+
+            if total_expected and len(collected) >= total_expected:
+                break
+
+            if len(new_items) < self._CHAPTER_LIST_BATCH:
+                break
+
+            start += self._CHAPTER_LIST_BATCH
+            await asyncio.sleep(0.25)
+
+        collected.sort(key=self._chapter_sort_key)
+        logger.info(f"[{self.site_key}] Loaded {len(collected)} chapters via AJAX for {story_url}.")
+        return collected
 
     async def _fetch_text(self, url: str, wait_for_selector: Optional[str] = None) -> Optional[str]:
         response = await make_request(url, self.site_key, wait_for_selector=wait_for_selector)
@@ -99,8 +192,27 @@ class XTruyenAdapter(BaseSiteAdapter):
         if not html:
             return None
         details = parse_story_info(html, self.base_url)
-        if details.get('chapters'):
-            for ch in details['chapters']:
+        inline_chapters = details.get('chapters') or []
+        total_expected = details.get('total_chapters_on_site') if isinstance(details.get('total_chapters_on_site'), int) else None
+        needs_ajax = not inline_chapters or (
+            total_expected is not None and total_expected > len(inline_chapters)
+        )
+
+        if needs_ajax:
+            ajax_chapters = await self._fetch_chapters_via_ajax(
+                story_url=story_url,
+                manga_id=details.get('manga_id'),
+                ajax_nonce=details.get('ajax_nonce'),
+                total_expected=total_expected,
+            )
+            if ajax_chapters:
+                details['chapters'] = ajax_chapters
+            else:
+                for ch in inline_chapters:
+                    ch.setdefault('site_key', self.site_key)
+                details['chapters'] = inline_chapters
+        else:
+            for ch in inline_chapters:
                 ch.setdefault('site_key', self.site_key)
         details['sources'] = [
             {'url': story_url, 'site_key': self.site_key, 'priority': 1}
@@ -126,27 +238,50 @@ class XTruyenAdapter(BaseSiteAdapter):
         max_pages: Optional[int] = None,
         total_chapters: Optional[int] = None,
     ) -> List[Dict[str, str]]:
-        """Gets the chapter list by parsing the story page HTML, avoiding the fragile AJAX call."""
-        logger.debug(f"[{self.site_key}] Getting chapter list for '{story_title}' from story page HTML.")
-        
-        html = await self._fetch_text(story_url, wait_for_selector="div.summary__content")
-        if not html:
-            logger.error(f"[{self.site_key}] Could not fetch story page {story_url} to get chapter list.")
+        """Fetch chapter list, preferring the AJAX endpoint for completeness."""
+        logger.debug(f"[{self.site_key}] Getting chapter list for '{story_title}'.")
+
+        details = await self.get_story_details(story_url, story_title)
+        if not details:
+            logger.error(f"[{self.site_key}] Could not load story details for {story_url} to get chapters.")
             return []
 
-        chapters = parse_chapter_list(html, self.base_url)
-        
-        logger.info(f"[{self.site_key}] Found {len(chapters)} chapters for '{story_title}' from HTML.")
+        chapters = list(details.get('chapters') or [])
 
-        for ch in chapters:
-            ch.setdefault('site_key', self.site_key)
+        if not chapters:
+            chapters = await self._fetch_chapters_via_ajax(
+                story_url=story_url,
+                manga_id=details.get('manga_id'),
+                ajax_nonce=details.get('ajax_nonce'),
+                total_expected=details.get('total_chapters_on_site')
+                if isinstance(details.get('total_chapters_on_site'), int)
+                else None,
+            )
+            if chapters:
+                details['chapters'] = chapters
 
-        # Update cache if possible
+        if not chapters:
+            html = await self._fetch_text(story_url, wait_for_selector="div.summary__content")
+            if not html:
+                logger.error(f"[{self.site_key}] Fallback HTML fetch failed for {story_url}.")
+                return []
+            chapters = parse_chapter_list(html, self.base_url)
+            for ch in chapters:
+                ch.setdefault('site_key', self.site_key)
+            details['chapters'] = chapters
+        else:
+            for ch in chapters:
+                ch.setdefault('site_key', self.site_key)
+
         async with self._details_lock:
-            if story_url in self._details_cache:
-                self._details_cache[story_url]['chapters'] = chapters
+            cached = self._details_cache.get(story_url)
+            if cached is not None:
+                cached['chapters'] = chapters
+            else:
+                self._details_cache[story_url] = details
 
         return chapters
+
 
     async def get_chapter_content(self, chapter_url: str, chapter_title: str, site_key: str) -> Optional[str]:
         html = await self._fetch_text(chapter_url, wait_for_selector="#chapter-reading-content")

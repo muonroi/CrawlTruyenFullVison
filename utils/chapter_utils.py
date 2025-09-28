@@ -8,6 +8,7 @@ import math
 from typing import Any, Dict, List
 import re
 import unicodedata
+from bs4 import BeautifulSoup
 from filelock import FileLock
 from unidecode import unidecode
 import aiofiles
@@ -29,6 +30,31 @@ from utils.errors import CrawlError
 SEM = asyncio.Semaphore(ASYNC_SEMAPHORE_LIMIT)
 
 BATCH_SEMAPHORE_LIMIT = 5
+
+
+def _html_fragment_to_text(content: str) -> str:
+    """Convert an HTML fragment to normalized plain text paragraphs."""
+    if not content:
+        return ''
+
+    soup = BeautifulSoup(content, 'html.parser')
+
+    # Replace <br> with newline markers so they are preserved on get_text
+    for br in soup.find_all('br'):
+        br.replace_with('\n')
+
+    text = soup.get_text(separator='\n')
+
+    lines: List[str] = []
+    for raw_line in text.splitlines():
+        normalized = raw_line.replace('\xa0', ' ').strip()
+        if not normalized:
+            if lines and lines[-1] != '':
+                lines.append('')
+            continue
+        lines.append(normalized)
+
+    return '\n'.join(lines).strip()
 
 async def mark_dead_chapter(story_folder_path, ch_info):
     dead_path = os.path.join(story_folder_path, "dead_chapters.json")
@@ -368,12 +394,15 @@ async def async_download_and_save_chapter(
     if content and not is_anti_bot_content(content):
         try:
             category_name = get_category_name(story_data_item, current_discovery_genre_data)
+            normalized_content = _html_fragment_to_text(content)
+            if not normalized_content:
+                raise ValueError("Empty content after stripping HTML")
             # Gop noi dung chuan file .txt
             chapter_content = (
                 f"Nguon: {url}\n\nTruyen: {story_data_item['title']}\n"
                 f"The loai: {category_name}\n"
                 f"Chuong: {chapter_info['title']}\n\n"
-                f"{content}"
+                f"{normalized_content}"
             )
 
             # Su dung ham hash check

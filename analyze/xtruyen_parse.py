@@ -18,6 +18,7 @@ _AJAX_NONCE_PATTERNS = (
     re.compile(r'data-nonce\s*=\s*"([^"]+)"', re.IGNORECASE),
     re.compile(r'"security"\s*:\s*"([^"]+)"', re.IGNORECASE),
 )
+_MANGA_ID_PATTERN = re.compile(r'"manga_id"\s*:\s*"?(?P<id>[0-9]+)"?', re.IGNORECASE)
 
 
 def _extract_base64_payload(script_text: str) -> Optional[str]:
@@ -211,11 +212,19 @@ def parse_story_info(html_content: str, base_url: str = "") -> Dict[str, Any]:
             ajax_nonce = match.group(1)
             break
 
+    manga_id = None
+    manga_id_match = _MANGA_ID_PATTERN.search(html_content)
+    if manga_id_match:
+        manga_id = manga_id_match.group('id')
+    if not manga_id:
+        manga_id = post_id
+
     return {
         'title': title_tag.get_text(strip=True) if title_tag else None,
         'author': author_tag.get_text(strip=True) if author_tag else None,
         'description': description,
         'post_id': post_id,
+        'manga_id': manga_id,
         'status': status_text,
         'categories': genres,
         'genres_full': genres,
