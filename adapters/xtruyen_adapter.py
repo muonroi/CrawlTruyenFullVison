@@ -126,67 +126,22 @@ class XTruyenAdapter(BaseSiteAdapter):
         max_pages: Optional[int] = None,
         total_chapters: Optional[int] = None,
     ) -> List[Dict[str, str]]:
-        async with self._details_lock:
-            details = self._details_cache.get(story_url)
-            if not details:
-                details = await self._get_story_details_internal(story_url)
-                if details:
-                    self._details_cache[story_url] = details
-
-        if not details:
-            logger.error(f"[{self.site_key}] Cannot fetch details for {story_title}, cannot get chapter list.")
+        """Gets the chapter list by parsing the story page HTML, avoiding the fragile AJAX call."""
+        logger.debug(f"[{self.site_key}] Getting chapter list for '{story_title}' from story page HTML.")
+        
+        html = await self._fetch_text(story_url, wait_for_selector="div.summary__content")
+        if not html:
+            logger.error(f"[{self.site_key}] Could not fetch story page {story_url} to get chapter list.")
             return []
 
-        if details.get('chapters'):
-            logger.debug(f"[{self.site_key}] Using cached chapter list for '{story_title}'.")
-            return details['chapters']
-
-        post_id = details.get('post_id')
-        if not post_id:
-            logger.warning(f"[{self.site_key}] No post_id for '{story_title}'. Falling back to parsing initial HTML.")
-            html = await self._fetch_text(story_url, wait_for_selector="div.summary__content")
-            if html:
-                chapters = parse_chapter_list(html, self.base_url)
-                if chapters:
-                    details['chapters'] = chapters
-                return chapters
-            return []
-
-        ajax_url = f"{self.base_url}/wp-admin/admin-ajax.php"
-        form_data = {'action': 'manga_get_chapters', 'manga': post_id}
-
-        ajax_nonce = details.get('ajax_nonce')
-        if ajax_nonce:
-            form_data['security'] = ajax_nonce
-            form_data.setdefault('nonce', ajax_nonce)
+        chapters = parse_chapter_list(html, self.base_url)
         
-        headers = {
-            'X-Requested-With': 'XMLHttpRequest',
-            'Referer': story_url
-        }
-
-        logger.info(f"[{self.site_key}] Fetching full chapter list for '{story_title}' via AJAX.")
-        
-        response = await make_request(
-            ajax_url,
-            self.site_key,
-            method='POST',
-            data=form_data,
-            extra_headers=headers
-        )
-
-        if not response or not response.text:
-            logger.error(f"[{self.site_key}] Failed to fetch chapter list via AJAX for '{story_title}'.")
-            return []
-
-        chapter_html = response.text
-        chapters = parse_chapter_list(chapter_html, self.base_url)
-        
-        logger.info(f"[{self.site_key}] Found {len(chapters)} chapters for '{story_title}' via AJAX.")
+        logger.info(f"[{self.site_key}] Found {len(chapters)} chapters for '{story_title}' from HTML.")
 
         for ch in chapters:
             ch.setdefault('site_key', self.site_key)
-        
+
+        # Update cache if possible
         async with self._details_lock:
             if story_url in self._details_cache:
                 self._details_cache[story_url]['chapters'] = chapters

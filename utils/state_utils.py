@@ -52,7 +52,7 @@ async def save_crawl_state(state: Dict[str, Any], state_file: str, debounce=2.0)
 
 
 
-async def clear_specific_state_keys(state: Dict[str, Any], keys_to_remove: List[str], state_file: str) -> None:
+async def clear_specific_state_keys(state: Dict[str, Any], keys_to_remove: List[str], state_file: str, debounce: float = 2.0) -> None:
     updated = False
     for key in keys_to_remove:
         if key in state:
@@ -60,7 +60,7 @@ async def clear_specific_state_keys(state: Dict[str, Any], keys_to_remove: List[
             updated = True
             logger.debug(f"Đã xóa key '{key}' khỏi trạng thái crawl.")
     if updated:
-        await save_crawl_state(state, state_file)
+        await save_crawl_state(state, state_file, debounce=debounce)
 
 async def clear_crawl_state_component(state: Dict[str, Any], component_key: str, state_file: str) -> None:
     if component_key in state:
