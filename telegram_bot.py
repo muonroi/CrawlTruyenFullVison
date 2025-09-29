@@ -384,22 +384,38 @@ async def main_bot():
     application.add_handler(CommandHandler("get_logs", get_logs_command))
 
     logger.info("[Bot] Bot đang chạy và lắng nghe lệnh...")
+
+    initialized = False
+    started = False
+    polling = False
+
     try:
         await application.initialize()
+        initialized = True
+
         await application.start()
-        await application.updater.start_polling()
+        started = True
+
+        if application.updater:
+            await application.updater.start_polling()
+            polling = True
+
         logger.info("[Bot] Bot đã khởi động thành công và đang chạy.")
-        # Keep the bot running
+
+        # Keep the bot alive until it receives a stop signal.
         while True:
             await asyncio.sleep(3600)
+    except asyncio.CancelledError:
+        logger.info("[Bot] Vòng lặp bot đã bị hủy. Đang tiến hành tắt bot...")
     except (KeyboardInterrupt, SystemExit):
         logger.info("[Bot] Nhận được tín hiệu dừng, đang tắt bot...")
     finally:
-        if application.updater and application.updater.is_running:
+        if application.updater and polling:
             await application.updater.stop()
-        if application.running:
+        if started:
             await application.stop()
-        await application.shutdown()
+        if initialized:
+            await application.shutdown()
         await stop_kafka_producer()
         logger.info("[Bot] Bot đã dừng hoàn toàn.")
 
