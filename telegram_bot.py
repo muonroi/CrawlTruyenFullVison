@@ -3,6 +3,7 @@ import asyncio
 import os
 import glob
 import time
+import signal
 from collections import Counter
 from telegram import Update
 from telegram.ext import Application, CommandHandler, ContextTypes
@@ -385,39 +386,55 @@ async def main_bot():
 
     logger.info("[Bot] Bot đang chạy và lắng nghe lệnh...")
 
-    initialized = False
-    started = False
-    polling = False
+    stop_event = asyncio.Event()
+    loop = asyncio.get_running_loop()
+
+    def _handle_stop_signal() -> None:
+        if not stop_event.is_set():
+            stop_event.set()
+
+    for sig in (signal.SIGINT, signal.SIGTERM):
+        try:
+            loop.add_signal_handler(sig, _handle_stop_signal)
+        except NotImplementedError:
+            # Signal handlers may not be available on all platforms (e.g., Windows)
+            pass
 
     try:
-        await application.initialize()
-        initialized = True
+        async with application:
+            await application.start()
 
-        await application.start()
-        started = True
+            if application.updater:
+                await application.updater.start_polling()
+            else:
+                logger.warning("[Bot] Không thể khởi động polling vì không có updater. Vui lòng kiểm tra cấu hình bot.")
 
-        if application.updater:
-            await application.updater.start_polling()
-            polling = True
+            logger.info("[Bot] Bot đã khởi động thành công và đang chạy.")
 
-        logger.info("[Bot] Bot đã khởi động thành công và đang chạy.")
-
-        # Keep the bot alive until it receives a stop signal.
-        while True:
-            await asyncio.sleep(3600)
+            await stop_event.wait()
     except asyncio.CancelledError:
         logger.info("[Bot] Vòng lặp bot đã bị hủy. Đang tiến hành tắt bot...")
     except (KeyboardInterrupt, SystemExit):
         logger.info("[Bot] Nhận được tín hiệu dừng, đang tắt bot...")
     finally:
-        if application.updater and polling:
+        if application.updater:
             await application.updater.stop()
-        if started:
-            await application.stop()
-        if initialized:
-            await application.shutdown()
         await stop_kafka_producer()
         logger.info("[Bot] Bot đã dừng hoàn toàn.")
 
+
+def run_bot() -> None:
+    """Entry point for starting the Telegram bot."""
+    try:
+        asyncio.run(main_bot())
+    except RuntimeError as exc:
+        # Handle the "event loop is already running" scenario gracefully.
+        if "event loop is already running" in str(exc):
+            logger.error("[Bot] Không thể khởi động bot vì vòng lặp asyncio đã chạy sẵn."
+                         " Hãy đảm bảo bot được khởi chạy như một tiến trình riêng biệt.")
+        else:
+            raise
+
+
 if __name__ == "__main__":
-    asyncio.run(main_bot())
+    run_bot()
