@@ -92,7 +92,10 @@ from utils.state_utils import (
     merge_all_missing_workers_to_main,
     save_crawl_state,
 )
-from workers.crawler_missing_chapter import check_and_crawl_missing_all_stories
+from workers.crawler_missing_chapter import (
+    check_and_crawl_missing_all_stories,
+    loop_once_multi_sites,
+)
 from workers.crawler_single_missing_chapter import crawl_single_story_worker
 
 from utils.chapter_utils import slugify_title
@@ -761,6 +764,23 @@ async def run_missing(site_key: str, homepage_url: Optional[str] = None):
     await check_and_crawl_missing_all_stories(adapter, homepage_url, site_key=site_key)
 
 
+async def crawl_all_missing_stories(
+    site_key: Optional[str] = None,
+    homepage_url: Optional[str] = None,
+    force_unskip: bool = False,
+):
+    """Trigger crawl for missing chapters.
+
+    Nếu truyền site_key → chỉ xử lý site đó (tái sử dụng run_missing).
+    Nếu không → gọi worker để quét toàn bộ site.
+    """
+
+    if site_key:
+        await run_missing(site_key, homepage_url)
+    else:
+        await loop_once_multi_sites(force_unskip=force_unskip)
+
+
 async def run_single_story(
     title: str, site_key: Optional[str] = None, genre_name: Optional[str] = None
 ):
@@ -856,8 +876,7 @@ async def run_single_site(
             get_adapter(site_key), site_key, settings, shuffle_proxies
         )
     elif crawl_mode == "missing_only":
-        await run_missing(site_key, homepage_url)
-        await crawl_all_missing_stories()
+        await crawl_all_missing_stories(site_key, homepage_url)
     elif crawl_mode == "missing_single":
         url = next(
             (arg.split("=")[1] for arg in sys.argv if arg.startswith("--url=")), None
@@ -866,14 +885,13 @@ async def run_single_site(
             (arg.split("=")[1] for arg in sys.argv if arg.startswith("--title=")), None
         )
         await crawl_single_story_worker(story_url=url, title=title)
-        await crawl_all_missing_stories()
+        await crawl_all_missing_stories(site_key, homepage_url)
     else:
         await run_genres(site_key, settings, crawl_state)
         await retry_failed_genres(
             get_adapter(site_key), site_key, settings, shuffle_proxies
         )
-        await run_missing(site_key, homepage_url)
-        await crawl_all_missing_stories()
+        await crawl_all_missing_stories(site_key, homepage_url)
 
 
 if __name__ == "__main__":
