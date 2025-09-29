@@ -12,10 +12,7 @@ from workers.crawler_single_missing_chapter import crawl_single_story_worker
 from main import WorkerSettings, retry_failed_genres, run_single_site, run_all_sites
 from workers.retry_failed_chapters import retry_single_chapter
 
-# ==== Config Kafka ====
-KAFKA_TOPIC = os.getenv("KAFKA_TOPIC", "crawl_truyen")
-KAFKA_BOOTSTRAP_SERVERS = os.getenv("KAFKA_BROKERS", "kafka:9092")
-KAFKA_GROUP_ID = os.getenv("KAFKA_GROUP_ID", "novel-crawler-group")
+from config.config import KAFKA_BOOTSTRAP_SERVERS, KAFKA_TOPIC, KAFKA_GROUP_ID
 
 # ==== Job Dispatcher Mapping ====
 from main import run_single_story

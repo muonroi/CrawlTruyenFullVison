@@ -57,7 +57,7 @@ async def build_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
     """Builds and pushes the Docker image to Docker Hub."""
     await update.message.reply_text("⏳ Bắt đầu quá trình build và push image... Logs sẽ được gửi ngay sau đây.")
     
-    command = "docker-compose build && docker-compose push"
+    command = "docker compose build && docker compose push"
     
     try:
         process = await asyncio.create_subprocess_shell(
@@ -385,10 +385,23 @@ async def main_bot():
 
     logger.info("[Bot] Bot đang chạy và lắng nghe lệnh...")
     try:
-        await application.run_polling()
+        await application.initialize()
+        await application.start()
+        await application.updater.start_polling()
+        logger.info("[Bot] Bot đã khởi động thành công và đang chạy.")
+        # Keep the bot running
+        while True:
+            await asyncio.sleep(3600)
+    except (KeyboardInterrupt, SystemExit):
+        logger.info("[Bot] Nhận được tín hiệu dừng, đang tắt bot...")
     finally:
+        if application.updater and application.updater.is_running:
+            await application.updater.stop()
+        if application.running:
+            await application.stop()
+        await application.shutdown()
         await stop_kafka_producer()
-        logger.info("[Bot] Bot đã dừng.")
+        logger.info("[Bot] Bot đã dừng hoàn toàn.")
 
 if __name__ == "__main__":
     asyncio.run(main_bot())

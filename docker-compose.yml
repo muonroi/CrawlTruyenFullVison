@@ -72,11 +72,12 @@ services:
     image: muonroii/storyflow-core:latest
     container_name: telegram-bot
     command: python -m telegram_bot
+    env_file:
+      - ./.env
     depends_on:
       - kafka
     environment:
       - KAFKA_BROKERS=kafka:29092
-      - TELEGRAM_BOT_TOKEN=${TELEGRAM_BOT_TOKEN}
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
       - ./truyen_data:/app/truyen_data
