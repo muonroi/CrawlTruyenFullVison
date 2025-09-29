@@ -93,6 +93,22 @@ python main.py metruyenfull
     Thường xuyên theo dõi file log và thư mục backup.
 Tùy chỉnh các thông số như batch_size, buffer_size, request_delay cho phù hợp với tài  nguyên của server và chính sách của các website nguồn.*
 
+## 🤖 Sử dụng Telegram Bot
+
+Bot Telegram đi kèm giúp bạn điều khiển crawler từ xa. Sau khi cấu hình
+`TELEGRAM_BOT_TOKEN` và khởi chạy `telegram_bot.py`, bạn có thể:
+
+-   Gõ `/start` hoặc `/menu` để mở menu dạng nút bấm.
+-   Chọn nhanh các thao tác phổ biến như **Build & Push image**, **Crawl**,
+    **Xem thống kê**, **Lấy log**... mà không cần gõ lệnh thủ công.
+-   Với những thao tác cần thêm dữ liệu (ví dụ crawl theo URL/site hoặc
+    xem log), bot sẽ nhắn lại để bạn nhập tiếp thông tin.
+-   Dùng `/cancel` hoặc bấm nút khác nếu muốn hủy thao tác đang nhập.
+
+Menu được thiết kế để hoạt động tốt trên giao diện di động, giúp việc
+quản lý crawler trở nên nhanh chóng và thân thiện hơn so với việc phải
+ghi nhớ nhiều câu lệnh dài.
+
 ## 🧪 Running tests
 
 Các kiểm thử được viết bằng `pytest`. Trước khi chạy test, hãy cài đặt toàn bộ
