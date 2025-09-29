@@ -2,6 +2,7 @@
 import asyncio
 import os
 import glob
+import time
 from collections import Counter
 from telegram import Update
 from telegram.ext import Application, CommandHandler, ContextTypes
@@ -29,6 +30,8 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
     help_text = (
         f"👋 Chào {user.first_name}, mình là Bot Crawler đây!\n\n"
         "Dưới đây là các lệnh mình hỗ trợ:\n"
+        "`/build` - Build và push image mới nhất lên Docker Hub.\n"
+        "`/crawl <mode>` - Bắt đầu một phiên crawl (ví dụ: `/crawl all_sites`).\n"
         "`/status` - Kiểm tra trạng thái của hệ thống.\n"
         "`/crawl_story <URL>` - Crawl một truyện từ URL.\n"
         "`/crawl_site <site_key>` - Crawl toàn bộ một trang.\n"
@@ -49,6 +52,79 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
 async def status_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Checks the status of the crawler system."""
     await update.message.reply_text("✅ Bot is running and listening for commands.")
+
+async def build_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Builds and pushes the Docker image to Docker Hub."""
+    await update.message.reply_text("⏳ Bắt đầu quá trình build và push image... Logs sẽ được gửi ngay sau đây.")
+    
+    command = "docker-compose build && docker-compose push"
+    
+    try:
+        process = await asyncio.create_subprocess_shell(
+            command,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.STDOUT  # Redirect stderr to stdout
+        )
+
+        output_chunk = ""
+        last_sent_time = time.time()
+
+        # Stream the output
+        if process.stdout:
+            while True:
+                line = await process.stdout.readline()
+                if not line:
+                    break
+                
+                decoded_line = line.decode('utf-8', errors='ignore')
+                output_chunk += decoded_line
+                
+                # Send in chunks of text or every 2 seconds
+                if len(output_chunk) > 3500 or (time.time() - last_sent_time > 2 and output_chunk):
+                    await update.message.reply_html(f"<pre>{output_chunk}</pre>")
+                    output_chunk = ""
+                    last_sent_time = time.time()
+
+        # Send any remaining output
+        if output_chunk:
+            await update.message.reply_html(f"<pre>{output_chunk}</pre>")
+
+        await process.wait()
+
+        if process.returncode == 0:
+            await update.message.reply_text("✅ Build và push image thành công!")
+        else:
+            await update.message.reply_text(f"❌ Build và push image thất bại! (Exit code: {process.returncode})")
+
+    except Exception as e:
+        logger.error(f"[Bot] Lỗi khi thực thi lệnh build: {e}")
+        await update.message.reply_text(f"❌ Đã xảy ra lỗi nghiêm trọng khi chạy lệnh build: {e}")
+
+async def crawl_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Triggers a global crawl job."""
+    args = context.args
+    if not args:
+        await update.message.reply_text("⚠️ Vui lòng cung cấp chế độ crawl.\nVí dụ: `/crawl all_sites` hoặc `/crawl missing_only`")
+        return
+
+    crawl_mode = args[0]
+    job_type = ""
+    
+    # Determine job type based on crawl mode
+    if crawl_mode in ["all_sites", "full", "genres_only"]:
+        job_type = "all_sites"
+    elif crawl_mode in ["missing_only", "missing"]:
+        job_type = "missing_check"
+    else:
+        await update.message.reply_text(f"❌ Chế độ crawl '{crawl_mode}' không hợp lệ.")
+        return
+
+    job = {"type": job_type, "crawl_mode": crawl_mode}
+    success = await send_kafka_job(job)
+    if success:
+        await update.message.reply_text(f"✅ Đã đưa job `{job_type}` với mode `{crawl_mode}` vào hàng đợi.")
+    else:
+        await update.message.reply_text("❌ Gửi job vào Kafka thất bại. Vui lòng kiểm tra logs.")
 
 async def list_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Lists and filters stories based on various criteria."""
@@ -297,6 +373,8 @@ async def main_bot():
     application.add_handler(CommandHandler("start", start_command))
     application.add_handler(CommandHandler("help", start_command))
     application.add_handler(CommandHandler("status", status_command))
+    application.add_handler(CommandHandler("build", build_command))
+    application.add_handler(CommandHandler("crawl", crawl_command))
     application.add_handler(CommandHandler("list", list_command))
     application.add_handler(CommandHandler("stats", stats_command))
     application.add_handler(CommandHandler("crawl_story", crawl_story_command))

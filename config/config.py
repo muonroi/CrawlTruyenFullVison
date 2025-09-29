@@ -61,9 +61,9 @@ TELEGRAM_PARSE_MODE = os.getenv("TELEGRAM_PARSE_MODE", "Markdown")
 TELEGRAM_DISABLE_WEB_PAGE_PREVIEW = os.getenv("TELEGRAM_DISABLE_WEB_PAGE_PREVIEW", "true").lower() == "true"
 
 # ============ LIMIT CRAWL ============
-MAX_GENRES_TO_CRAWL = int(os.getenv("MAX_GENRES_TO_CRAWL", "0")) or None
+MAX_GENRES_TO_CRAWL = int(os.getenv("MAX_GENRES_TO_CRAWL", "3")) or None
 MAX_STORIES_PER_GENRE_PAGE = int(os.getenv("MAX_STORIES_PER_GENRE_PAGE", 0)) or None
-MAX_STORIES_TOTAL_PER_GENRE = int(os.getenv("MAX_STORIES_TOTAL_PER_GENRE", 0)) or None
+MAX_STORIES_TOTAL_PER_GENRE = int(os.getenv("MAX_STORIES_TOTAL_PER_GENRE", "5")) or None
 MAX_CHAPTER_PAGES_TO_CRAWL = int(os.getenv("MAX_CHAPTER_PAGES_TO_CRAWL", 0)) or None
 
 # ============ ASYNC LIMIT ============
