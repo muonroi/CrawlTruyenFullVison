@@ -1,4 +1,6 @@
+import json
 
+from utils import chapter_utils
 from utils.chapter_utils import (
     slugify_title,
     extract_real_chapter_number,
@@ -23,3 +25,51 @@ def test_remove_number_and_filename():
     assert remove_chapter_number_from_title('Chapter 9 - XYZ') == 'XYZ'
     fname = get_chapter_filename('Tiêu đề', 3)
     assert fname == '0003_tieu-de.txt'
+
+
+def test_get_missing_chapters_skip_when_source_missing(tmp_path):
+    story_folder = tmp_path / "story"
+    story_folder.mkdir()
+
+    metadata = [
+        {
+            "index": 1,
+            "title": "Chương 1: Start",
+            "url": "https://example.com/chap-1",
+            "file": chapter_utils.get_chapter_filename("Chương 1: Start", 1),
+        },
+        {
+            "index": 2,
+            "title": "Chương 2: Missing",
+            "url": "https://example.com/chap-2",
+            "file": chapter_utils.get_chapter_filename("Chương 2: Missing", 2),
+        },
+        {
+            "index": 3,
+            "title": "Chương 3: Present",
+            "url": "https://example.com/chap-3",
+            "file": chapter_utils.get_chapter_filename("Chương 3: Present", 3),
+        },
+    ]
+
+    meta_path = story_folder / "chapter_metadata.json"
+    with open(meta_path, "w", encoding="utf-8") as f:
+        json.dump(metadata, f, ensure_ascii=False, indent=2)
+
+    # Tạo sẵn file cho chương 1 và 3
+    for item in (metadata[0], metadata[2]):
+        file_path = story_folder / item["file"]
+        with open(file_path, "w", encoding="utf-8") as f:
+            f.write("content")
+
+    # Danh sách chương lấy từ web không có chương 2
+    chapters_from_web = [
+        {"title": "Chương 1: Start", "url": "https://example.com/chap-1"},
+        {"title": "Chương 3: Present", "url": "https://example.com/chap-3"},
+    ]
+
+    missing = chapter_utils.get_missing_chapters(str(story_folder), chapters_from_web)
+
+    # Không nên cố crawl lại chương 2 vì website không có link/chương này
+    assert missing == []
+

@@ -574,7 +574,34 @@ def get_missing_chapters(story_folder: str, chapters: list[dict]) -> list[dict]:
     else:
         chapter_items = chapters
 
-    existing_files = set([f for f in os.listdir(story_folder) if f.endswith('.txt')])
+    existing_files = {f for f in os.listdir(story_folder) if f.endswith('.txt')}
+
+    # Thu thập các chỉ số, url và tên file thực tế có trên website để nhận diện
+    # những chương bị thiếu ngay từ nguồn (website không có link).
+    available_urls = set()
+    available_indexes = set()
+    available_files = set()
+    for idx, ch in enumerate(chapters or []):
+        if not isinstance(ch, dict):
+            continue
+
+        url = ch.get("url")
+        if url:
+            available_urls.add(url)
+
+        title = ch.get("title", "") or ""
+        real_num = ch.get("index") if isinstance(ch.get("index"), int) else extract_real_chapter_number(title)
+        if not isinstance(real_num, int):
+            real_num = idx + 1
+
+        available_indexes.add(real_num)
+        try:
+            expected_name = get_chapter_filename(title, real_num)
+            available_files.add(expected_name)
+        except Exception:
+            # Trong trường hợp hiếm gặp không tạo được tên file, bỏ qua để không
+            # làm gián đoạn logic nhận diện missing.
+            continue
     # Skip permanently failed (dead) chapters when calculating missing
     dead_urls = set()
     dead_indexes = set()
@@ -608,6 +635,24 @@ def get_missing_chapters(story_folder: str, chapters: list[dict]) -> list[dict]:
         if (ch_url and ch_url in dead_urls) or (isinstance(ch_index, int) and ch_index in dead_indexes):
             continue
         if expected_file not in existing_files or not os.path.exists(file_path) or os.path.getsize(file_path) == 0:
+            # Nếu chương không xuất hiện trên website (thiếu link/chỉ số) thì
+            # coi như website bị thiếu và bỏ qua khỏi danh sách cần crawl lại.
+            present_on_web = False
+            if ch_url and ch_url in available_urls:
+                present_on_web = True
+            elif isinstance(ch_index, int) and ch_index in available_indexes:
+                present_on_web = True
+            elif expected_file in available_files:
+                present_on_web = True
+
+            if not present_on_web:
+                logger.debug(
+                    "[MISSING] Bỏ qua chương thiếu trên website: %s (index=%s, url=%s)",
+                    expected_file,
+                    ch_index,
+                    ch_url,
+                )
+                continue
             # append du thong tin cho crawl lai
             ch_for_missing = {**ch, "idx": idx}
             missing.append(ch_for_missing)
