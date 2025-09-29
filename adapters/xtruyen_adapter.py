@@ -253,9 +253,13 @@ class XTruyenAdapter(BaseSiteAdapter):
                 story_url=story_url,
                 manga_id=details.get('manga_id'),
                 ajax_nonce=details.get('ajax_nonce'),
-                total_expected=details.get('total_chapters_on_site')
-                if isinstance(details.get('total_chapters_on_site'), int)
-                else None,
+                total_expected=total_chapters
+                if isinstance(total_chapters, int)
+                else (
+                    details.get('total_chapters_on_site')
+                    if isinstance(details.get('total_chapters_on_site'), int)
+                    else None
+                ),
             )
             if chapters:
                 details['chapters'] = chapters
