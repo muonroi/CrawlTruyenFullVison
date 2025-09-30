@@ -238,16 +238,29 @@ def parse_story_info(html_content: str, base_url: str = "") -> Dict[str, Any]:
     }
 
 
+def _detect_chapter_number(label: str) -> Optional[int]:
+    """Best effort to extract chapter number from a string."""
+    if not label:
+        return None
+    match = re.search(r'(?:chuong|chapter)[^0-9]*([0-9]+)', label, re.IGNORECASE)
+    if match:
+        return int(match.group(1))
+    match = re.search(r'([0-9]+)', label)
+    if match:
+        return int(match.group(1))
+    return None
+
+
 def parse_chapter_list(html_content: str, base_url: str) -> List[Dict[str, str]]:
     """Parse chapter listing (either inline HTML or AJAX snippet)."""
     soup = BeautifulSoup(html_content, _DEFAULT_PARSER)
-    
+
     anchors = []
     chapter_list_container = soup.select_one('ul.version-chap')
     if chapter_list_container:
         # More specific selector to target only actual chapter links inside list items
         anchors = chapter_list_container.select('li a[href]')
-    
+
     # Fallback to old selectors if the new one finds nothing
     if not anchors:
         anchors = soup.select('ul.main li.wp-manga-chapter a[href]')
@@ -255,6 +268,7 @@ def parse_chapter_list(html_content: str, base_url: str) -> List[Dict[str, str]]
             anchors = soup.select('li.wp-manga-chapter a[href]')
 
     chapters: List[Dict[str, str]] = []
+    chapter_numbers: List[int] = []
     for a in anchors:
         href = a.get('href')
         # Explicitly filter out javascript links
@@ -264,13 +278,26 @@ def parse_chapter_list(html_content: str, base_url: str) -> List[Dict[str, str]]
         title = a.get_text(strip=True)
         if not title or not href:
             continue
+
+        number = _detect_chapter_number(title)
+        if number is not None:
+            chapter_numbers.append(number)
+
         chapters.append({
             'title': title,
             'url': urljoin(base_url, href),
         })
 
-    # Default order is newest-first, reverse to crawl older first
-    chapters.reverse()
+    if len(chapter_numbers) >= 2:
+        first, last = chapter_numbers[0], chapter_numbers[-1]
+        # Many Madara deployments output newest-first. Only reverse when we
+        # confidently detect that ordering.
+        if first > last:
+            chapters.reverse()
+    else:
+        # Default order is newest-first when we cannot detect numbers.
+        chapters.reverse()
+
     return chapters
 
 
