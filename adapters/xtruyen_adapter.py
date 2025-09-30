@@ -84,6 +84,9 @@ class XTruyenAdapter(BaseSiteAdapter):
         normalized.sort()
         return normalized
 
+    def get_chapters_per_page_hint(self) -> int:
+        return self._CHAPTER_LIST_BATCH
+
     async def _fetch_chapters_via_ajax(
         self,
         story_url: str,
@@ -91,6 +94,7 @@ class XTruyenAdapter(BaseSiteAdapter):
         ajax_nonce: Optional[str],
         total_expected: Optional[int],
         chapter_ranges: Optional[List[Any]] = None,
+        max_batches: Optional[int] = None,
     ) -> List[Dict[str, str]]:
         if not manga_id:
             logger.warning(f"[{self.site_key}] Missing manga_id for story {story_url}, cannot load chapters via AJAX.")
@@ -124,7 +128,7 @@ class XTruyenAdapter(BaseSiteAdapter):
                     break
                 start = end + 1
 
-        for start, end in ranges:
+        for batch_index, (start, end) in enumerate(ranges, start=1):
             if total_expected and start > total_expected:
                 continue
             upper = min(end, total_expected) if total_expected else end
@@ -174,6 +178,12 @@ class XTruyenAdapter(BaseSiteAdapter):
                 break
 
             await asyncio.sleep(0.25)
+
+            if max_batches and batch_index >= max_batches:
+                logger.debug(
+                    f"[{self.site_key}] Reached max chapter batches ({max_batches}) for {story_url}."
+                )
+                break
 
         collected.sort(key=self._chapter_sort_key)
         logger.info(f"[{self.site_key}] Loaded {len(collected)} chapters via AJAX for {story_url}.")
@@ -316,6 +326,7 @@ class XTruyenAdapter(BaseSiteAdapter):
                     else None
                 ),
                 chapter_ranges=details.get('chapter_ranges'),
+                max_batches=max_pages,
             )
             if chapters:
                 details['chapters'] = chapters
@@ -339,6 +350,15 @@ class XTruyenAdapter(BaseSiteAdapter):
                 cached['chapters'] = chapters
             else:
                 self._details_cache[story_url] = details
+
+        if max_pages and chapters:
+            per_page = max(1, self.get_chapters_per_page_hint())
+            limit = max_pages * per_page
+            if len(chapters) > limit:
+                logger.info(
+                    f"[{self.site_key}] Applying chapter page limit: keeping first {limit}/{len(chapters)} entries."
+                )
+                chapters = chapters[:limit]
 
         return chapters
 

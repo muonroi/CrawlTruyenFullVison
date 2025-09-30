@@ -208,6 +208,7 @@ async def crawl_all_sources_until_full(
             return
 
     retry_full = 0
+    applied_chapter_limit: Optional[int] = None
     while True:
         if is_story_skipped(story_data_item):
             logger.warning(f"[SKIP][LOOP] Truyện '{story_data_item['title']}' đã bị đánh dấu skip, bỏ qua vòng lặp sources.")
@@ -222,18 +223,19 @@ async def crawl_all_sources_until_full(
                 logger.warning(f"[SKIP] Nguồn {url} bị lỗi quá nhiều, bỏ qua.")
                 continue
             try:
-                chapters = await adapter.get_chapter_list( 
+                chapters = await adapter.get_chapter_list(
                     story_url=url,
                     story_title=story_data_item["title"],
                     site_key=site_key,
                     total_chapters=total_chapters,
+                    max_pages=MAX_CHAPTER_PAGES_TO_CRAWL,
                 )
             except Exception as ex:
                 logger.warning(f"[SOURCE] Lỗi crawl chapters từ {url}: {ex}")
                 error_count_by_source[url] = error_count_by_source.get(url, 0) + 1
                 continue
 
-            await crawl_missing_chapters_for_story(
+            limit_from_missing = await crawl_missing_chapters_for_story(
                 site_key,
                 session,
                 chapters,
@@ -245,6 +247,12 @@ async def crawl_all_sources_until_full(
                 state_file=state_file,
                 adapter=adapter,
             )
+            if isinstance(limit_from_missing, int):
+                applied_chapter_limit = (
+                    limit_from_missing
+                    if applied_chapter_limit is None
+                    else min(applied_chapter_limit, limit_from_missing)
+                )
             load_skipped_stories()
             if is_story_skipped(story_data_item):
                 logger.warning(f"[SKIP][AFTER CRAWL] Truyện '{story_data_item['title']}' đã bị đánh dấu skip, thoát khỏi vòng lặp sources.")
@@ -277,6 +285,10 @@ async def crawl_all_sources_until_full(
                 f"[ALERT] Truyện '{story_data_item['title']}' còn thiếu {total_chapters - files_after} chương sau {retry_full} vòng thử tất cả nguồn."
             )
         await smart_delay()
+
+    if applied_chapter_limit is not None:
+        story_data_item["_chapter_limit"] = applied_chapter_limit
+    return applied_chapter_limit
 
 
 async def initialize_and_log_setup_with_state(site_key) -> Tuple[str, Dict[str, Any]]:
@@ -405,7 +417,7 @@ async def process_story_item(
     await save_crawl_state(crawl_state, state_file)
 
     # 2. Crawl tất cả nguồn cho đến khi đủ chương
-    await crawl_all_sources_until_full(
+    chapter_limit_hint = await crawl_all_sources_until_full(
         site_key,
         session,
         story_data_item,
@@ -416,10 +428,23 @@ async def process_story_item(
         state_file=state_file,
         adapter=adapter,
     )
+    if isinstance(chapter_limit_hint, int) and chapter_limit_hint >= 0:
+        story_data_item["_chapter_limit"] = chapter_limit_hint
 
     # 3. Kiểm tra số chương đã crawl thực tế
     files_actual = get_saved_chapters_files(story_global_folder_path)
-    total_chapters_on_site = details.get("total_chapters_on_site")  # type: ignore
+    raw_total_chapters = details.get("total_chapters_on_site")  # type: ignore
+    total_chapters_on_site = (
+        raw_total_chapters
+        if isinstance(raw_total_chapters, int) and raw_total_chapters > 0
+        else None
+    )
+    chapter_limit_config = story_data_item.get("_chapter_limit")
+    if isinstance(chapter_limit_config, int) and chapter_limit_config >= 0:
+        if total_chapters_on_site is None:
+            total_chapters_on_site = chapter_limit_config
+        else:
+            total_chapters_on_site = min(total_chapters_on_site, chapter_limit_config)
     story_title = story_data_item["title"]
     story_url = story_data_item["url"]
     # Lần crawl đầu tiên (metadata vừa tạo file, chưa có file chương nào)
@@ -475,6 +500,12 @@ async def process_story_item(
     # Hoan tat khi so file chuong >= tong so chuong tren site.
     # Khong phu thuoc truong 'status' de tranh khong next du du lieu da day du.
     total = details.get("total_chapters_on_site")  # type: ignore
+    limit_from_config = story_data_item.get("_chapter_limit")
+    if isinstance(limit_from_config, int) and limit_from_config >= 0:
+        if isinstance(total, int) and total > 0:
+            total = min(total, limit_from_config)
+        else:
+            total = limit_from_config
     if not total:
         try:
             total = await get_real_total_chapters(story_data_item, adapter)
@@ -753,6 +784,13 @@ async def run_genres(
     await initialize_scraper(site_key)
     adapter = get_adapter(site_key)
     genres = await adapter.get_genres()
+    if MAX_GENRES_TO_CRAWL:
+        limited_genres = genres[:MAX_GENRES_TO_CRAWL]
+        if len(limited_genres) != len(genres):
+            logger.info(
+                f"[GENRE] Áp dụng giới hạn {MAX_GENRES_TO_CRAWL} thể loại đầu tiên (từ tổng {len(genres)})."
+            )
+        genres = limited_genres
     await run_crawler(adapter, site_key, genres, settings, crawl_state)
 
 
