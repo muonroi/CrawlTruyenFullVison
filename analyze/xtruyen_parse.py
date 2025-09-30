@@ -1,4 +1,5 @@
 import base64
+import binascii
 import json
 import re
 import zlib
@@ -10,8 +11,16 @@ from bs4 import BeautifulSoup
 _DEFAULT_PARSER = "html.parser"
 
 
-_BASE64_PATTERN = re.compile(r'base64\s*=\s*"([^"]+)"', re.IGNORECASE)
+_BASE64_PATTERNS: Tuple[re.Pattern[str], ...] = (
+    re.compile(r'base64\s*=\s*(?P<quote>["\'`])(?P<data>[A-Za-z0-9+/=\s]+?)(?P=quote)', re.IGNORECASE | re.DOTALL),
+    re.compile(r'data-base64\s*=\s*(?P<quote>["\'`])(?P<data>[A-Za-z0-9+/=\s]+?)(?P=quote)', re.IGNORECASE | re.DOTALL),
+    re.compile(r'"base64"\s*:\s*(?P<quote>["\'`])(?P<data>[A-Za-z0-9+/=\s]+?)(?P=quote)', re.IGNORECASE | re.DOTALL),
+)
 _DOUBLE_BREAK_PATTERN = re.compile(r'(?:&nbsp;)*(?:\s*<br\s*/?>\s*){2,}', re.IGNORECASE)
+_BASE64_FALLBACK_PATTERN = re.compile(
+    r'(?P<quote>["\'`])(?P<data>[A-Za-z0-9+/=\s]{80,})(?P=quote)',
+    re.DOTALL,
+)
 _AJAX_NONCE_PATTERNS = (
     re.compile(r'ajax_nonce"\s*:\s*"([^"]+)"', re.IGNORECASE),
     re.compile(r'"nonce"\s*:\s*"([^"]+)"', re.IGNORECASE),
@@ -21,22 +30,43 @@ _AJAX_NONCE_PATTERNS = (
 _MANGA_ID_PATTERN = re.compile(r'"manga_id"\s*:\s*"?(?P<id>[0-9]+)"?', re.IGNORECASE)
 
 
-def _extract_base64_payload(script_text: str) -> Optional[str]:
-    match = _BASE64_PATTERN.search(script_text)
-    if not match:
+def _decode_base64_string(encoded: str) -> Optional[str]:
+    normalized = re.sub(r'\s+', '', encoded)
+    if not normalized:
         return None
-    encoded = match.group(1)
     try:
-        inflated = zlib.decompress(base64.b64decode(encoded))
-    except zlib.error:
+        payload = base64.b64decode(normalized)
+    except (binascii.Error, ValueError):
+        return None
+
+    for window in (zlib.MAX_WBITS, -zlib.MAX_WBITS):
         try:
-            inflated = zlib.decompress(base64.b64decode(encoded), -zlib.MAX_WBITS)
+            inflated = zlib.decompress(payload, window)
         except zlib.error:
-            return None
-    try:
-        return inflated.decode('utf-8', errors='ignore')
-    except UnicodeDecodeError:
-        return inflated.decode('utf-8', errors='ignore')
+            continue
+        try:
+            return inflated.decode('utf-8', errors='ignore')
+        except UnicodeDecodeError:
+            return inflated.decode('utf-8', errors='ignore')
+    return None
+
+
+def _extract_base64_payload(script_text: str) -> Optional[str]:
+    for pattern in _BASE64_PATTERNS:
+        match = pattern.search(script_text)
+        if not match:
+            continue
+        decoded = _decode_base64_string(match.group('data'))
+        if decoded:
+            return decoded
+
+    # Fallback: try decompressing the longest base64-looking literal inside the script
+    literals = _BASE64_FALLBACK_PATTERN.findall(script_text)
+    for _, candidate in sorted(literals, key=lambda item: len(item[1]), reverse=True):
+        decoded = _decode_base64_string(candidate)
+        if decoded:
+            return decoded
+    return None
 
 
 def _sanitize_content_fragment(raw_html: str) -> str:
@@ -217,6 +247,10 @@ def parse_story_info(html_content: str, base_url: str = "") -> Dict[str, Any]:
     if manga_id_match:
         manga_id = manga_id_match.group('id')
     if not manga_id:
+        rating_input = soup.select_one('input.rating-post-id[value]')
+        if rating_input and rating_input.get('value'):
+            manga_id = rating_input['value']
+    if not manga_id:
         manga_id = post_id
 
     return {
@@ -309,28 +343,59 @@ def parse_chapter_content(html_content: str) -> Optional[Dict[str, Optional[str]
 
     content_html: Optional[str] = None
 
+    def _resolve_payload_from_script(script_tag) -> Optional[str]:
+        if not script_tag:
+            return None
+
+        data_attr = script_tag.get('data-base64')
+        if data_attr:
+            decoded = _decode_base64_string(data_attr)
+            if decoded:
+                return decoded
+
+        script_text = script_tag.string or script_tag.get_text()
+        if script_text:
+            payload_text = _extract_base64_payload(script_text)
+            if payload_text:
+                return payload_text
+        return None
+
     script = soup.select_one('script#decompress-script')
-    if script and script.string:
-        payload = _extract_base64_payload(script.string)
-        if payload:
-            sanitized = _sanitize_content_fragment(payload)
-            if sanitized:
-                lower = sanitized.lower()
-                if '<p' in lower:
-                    content_html = sanitized
-                elif '<br' in lower:
-                    parts = [
-                        segment.strip()
-                        for segment in re.split(r'<br\s*/?>', sanitized)
-                        if segment.strip()
-                    ]
-                    if parts:
-                        content_html = ''.join(f'<p>{part}</p>' for part in parts)
-                else:
-                    normalized = _clean_text_blocks(sanitized)
-                    if normalized:
-                        parts = [line for line in normalized.split('\n') if line.strip()]
-                        content_html = ''.join(f'<p>{part}</p>' for part in parts) or None
+    payload = _resolve_payload_from_script(script)
+
+    if not payload:
+        for candidate in soup.find_all('script'):
+            if candidate is script:
+                continue
+            marker = candidate.string or candidate.get_text()
+            if not marker:
+                continue
+            lowered = marker.lower()
+            if 'base64' not in lowered and 'pako' not in lowered:
+                continue
+            payload = _resolve_payload_from_script(candidate)
+            if payload:
+                break
+
+    if payload:
+        sanitized = _sanitize_content_fragment(payload)
+        if sanitized:
+            lower = sanitized.lower()
+            if '<p' in lower:
+                content_html = sanitized
+            elif '<br' in lower:
+                parts = [
+                    segment.strip()
+                    for segment in re.split(r'<br\s*/?>', sanitized)
+                    if segment.strip()
+                ]
+                if parts:
+                    content_html = ''.join(f'<p>{part}</p>' for part in parts)
+            else:
+                normalized = _clean_text_blocks(sanitized)
+                if normalized:
+                    parts = [line for line in normalized.split('\n') if line.strip()]
+                    content_html = ''.join(f'<p>{part}</p>' for part in parts) or None
 
     if not content_html:
         content_div = soup.select_one('#chapter-reading-content')
