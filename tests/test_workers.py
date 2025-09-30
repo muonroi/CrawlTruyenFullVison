@@ -11,7 +11,11 @@ import pytest
 from unittest.mock import AsyncMock, MagicMock
 
 # Import workers after patching
-from workers import crawler_single_missing_chapter, retry_failed_chapters
+from workers import (
+    crawler_missing_chapter,
+    crawler_single_missing_chapter,
+    retry_failed_chapters,
+)
 
 
 @pytest.fixture
@@ -145,6 +149,107 @@ async def test_crawl_single_story_with_dead_chapter(tmp_path, monkeypatch):
     assert len(files) == 1
     # And the crawl function should not have been called because the dead chapter is skipped
     mock_crawl_missing.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_missing_crawler_fetches_genres(monkeypatch, tmp_path):
+    """Ensure the missing crawler queries genres instead of genre stories."""
+
+    site_key = "demo"
+    data_dir = tmp_path / "data"
+    completed_dir = tmp_path / "completed"
+    proxies_dir = tmp_path / "proxies"
+
+    data_dir.mkdir()
+    completed_dir.mkdir()
+    proxies_dir.mkdir()
+
+    monkeypatch.setattr(crawler_missing_chapter, "DATA_FOLDER", str(data_dir))
+    monkeypatch.setattr(crawler_missing_chapter, "COMPLETED_FOLDER", str(completed_dir))
+    monkeypatch.setattr(crawler_missing_chapter, "PROXIES_FOLDER", str(proxies_dir))
+    monkeypatch.setattr(crawler_missing_chapter, "PROXIES_FILE", str(tmp_path / "proxies.txt"))
+    monkeypatch.setattr(crawler_missing_chapter, "BASE_URLS", {site_key: "http://example.com"})
+    monkeypatch.setattr(crawler_missing_chapter, "LOADED_PROXIES", [])
+
+    monkeypatch.setattr(
+        crawler_missing_chapter,
+        "create_proxy_template_if_not_exists",
+        AsyncMock(return_value=None),
+    )
+    monkeypatch.setattr(
+        crawler_missing_chapter, "load_proxies", AsyncMock(return_value=None)
+    )
+    monkeypatch.setattr(
+        crawler_missing_chapter, "initialize_scraper", AsyncMock(return_value=None)
+    )
+    monkeypatch.setattr(
+        crawler_missing_chapter, "cached_get_story_details", AsyncMock(return_value={})
+    )
+    monkeypatch.setattr(
+        crawler_missing_chapter, "cached_get_chapter_list", AsyncMock(return_value=[])
+    )
+    monkeypatch.setattr(
+        crawler_missing_chapter, "get_missing_worker_state_file", lambda sk: str(tmp_path / "state.json")
+    )
+    monkeypatch.setattr(
+        crawler_missing_chapter, "load_crawl_state", AsyncMock(return_value={})
+    )
+    monkeypatch.setattr(crawler_missing_chapter, "count_txt_files", lambda folder: 0)
+    monkeypatch.setattr(crawler_missing_chapter, "count_dead_chapters", lambda folder: 0)
+    monkeypatch.setattr(
+        crawler_missing_chapter, "move_story_to_completed", AsyncMock(return_value=None)
+    )
+    monkeypatch.setattr(
+        crawler_missing_chapter, "get_real_total_chapters", AsyncMock(return_value=0)
+    )
+    monkeypatch.setattr(
+        crawler_missing_chapter, "send_telegram_notify", AsyncMock(return_value=None)
+    )
+    monkeypatch.setattr(
+        crawler_missing_chapter, "get_missing_chapters", lambda folder, chapters: []
+    )
+    monkeypatch.setattr(
+        crawler_missing_chapter,
+        "crawl_missing_chapters_for_story",
+        AsyncMock(return_value=None),
+    )
+    monkeypatch.setattr(
+        crawler_missing_chapter, "smart_delay", AsyncMock(return_value=None)
+    )
+
+    story_dir = data_dir / "demo-story"
+    story_dir.mkdir()
+    metadata = {
+        "title": "Demo Story",
+        "url": "http://example.com/demo-story",
+        "site_key": site_key,
+        "categories": [{"name": "Action"}],
+        "sources": [],
+        "total_chapters_on_site": 0,
+    }
+    (story_dir / "metadata.json").write_text(json.dumps(metadata), encoding="utf-8")
+
+    class DummyAdapter:
+        def __init__(self):
+            self.get_genres_called = False
+
+        async def get_genres(self):
+            self.get_genres_called = True
+            return [{"name": "Action", "url": "http://example.com/genre/action"}]
+
+        async def get_all_stories_from_genre(self, genre_name, genre_url):
+            return []
+
+    adapter = DummyAdapter()
+    monkeypatch.setattr(crawler_missing_chapter, "get_adapter", lambda sk: adapter)
+
+    await crawler_missing_chapter.check_and_crawl_missing_all_stories(
+        adapter=None,
+        home_page_url="http://example.com",
+        site_key=site_key,
+    )
+
+    assert adapter.get_genres_called is True
 
 @pytest.mark.asyncio
 async def test_main_sends_kafka_job(tmp_path, monkeypatch, mock_kafka_producer):
