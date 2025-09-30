@@ -92,6 +92,7 @@ async def crawl_missing_chapters_for_story(
     num_batches=10,
     state_file=None,
     adapter=None,
+    target_indexes: set[int] | None = None,
 ):
     total_chapters = story_data_item.get('total_chapters_on_site', len(chapters))
     retry_count = 0
@@ -106,6 +107,34 @@ async def crawl_missing_chapters_for_story(
         skipped_chapters = {}
 
     normal_rounds = max(0, max_global_retry - 1)
+
+    target_zero_indexes: set[int] | None = None
+    if target_indexes:
+        target_zero_indexes = set()
+        for raw in target_indexes:
+            try:
+                target_zero_indexes.add(int(raw))
+            except (TypeError, ValueError):
+                continue
+
+    def matches_target(idx: int, ch: Dict[str, Any]) -> bool:
+        if target_zero_indexes is None:
+            return True
+
+        candidates = {idx}
+        ch_idx = ch.get("idx")
+        if isinstance(ch_idx, int):
+            candidates.add(ch_idx)
+
+        ch_index = ch.get("index")
+        if isinstance(ch_index, int):
+            candidates.add(ch_index - 1)
+
+        real_num = extract_real_chapter_number(ch.get("title", ""))
+        if isinstance(real_num, int):
+            candidates.add(real_num - 1)
+
+        return any(c in target_zero_indexes for c in candidates)
 
     async def crawl_batch(batch, batch_idx, num_batches_now):
         successful, failed = set(), []
@@ -159,6 +188,8 @@ async def crawl_missing_chapters_for_story(
 
         missing_chapters = []
         for idx, ch in enumerate(chapters):
+            if not matches_target(idx, ch):
+                continue
             fname_only = get_chapter_filename(ch['title'], idx + 1)
             if fail_counts.get(fname_only, 0) >= MAX_CHAPTER_RETRY:
                 continue
@@ -221,6 +252,8 @@ async def crawl_missing_chapters_for_story(
     saved_files = get_saved_chapters_files(story_folder_path)
     final_missing = []
     for idx, ch in enumerate(chapters):
+        if not matches_target(idx, ch):
+            continue
         fname_only = get_chapter_filename(ch['title'], idx + 1)
         if fname_only in skipped_chapters:
             continue
