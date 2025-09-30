@@ -56,6 +56,54 @@ def update_metadata_from_details(metadata: dict, details: dict) -> bool:
     return changed
 
 
+async def refresh_total_chapters_from_web(metadata: dict, metadata_path: str, adapter) -> int:
+    """Ensure metadata.total_chapters_on_site matches the latest number from the web."""
+    if not metadata:
+        return 0
+
+    metadata_changed = False
+
+    # Chuẩn hóa danh sách nguồn để tránh lỗi khi lấy total chương thực tế
+    try:
+        normalized_sources = normalize_source_list(metadata)
+    except Exception as ex:
+        logger.warning(f"[REFRESH] Lỗi khi chuẩn hóa sources cho '{metadata.get('title')}': {ex}")
+        normalized_sources = metadata.get("sources", [])
+
+    if normalized_sources != metadata.get("sources"):
+        metadata["sources"] = normalized_sources
+        metadata_changed = True
+
+    latest_total = metadata.get("total_chapters_on_site") or 0
+
+    try:
+        real_total = await get_real_total_chapters(metadata, adapter)
+    except Exception as ex:  # pragma: no cover - network/adapter issues
+        logger.warning(
+            f"[REFRESH] Không lấy được total chương thực tế cho '{metadata.get('title')}' từ web: {ex}"
+        )
+        real_total = 0
+
+    if real_total and real_total > 0 and real_total != latest_total:
+        logger.info(
+            f"[REFRESH] Cập nhật total_chapters_on_site cho '{metadata.get('title')}' từ {latest_total} -> {real_total}"
+        )
+        metadata["total_chapters_on_site"] = real_total
+        latest_total = real_total
+        metadata_changed = True
+    else:
+        latest_total = max(latest_total, real_total)
+
+    if metadata_changed and metadata_path:
+        try:
+            with open(metadata_path, "w", encoding="utf-8") as f:
+                json.dump(metadata, f, ensure_ascii=False, indent=4)
+        except Exception as ex:
+            logger.warning(f"[REFRESH] Không thể lưu metadata cho '{metadata.get('title')}': {ex}")
+
+    return latest_total or 0
+
+
 def check_and_fix_chapter_filename(story_folder: str, ch: dict, real_num: int, idx: int):
     """
     Nếu tên file hiện tại không khớp với tên dự kiến từ title → rename lại cho đúng.
@@ -354,9 +402,12 @@ async def check_and_crawl_missing_all_stories(adapter, home_page_url, site_key, 
         if not await fix_metadata_with_retry(metadata, metadata_path, story_folder, site_key=site_key, adapter=adapter):
             continue
 
-        total_chapters = metadata.get("total_chapters_on_site") #type:ignore
+        latest_total = await refresh_total_chapters_from_web(metadata, metadata_path, adapter)
+        if not latest_total:
+            latest_total = metadata.get("total_chapters_on_site") or 0
+
         crawled_files = count_txt_files(story_folder)
-        if crawled_files < total_chapters: #type:ignore
+        if crawled_files < latest_total: #type:ignore
             # Trước khi crawl missing, luôn update lại metadata từ web!
             logger.info(f"[RECHECK] Đang cập nhật lại metadata từ web cho '{metadata['title']}' trước khi crawl missing...") #type:ignore
             new_details = await cached_get_story_details(
@@ -366,10 +417,12 @@ async def check_and_crawl_missing_all_stories(adapter, home_page_url, site_key, 
                 with open(metadata_path, "w", encoding="utf-8") as f:
                     json.dump(metadata, f, ensure_ascii=False, indent=4)
                 logger.info(f"[RECHECK] Metadata đã được cập nhật lại từ web!")
-            logger.info(f"[MISSING] '{metadata['title']}' thiếu chương ({crawled_files}/{total_chapters}) -> Đang kiểm tra/crawl bù từ mọi nguồn...") #type:ignore
+            logger.info(f"[MISSING] '{metadata['title']}' thiếu chương ({crawled_files}/{latest_total}) -> Đang kiểm tra/crawl bù từ mọi nguồn...") #type:ignore
 
             # 1. Duyệt qua tất cả sources nếu có
-            source_list = normalize_source_list(metadata)
+            source_list = metadata.get("sources") or []
+            if not source_list:
+                source_list = normalize_source_list(metadata)
 
             for idx, source in enumerate(source_list):
                 logger.info(f"[CRAWL SOURCE {idx+1}/{len(source_list)}] site_key={source['site_key']}, url={source['url']}")
