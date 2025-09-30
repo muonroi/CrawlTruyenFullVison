@@ -4,6 +4,7 @@ from analyze.xtruyen_parse import (
     parse_chapter_content,
     parse_chapter_list,
     parse_genres,
+    parse_story_info,
     parse_story_list,
 )
 
@@ -43,6 +44,17 @@ def test_parse_chapter_list_keeps_natural_order():
     assert chapters, "Expected chapters to be parsed"
     assert chapters[0]["title"].startswith("Chương 1")
     assert chapters[1]["title"].startswith("Chương 2")
+
+
+def test_parse_story_info_detects_chapter_ranges():
+    html = _load_fixture(FIXTURES_DIR / "detail_story.txt")
+    info = parse_story_info(html, "https://xtruyen.vn")
+
+    ranges = info.get("chapter_ranges")
+    assert isinstance(ranges, list) and ranges, "Expected chapter ranges to be captured"
+    assert ranges[0] == {"from": 1, "to": 100}
+    assert ranges[1] == {"from": 101, "to": 200}
+    assert info.get("total_chapters_on_site") == 280
 
 
 def test_parse_chapter_content_decompresses_payload():
