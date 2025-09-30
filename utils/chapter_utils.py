@@ -5,7 +5,7 @@ import json
 import os
 import datetime
 import math
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional
 import re
 import unicodedata
 from bs4 import BeautifulSoup
@@ -19,6 +19,8 @@ from config.config import (
     LOCK,
     get_state_file,
     MAX_CHAPTER_RETRY,
+    MAX_CHAPTERS_PER_STORY,
+    MAX_CHAPTER_PAGES_TO_CRAWL,
 )
 from utils.domain_utils import get_adapter_from_url
 from utils.io_utils import  safe_write_file, safe_write_json
@@ -93,8 +95,51 @@ async def crawl_missing_chapters_for_story(
     state_file=None,
     adapter=None,
     target_indexes: set[int] | None = None,
+    chapter_limit: Optional[int] = None,
 ):
-    total_chapters = story_data_item.get('total_chapters_on_site', len(chapters))
+    chapters = chapters or []
+
+    total_hint = story_data_item.get('total_chapters_on_site')
+    total_hint = total_hint if isinstance(total_hint, int) and total_hint >= 0 else None
+
+    limit_candidates: List[int] = []
+    if chapters:
+        limit_candidates.append(len(chapters))
+    if total_hint:
+        limit_candidates.append(total_hint)
+    if isinstance(chapter_limit, int) and chapter_limit >= 0:
+        limit_candidates.append(chapter_limit)
+    if MAX_CHAPTERS_PER_STORY:
+        limit_candidates.append(MAX_CHAPTERS_PER_STORY)
+
+    if MAX_CHAPTER_PAGES_TO_CRAWL:
+        per_page_hint = None
+        try:
+            if adapter and hasattr(adapter, "get_chapters_per_page_hint"):
+                per_page_hint = int(adapter.get_chapters_per_page_hint())
+        except Exception:
+            per_page_hint = None
+        if not per_page_hint or per_page_hint <= 0:
+            per_page_hint = 100
+        limit_candidates.append(MAX_CHAPTER_PAGES_TO_CRAWL * per_page_hint)
+
+    effective_limit = min(limit_candidates) if limit_candidates else len(chapters)
+    effective_limit = max(0, effective_limit)
+
+    if chapters and effective_limit < len(chapters):
+        logger.info(
+            f"[LIMIT] Chỉ crawl {effective_limit}/{len(chapters)} chương cho '{story_data_item.get('title')}' theo cấu hình."
+        )
+
+    chapters_to_process = chapters[:effective_limit]
+    total_chapters = effective_limit if effective_limit else 0
+
+    if total_chapters == 0:
+        logger.info(
+            f"[LIMIT] Không có chương nào cần crawl cho '{story_data_item.get('title')}' sau khi áp dụng giới hạn."
+        )
+        return 0
+
     retry_count = 0
     max_global_retry = MAX_CHAPTER_RETRY
     fail_counts: Dict[str, int] = {}
@@ -155,7 +200,7 @@ async def crawl_missing_chapters_for_story(
                                 full_path,
                                 fname_only,
                                 "Crawl bu missing",
-                                f"{idx+1}/{len(chapters)}",
+                                f"{idx+1}/{len(chapters_to_process)}",
                                 crawl_state,
                                 successful,
                                 failed,
@@ -187,7 +232,7 @@ async def crawl_missing_chapters_for_story(
             break
 
         missing_chapters = []
-        for idx, ch in enumerate(chapters):
+        for idx, ch in enumerate(chapters_to_process):
             if not matches_target(idx, ch):
                 continue
             fname_only = get_chapter_filename(ch['title'], idx + 1)
@@ -251,7 +296,7 @@ async def crawl_missing_chapters_for_story(
     # --- Final retry for remaining failed chapters ---
     saved_files = get_saved_chapters_files(story_folder_path)
     final_missing = []
-    for idx, ch in enumerate(chapters):
+    for idx, ch in enumerate(chapters_to_process):
         if not matches_target(idx, ch):
             continue
         fname_only = get_chapter_filename(ch['title'], idx + 1)
@@ -311,6 +356,8 @@ async def crawl_missing_chapters_for_story(
     if fail_total >= math.ceil(total_chapters * 2 / 3):
         from utils.skip_manager import mark_story_as_skipped
         mark_story_as_skipped(story_data_item, "too_many_failed_chapters")
+
+    return total_chapters
 
 def clean_header_only_chapter(text: str):
     lines = text.splitlines()
