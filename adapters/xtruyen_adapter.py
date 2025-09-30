@@ -45,12 +45,52 @@ class XTruyenAdapter(BaseSiteAdapter):
         number = int(number_match.group(1)) if number_match else 0
         return number, url
 
+    @staticmethod
+    def _normalize_ranges(raw_ranges: Optional[List[Any]]) -> List[Tuple[int, int]]:
+        normalized: List[Tuple[int, int]] = []
+        if not raw_ranges:
+            return normalized
+        for item in raw_ranges:
+            start: Optional[int] = None
+            end: Optional[int] = None
+            if isinstance(item, dict):
+                start_val = item.get('from')
+                end_val = item.get('to')
+                if isinstance(start_val, int):
+                    start = start_val
+                elif isinstance(start_val, str) and start_val.isdigit():
+                    start = int(start_val)
+                if isinstance(end_val, int):
+                    end = end_val
+                elif isinstance(end_val, str) and end_val.isdigit():
+                    end = int(end_val)
+            elif isinstance(item, (list, tuple)) and len(item) >= 2:
+                start_candidate, end_candidate = item[0], item[1]
+                if isinstance(start_candidate, int):
+                    start = start_candidate
+                elif isinstance(start_candidate, str) and start_candidate.isdigit():
+                    start = int(start_candidate)
+                if isinstance(end_candidate, int):
+                    end = end_candidate
+                elif isinstance(end_candidate, str) and end_candidate.isdigit():
+                    end = int(end_candidate)
+            if start is None:
+                continue
+            if end is None:
+                end = start
+            if end < start:
+                start, end = end, start
+            normalized.append((start, end))
+        normalized.sort()
+        return normalized
+
     async def _fetch_chapters_via_ajax(
         self,
         story_url: str,
         manga_id: Optional[str],
         ajax_nonce: Optional[str],
         total_expected: Optional[int],
+        chapter_ranges: Optional[List[Any]] = None,
     ) -> List[Dict[str, str]]:
         if not manga_id:
             logger.warning(f"[{self.site_key}] Missing manga_id for story {story_url}, cannot load chapters via AJAX.")
@@ -59,7 +99,6 @@ class XTruyenAdapter(BaseSiteAdapter):
         ajax_url = urljoin(self.base_url, '/wp-admin/admin-ajax.php')
         collected: List[Dict[str, str]] = []
         seen_urls: Set[str] = set()
-        start = 1
 
         extra_headers = {'Referer': story_url}
         base_payload: Dict[str, Any] = {
@@ -71,14 +110,29 @@ class XTruyenAdapter(BaseSiteAdapter):
             base_payload.setdefault('security', ajax_nonce)
             base_payload.setdefault('nonce', ajax_nonce)
 
-        while True:
+        ranges = self._normalize_ranges(chapter_ranges)
+        has_custom_ranges = bool(ranges)
+        if not ranges:
+            ranges = []
+            start = 1
+            while True:
+                end = start + self._CHAPTER_LIST_BATCH - 1
+                ranges.append((start, end))
+                if total_expected and end >= total_expected:
+                    break
+                if len(ranges) >= 50:
+                    break
+                start = end + 1
+
+        for start, end in ranges:
+            if total_expected and start > total_expected:
+                continue
+            upper = min(end, total_expected) if total_expected else end
             payload = dict(base_payload)
             payload['from'] = start
-            payload['to'] = start + self._CHAPTER_LIST_BATCH - 1
+            payload['to'] = upper
 
-            logger.debug(
-                f"[{self.site_key}] AJAX chapters request for manga {manga_id}: from={payload['from']} to={payload['to']}"
-            )
+            logger.debug(f"[{self.site_key}] AJAX chapters request for manga {manga_id}: from={start} to={upper}")
 
             response = await make_request(
                 ajax_url,
@@ -115,10 +169,10 @@ class XTruyenAdapter(BaseSiteAdapter):
             if total_expected and len(collected) >= total_expected:
                 break
 
-            if len(new_items) < self._CHAPTER_LIST_BATCH:
+            expected_count = max(upper - start + 1, 0)
+            if not has_custom_ranges and expected_count > 0 and len(new_items) < expected_count:
                 break
 
-            start += self._CHAPTER_LIST_BATCH
             await asyncio.sleep(0.25)
 
         collected.sort(key=self._chapter_sort_key)
@@ -204,6 +258,7 @@ class XTruyenAdapter(BaseSiteAdapter):
                 manga_id=details.get('manga_id'),
                 ajax_nonce=details.get('ajax_nonce'),
                 total_expected=total_expected,
+                chapter_ranges=details.get('chapter_ranges'),
             )
             if ajax_chapters:
                 details['chapters'] = ajax_chapters
@@ -260,6 +315,7 @@ class XTruyenAdapter(BaseSiteAdapter):
                     if isinstance(details.get('total_chapters_on_site'), int)
                     else None
                 ),
+                chapter_ranges=details.get('chapter_ranges'),
             )
             if chapters:
                 details['chapters'] = chapters

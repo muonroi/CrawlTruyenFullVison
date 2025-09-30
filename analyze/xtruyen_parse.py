@@ -173,6 +173,32 @@ def _extract_post_id(body_classes: List[str]) -> Optional[str]:
     return None
 
 
+def _extract_chapter_ranges(soup: BeautifulSoup) -> List[Dict[str, int]]:
+    """Extract chapter ranges from collapsible chapter groups."""
+
+    ranges: List[Dict[str, int]] = []
+    for item in soup.select('ul.version-chap > li.has-child[data-value]'):
+        anchor = item.select_one('a.has-child')
+        label = anchor.get_text(" ", strip=True) if anchor else item.get_text(" ", strip=True)
+        numbers = [int(num) for num in re.findall(r'(?:^|[^0-9])(\d+)(?=[^0-9]|$)', label)]
+        if not numbers:
+            # Fallback: try to parse from data-value attribute
+            value_attr = item.get('data-value', '')
+            numbers = [int(num) for num in re.findall(r'(\d+)', value_attr)]
+        if not numbers:
+            continue
+
+        start = numbers[0]
+        end = numbers[1] if len(numbers) >= 2 else numbers[0]
+        if end < start:
+            start, end = end, start
+
+        if ranges and ranges[-1]['from'] == start and ranges[-1]['to'] == end:
+            continue
+        ranges.append({'from': start, 'to': end})
+    return ranges
+
+
 def parse_story_info(html_content: str, base_url: str = "") -> Dict[str, Any]:
     """Parse story detail page for metadata and inline chapter list."""
     soup = BeautifulSoup(html_content, _DEFAULT_PARSER)
@@ -218,6 +244,10 @@ def parse_story_info(html_content: str, base_url: str = "") -> Dict[str, Any]:
         match = re.search(r'\d+$', last_chapter_str)
         if match:
             total_chapters = int(match.group())
+
+    chapter_ranges = _extract_chapter_ranges(soup)
+    if not total_chapters and chapter_ranges:
+        total_chapters = max(range_item['to'] for range_item in chapter_ranges if range_item['to'])
 
     if total_chapters is None:
         total_chapters = len(chapters) or None
@@ -269,6 +299,7 @@ def parse_story_info(html_content: str, base_url: str = "") -> Dict[str, Any]:
         'rating_count': rating_count,
         'source': source,
         'ajax_nonce': ajax_nonce,
+        'chapter_ranges': chapter_ranges,
     }
 
 
