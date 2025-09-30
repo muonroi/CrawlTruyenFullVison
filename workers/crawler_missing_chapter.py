@@ -23,6 +23,7 @@ from utils.chapter_utils import (
     get_real_total_chapters,
     mark_dead_chapter,
 )
+from utils.batch_utils import smart_delay
 from utils.domain_utils import  get_site_key_from_url, is_url_for_site, resolve_site_key
 from utils.logger import logger
 from utils.io_utils import create_proxy_template_if_not_exists, move_story_to_completed
@@ -139,6 +140,7 @@ async def crawl_missing_until_complete(
             num_batches=num_batches,
             state_file=state_file,
             adapter=adapter,
+            chapters_all=chapters_from_web,
         )
         # Kiểm tra lại sau khi crawl
         missing_chapters = get_missing_chapters(story_folder, chapters_from_web)
@@ -428,6 +430,7 @@ async def check_and_crawl_missing_all_stories(adapter, home_page_url, site_key, 
                         num_batches=num_batches,
                         state_file=state_file,
                         adapter=adapter,
+                        chapters_all=chapters,
                     )
                 ))
         logger.info(f"[NEXT] Kết thúc process cho story: {story_folder}")
@@ -708,36 +711,70 @@ async def crawl_story_with_limit(
     num_batches: int = 10,
     state_file: str = None,  # type: ignore
     adapter=None,
+    chapters_all: list | None = None,
 ):
     await STORY_SEM.acquire()
     try:
-        batches = split_to_batches(missing_chapters, num_batches)
+        chapters_pool = chapters_all or missing_chapters
+        if not chapters_pool:
+            logger.info(f"[SKIP] Không có dữ liệu chương để crawl cho '{metadata.get('title')}'")
+            return
+
+        index_candidates = []
+        for ch in missing_chapters or []:
+            if not isinstance(ch, dict):
+                continue
+            idx = ch.get("idx")
+            if isinstance(idx, int):
+                index_candidates.append(idx)
+                continue
+            real_index = ch.get("index")
+            if isinstance(real_index, int):
+                index_candidates.append(real_index - 1)
+                continue
+
+            title = ch.get("title") or ""
+            real_num = extract_real_chapter_number(title)
+            if isinstance(real_num, int):
+                index_candidates.append(real_num - 1)
+
+        if not index_candidates:
+            index_candidates = list(range(len(chapters_pool)))
+
+        unique_indexes = sorted({idx for idx in index_candidates if isinstance(idx, int) and idx >= 0})
+        if not unique_indexes:
+            logger.info(f"[SKIP] Không tìm được index hợp lệ để crawl missing cho '{metadata.get('title')}'")
+            return
+
+        batch_count = max(1, min(num_batches, len(unique_indexes)))
+        batches = split_to_batches(unique_indexes, batch_count)
+
         for batch_idx, batch in enumerate(batches):
             if not batch:
                 continue
-            logger.info(f"[Batch {batch_idx+1}/{len(batches)}] Crawl {len(batch)} chương")
+            logger.info(f"[Batch {batch_idx+1}/{len(batches)}] Crawl {len(batch)} chương (indexes: {batch})")
             await crawl_missing_with_limit(
                 site_key,
                 session,
-                batch,
+                chapters_pool,
                 metadata,
                 current_category,
                 story_folder,
                 crawl_state,
-                1,
+                target_indexes=set(batch),
                 state_file=state_file,
                 adapter=adapter,
             )
             await smart_delay()
-        # =====================================================
     finally:
         STORY_SEM.release()
     logger.info(f"[DONE-CRAWL-STORY-WITH-LIMIT] {metadata.get('title')}")
 
+
 async def crawl_missing_with_limit(
     site_key: str,
     session,
-    missing_chapters: list,
+    chapters_all: list,
     metadata: dict,
     current_category: dict,
     story_folder: str,
@@ -745,6 +782,7 @@ async def crawl_missing_with_limit(
     num_batches: int = 10,
     state_file: str = None,  # type: ignore
     adapter=None,
+    target_indexes: set[int] | None = None,
 ):
     if not state_file:
         state_file = get_missing_worker_state_file(site_key)
@@ -754,7 +792,7 @@ async def crawl_missing_with_limit(
             crawl_missing_chapters_for_story(
                 site_key,
                 session,
-                missing_chapters,
+                chapters_all,
                 metadata,
                 current_category,
                 story_folder,
@@ -762,6 +800,7 @@ async def crawl_missing_with_limit(
                 num_batches,
                 state_file=state_file,
                 adapter=adapter,
+                target_indexes=target_indexes,
             ),
             timeout=60,
         )
