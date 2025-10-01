@@ -437,11 +437,12 @@ async def process_story_item(
     # 3. Kiểm tra số chương đã crawl thực tế
     files_actual = get_saved_chapters_files(story_global_folder_path)
     raw_total_chapters = details.get("total_chapters_on_site")  # type: ignore
-    total_chapters_on_site = (
+    metadata_total = (
         raw_total_chapters
         if isinstance(raw_total_chapters, int) and raw_total_chapters > 0
         else None
     )
+    total_chapters_on_site = metadata_total
     chapter_limit_config = story_data_item.get("_chapter_limit")
     if isinstance(chapter_limit_config, int) and chapter_limit_config >= 0:
         if total_chapters_on_site is None:
@@ -450,31 +451,62 @@ async def process_story_item(
             total_chapters_on_site = min(total_chapters_on_site, chapter_limit_config)
     story_title = story_data_item["title"]
     story_url = story_data_item["url"]
+    real_total_on_site: Optional[int] = None
+    try:
+        real_total_on_site = await get_real_total_chapters(story_data_item, adapter)
+    except Exception as ex:  # pragma: no cover - network/adapter issues
+        logger.warning(
+            f"[DONE][STORY] Không lấy được tổng chương thực tế trên web cho '{story_title}': {ex}"
+        )
+
+    if (
+        isinstance(real_total_on_site, int)
+        and real_total_on_site > 0
+        and isinstance(chapter_limit_config, int)
+        and chapter_limit_config >= 0
+    ):
+        real_total_on_site = min(real_total_on_site, chapter_limit_config)
+
+    total_candidates_for_check = [
+        value
+        for value in (
+            total_chapters_on_site
+            if isinstance(total_chapters_on_site, int) and total_chapters_on_site > 0
+            else None,
+            real_total_on_site
+            if isinstance(real_total_on_site, int) and real_total_on_site > 0
+            else None,
+        )
+        if value is not None
+    ]
+    expected_total_chapters = (
+        max(total_candidates_for_check) if total_candidates_for_check else None
+    )
     # Lần crawl đầu tiên (metadata vừa tạo file, chưa có file chương nào)
     is_new_crawl = os.path.exists(metadata_file) and (
         files_actual is not None and len(files_actual) == 0
     )
 
-    if total_chapters_on_site:
+    if expected_total_chapters:
         crawled_chapters = len(files_actual)
 
         # Crawl mới hoàn toàn: chỉ log, KHÔNG kiểm tra thiếu chương
         if is_new_crawl:
             logger.info(
-                f"[NEW] Đang crawl mới truyện '{story_title}': {crawled_chapters}/{total_chapters_on_site} chương. Đợi crawl hoàn tất rồi mới kiểm tra thiếu chương."
+                f"[NEW] Đang crawl mới truyện '{story_title}': {crawled_chapters}/{expected_total_chapters} chương. Đợi crawl hoàn tất rồi mới kiểm tra thiếu chương."
             )
         else:
             # (Chỉ kiểm tra thiếu chương nếu KHÔNG phải crawl mới)
-            if crawled_chapters < 0.1 * total_chapters_on_site:
+            if crawled_chapters < 0.1 * expected_total_chapters:
                 logger.error(
-                    f"[ALERT] Parse chương có thể lỗi HTML hoặc bị chặn: {story_title} ({crawled_chapters}/{total_chapters_on_site})"
+                    f"[ALERT] Parse chương có thể lỗi HTML hoặc bị chặn: {story_title} ({crawled_chapters}/{expected_total_chapters})"
                 )
 
-            if crawled_chapters < total_chapters_on_site:
+            if crawled_chapters < expected_total_chapters:
                 # Xác định danh sách file chương bị thiếu
                 expected_files = []
                 chapter_list = details.get("chapter_list", [])  # type: ignore
-                for i in range(total_chapters_on_site):
+                for i in range(expected_total_chapters):
                     if chapter_list and i < len(chapter_list):
                         chapter_title = chapter_list[i].get("title", "untitled")
                     else:
@@ -486,48 +518,26 @@ async def process_story_item(
                     fname for fname in expected_files if fname not in files_actual_set
                 ]
                 logger.error(
-                    f"[BLOCK] Truyện '{story_title}' còn thiếu {total_chapters_on_site - crawled_chapters} chương. Không next!"
+                    f"[BLOCK] Truyện '{story_title}' còn thiếu {expected_total_chapters - crawled_chapters} chương. Không next!"
                 )
                 logger.error(f"[BLOCK] Danh sách file chương thiếu: {missing_files}")
                 await add_missing_story(
-                    story_title, story_url, total_chapters_on_site, crawled_chapters
+                    story_title,
+                    story_url,
+                    expected_total_chapters,
+                    crawled_chapters,
                 )
                 return False
             else:
                 logger.info(
-                    f"Truyện '{story_title}' đã crawl đủ {crawled_chapters}/{total_chapters_on_site} chương."
+                    f"Truyện '{story_title}' đã crawl đủ {crawled_chapters}/{expected_total_chapters} chương."
                 )
 
     # 5. Đánh dấu completed và clear state
     is_complete = False
     # Hoan tat khi so file chuong >= tong so chuong tren site.
     # Khong phu thuoc truong 'status' de tranh khong next du du lieu da day du.
-    metadata_total = details.get("total_chapters_on_site")  # type: ignore
-    real_total_on_site: Optional[int] = None
-    try:
-        real_total_on_site = await get_real_total_chapters(story_data_item, adapter)
-    except Exception as ex:  # pragma: no cover - network/adapter issues
-        logger.warning(
-            f"[DONE][STORY] Không lấy được tổng chương thực tế trên web cho '{story_title}': {ex}"
-        )
-
-    total_candidates = [
-        value
-        for value in (
-            metadata_total if isinstance(metadata_total, int) and metadata_total > 0 else None,
-            real_total_on_site if isinstance(real_total_on_site, int) and real_total_on_site > 0 else None,
-        )
-        if value is not None
-    ]
-
-    total = max(total_candidates) if total_candidates else None
-
-    limit_from_config = story_data_item.get("_chapter_limit")
-    if isinstance(limit_from_config, int) and limit_from_config >= 0:
-        if isinstance(total, int) and total > 0:
-            total = min(total, limit_from_config)
-        else:
-            total = limit_from_config
+    total = expected_total_chapters
 
     if total and (len(files_actual) + count_dead_chapters(story_global_folder_path)) >= total:
         is_complete = True
@@ -557,7 +567,10 @@ async def process_story_item(
             if not url:
                 continue
             chapters = await adapter.get_chapter_list(
-                story_url=url, story_title=story_data_item.get("title"), site_key=site_key, total_chapters=total_chapters_on_site
+                story_url=url,
+                story_title=story_data_item.get("title"),
+                site_key=site_key,
+                total_chapters=expected_total_chapters,
             )
             if chapters and len(chapters) > 0:
                 break
