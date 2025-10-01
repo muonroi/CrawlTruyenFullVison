@@ -112,7 +112,105 @@ is_crawling = False
 GENRE_SEM = asyncio.Semaphore(GENRE_ASYNC_LIMIT)
 STORY_SEM = asyncio.Semaphore(STORY_ASYNC_LIMIT)
 
-    
+
+MISSING_BACKGROUND_INTERVAL_SECONDS = 24 * 60 * 60
+
+
+class MissingBackgroundLoop:
+    """Periodic task that re-checks missing chapters for all stories."""
+
+    def __init__(self, *, interval_seconds: int = MISSING_BACKGROUND_INTERVAL_SECONDS, force_unskip: bool = False) -> None:
+        self._interval = max(1, interval_seconds)
+        self._force_unskip = force_unskip
+        self._stop_event: asyncio.Event = asyncio.Event()
+        self._task: Optional[asyncio.Task[None]] = None
+
+    def start(self) -> None:
+        if self._task and not self._task.done():
+            return
+        self._stop_event.clear()
+        logger.info(
+            "[MISSING][BACKGROUND] Khởi động luồng kiểm tra chương thiếu định kỳ (mỗi %s giây)",
+            self._interval,
+        )
+        self._task = asyncio.create_task(self._run(), name="missing-background-loop")
+
+    def enable_force_unskip(self) -> None:
+        self._force_unskip = True
+
+    async def stop(self) -> None:
+        if not self._task:
+            return
+        logger.info("[MISSING][BACKGROUND] Đang dừng luồng kiểm tra chương thiếu...")
+        self._stop_event.set()
+        try:
+            await self._task
+        finally:
+            self._task = None
+            logger.info("[MISSING][BACKGROUND] Luồng kiểm tra chương thiếu đã dừng.")
+
+    async def _run(self) -> None:
+        try:
+            while not self._stop_event.is_set():
+                try:
+                    await loop_once_multi_sites(force_unskip=self._force_unskip)
+                except Exception as ex:  # pragma: no cover - safety net for background task
+                    logger.exception(
+                        "[MISSING][BACKGROUND] Lỗi khi chạy vòng kiểm tra chương thiếu: %s",
+                        ex,
+                    )
+
+                if self._stop_event.is_set():
+                    break
+
+                try:
+                    await asyncio.wait_for(self._stop_event.wait(), timeout=self._interval)
+                except asyncio.TimeoutError:
+                    continue
+        except asyncio.CancelledError:  # pragma: no cover - defensive cancellation handling
+            logger.info("[MISSING][BACKGROUND] Task bị huỷ.")
+        finally:
+            self._stop_event.clear()
+
+
+_missing_loop_lock = asyncio.Lock()
+_missing_loop: Optional[MissingBackgroundLoop] = None
+_missing_loop_refcount = 0
+
+
+async def start_missing_background_loop(force_unskip: bool = False) -> None:
+    """Ensure the background loop is running. Safe for concurrent callers."""
+
+    global _missing_loop_refcount, _missing_loop
+
+    async with _missing_loop_lock:
+        _missing_loop_refcount += 1
+        if _missing_loop is None:
+            _missing_loop = MissingBackgroundLoop(force_unskip=force_unskip)
+            _missing_loop.start()
+        elif force_unskip:
+            # Nếu đã chạy và có yêu cầu force_unskip mới → cập nhật cờ.
+            _missing_loop.enable_force_unskip()
+
+
+async def stop_missing_background_loop() -> None:
+    """Decrease the reference count and stop the loop when no caller remains."""
+
+    global _missing_loop_refcount, _missing_loop
+
+    loop_to_stop: Optional[MissingBackgroundLoop] = None
+    async with _missing_loop_lock:
+        if _missing_loop_refcount == 0:
+            return
+        _missing_loop_refcount -= 1
+        if _missing_loop_refcount == 0 and _missing_loop is not None:
+            loop_to_stop = _missing_loop
+            _missing_loop = None
+
+    if loop_to_stop is not None:
+        await loop_to_stop.stop()
+
+
 class WorkerSettings:
     def __init__(self, genre_batch_size, genre_async_limit, proxies_file, failed_genres_file, retry_genre_round_limit, retry_sleep_seconds):
         self.genre_batch_size = genre_batch_size
@@ -499,18 +597,33 @@ async def process_story_item(
     is_complete = False
     # Hoan tat khi so file chuong >= tong so chuong tren site.
     # Khong phu thuoc truong 'status' de tranh khong next du du lieu da day du.
-    total = details.get("total_chapters_on_site")  # type: ignore
+    metadata_total = details.get("total_chapters_on_site")  # type: ignore
+    real_total_on_site: Optional[int] = None
+    try:
+        real_total_on_site = await get_real_total_chapters(story_data_item, adapter)
+    except Exception as ex:  # pragma: no cover - network/adapter issues
+        logger.warning(
+            f"[DONE][STORY] Không lấy được tổng chương thực tế trên web cho '{story_title}': {ex}"
+        )
+
+    total_candidates = [
+        value
+        for value in (
+            metadata_total if isinstance(metadata_total, int) and metadata_total > 0 else None,
+            real_total_on_site if isinstance(real_total_on_site, int) and real_total_on_site > 0 else None,
+        )
+        if value is not None
+    ]
+
+    total = max(total_candidates) if total_candidates else None
+
     limit_from_config = story_data_item.get("_chapter_limit")
     if isinstance(limit_from_config, int) and limit_from_config >= 0:
         if isinstance(total, int) and total > 0:
             total = min(total, limit_from_config)
         else:
             total = limit_from_config
-    if not total:
-        try:
-            total = await get_real_total_chapters(story_data_item, adapter)
-        except Exception:
-            pass
+
     if total and (len(files_actual) + count_dead_chapters(story_global_folder_path)) >= total:
         is_complete = True
         try:
@@ -553,10 +666,15 @@ async def process_story_item(
         logger.warning(f"[CHAPTER_META] Lỗi khi export chapter_metadata.json: {ex}")
 
     # 7. Gửi job fallback để kiểm tra lại chương bị thiếu
-    await send_job({
-        "type": "check_missing_chapters",
-        "story_folder_path": story_global_folder_path
-    })
+    if is_complete:
+        await send_job({
+            "type": "check_missing_chapters",
+            "story_folder_path": story_global_folder_path,
+        })
+    else:
+        logger.info(
+            f"[MISSING][SKIP] '{story_title}' chưa đủ chương (txt={len(files_actual)}) nên chưa gửi job kiểm tra missing."
+        )
 
     return is_complete
 
@@ -899,6 +1017,13 @@ async def run_single_site(
     merge_all_missing_workers_to_main(site_key)
     homepage_url, crawl_state = await initialize_and_log_setup_with_state(site_key)
 
+    background_started = False
+    try:
+        await start_missing_background_loop()
+        background_started = True
+    except Exception as ex:  # pragma: no cover - defensive guard
+        logger.error(f"[MISSING][BACKGROUND] Không thể khởi động background loop: {ex}")
+
     settings = WorkerSettings(
         genre_batch_size=int(os.getenv("GENRE_BATCH_SIZE", 3)),
         genre_async_limit=int(os.getenv("GENRE_ASYNC_LIMIT", 3)),
@@ -908,28 +1033,32 @@ async def run_single_site(
         retry_sleep_seconds=int(os.getenv("RETRY_SLEEP_SECONDS", 1800)),
     )
 
-    if crawl_mode == "genres_only":
-        await run_genres(site_key, settings, crawl_state)
-        await retry_failed_genres(
-            get_adapter(site_key), site_key, settings, shuffle_proxies
-        )
-    elif crawl_mode == "missing_only":
-        await crawl_all_missing_stories(site_key, homepage_url)
-    elif crawl_mode == "missing_single":
-        url = next(
-            (arg.split("=")[1] for arg in sys.argv if arg.startswith("--url=")), None
-        )
-        title = next(
-            (arg.split("=")[1] for arg in sys.argv if arg.startswith("--title=")), None
-        )
-        await crawl_single_story_worker(story_url=url, title=title)
-        await crawl_all_missing_stories(site_key, homepage_url)
-    else:
-        await run_genres(site_key, settings, crawl_state)
-        await retry_failed_genres(
-            get_adapter(site_key), site_key, settings, shuffle_proxies
-        )
-        await crawl_all_missing_stories(site_key, homepage_url)
+    try:
+        if crawl_mode == "genres_only":
+            await run_genres(site_key, settings, crawl_state)
+            await retry_failed_genres(
+                get_adapter(site_key), site_key, settings, shuffle_proxies
+            )
+        elif crawl_mode == "missing_only":
+            await crawl_all_missing_stories(site_key, homepage_url)
+        elif crawl_mode == "missing_single":
+            url = next(
+                (arg.split("=")[1] for arg in sys.argv if arg.startswith("--url=")), None
+            )
+            title = next(
+                (arg.split("=")[1] for arg in sys.argv if arg.startswith("--title=")), None
+            )
+            await crawl_single_story_worker(story_url=url, title=title)
+            await crawl_all_missing_stories(site_key, homepage_url)
+        else:
+            await run_genres(site_key, settings, crawl_state)
+            await retry_failed_genres(
+                get_adapter(site_key), site_key, settings, shuffle_proxies
+            )
+            await crawl_all_missing_stories(site_key, homepage_url)
+    finally:
+        if background_started:
+            await stop_missing_background_loop()
 
 
 if __name__ == "__main__":

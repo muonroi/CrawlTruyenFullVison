@@ -263,8 +263,9 @@ async def test_main_sends_kafka_job(tmp_path, monkeypatch, mock_kafka_producer):
     monkeypatch.setattr("main.save_story_metadata_file", AsyncMock())
     monkeypatch.setattr("main.save_crawl_state", AsyncMock())
     monkeypatch.setattr("main.crawl_all_sources_until_full", AsyncMock())
-    monkeypatch.setattr("main.get_saved_chapters_files", MagicMock(return_value=["file1.txt"]))
-    monkeypatch.setattr("main.get_real_total_chapters", AsyncMock(return_value=1))
+    monkeypatch.setattr("main.get_saved_chapters_files", MagicMock(return_value={"file1.txt"}))
+    real_total_mock = AsyncMock(return_value=1)
+    monkeypatch.setattr("main.get_real_total_chapters", real_total_mock)
     monkeypatch.setattr("main.count_dead_chapters", MagicMock(return_value=0))
     monkeypatch.setattr("main.backup_crawl_state", MagicMock())
     monkeypatch.setattr("main.clear_specific_state_keys", AsyncMock())
@@ -275,7 +276,7 @@ async def test_main_sends_kafka_job(tmp_path, monkeypatch, mock_kafka_producer):
 
     # Act
     await process_story_item(
-        session=None, 
+        session=None,
         story_data_item={"title": "Test Story", "url": "http://example.com/story"},
         current_discovery_genre_data={},
         story_global_folder_path=story_folder,
@@ -284,10 +285,26 @@ async def test_main_sends_kafka_job(tmp_path, monkeypatch, mock_kafka_producer):
         site_key="dummy"
     )
 
-    mock_kafka_producer.assert_called_once_with({
+    mock_kafka_producer.assert_awaited_once_with({
         "type": "check_missing_chapters",
         "story_folder_path": story_folder
     })
+
+    # Khi chưa crawl đủ chương so với thực tế → không gửi job
+    mock_kafka_producer.reset_mock()
+    real_total_mock.return_value = 5
+
+    await process_story_item(
+        session=None,
+        story_data_item={"title": "Test Story", "url": "http://example.com/story"},
+        current_discovery_genre_data={},
+        story_global_folder_path=story_folder,
+        crawl_state={},
+        adapter=SimpleNamespace(get_story_details=AsyncMock(return_value={})),
+        site_key="dummy"
+    )
+
+    mock_kafka_producer.assert_not_called()
 
 # Kept original test for main logic, as it's still relevant
 @pytest.mark.asyncio
