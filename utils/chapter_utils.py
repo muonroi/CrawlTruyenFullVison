@@ -640,102 +640,138 @@ async def get_max_page_by_playwright(url, site_key=None):
     return max_page
 
 
-def get_missing_chapters(story_folder: str, chapters: list[dict]) -> list[dict]:
-    """
-    So sanh file txt hien co voi danh sach tu chapter_metadata.json (uu tien),
-    neu khong co thi dung chapters truyen vao (danh sach chapter tu web)
-    """
-    # Uu tien doc tu chapter_metadata.json (neu co)
+def _load_chapter_items(story_folder: str, chapters: list[dict]) -> list[dict]:
+    """Helper that loads chapter metadata from disk if present."""
+
     chapter_meta_path = os.path.join(story_folder, "chapter_metadata.json")
-    chapter_items = None
     if os.path.exists(chapter_meta_path):
-        with open(chapter_meta_path, "r", encoding="utf-8") as f:
-            chapter_items = json.load(f)
-    else:
-        chapter_items = chapters
+        try:
+            with open(chapter_meta_path, "r", encoding="utf-8") as f:
+                data = json.load(f)
+            if isinstance(data, list):
+                return data
+        except Exception:  # pragma: no cover - best effort loading
+            logger.warning(
+                "[MISSING] Không đọc được chapter_metadata.json tại %s, fallback sang dữ liệu crawl.",
+                story_folder,
+            )
+    return chapters or []
 
-    existing_files = {f for f in os.listdir(story_folder) if f.endswith('.txt')}
 
-    # Thu thập các chỉ số, url và tên file thực tế có trên website để nhận diện
-    # những chương bị thiếu ngay từ nguồn (website không có link).
-    available_urls = set()
-    available_indexes = set()
-    available_files = set()
+def _collect_existing_chapter_numbers(story_folder: str) -> set[int]:
+    """Collect the chapter indexes that already exist as .txt files."""
+
+    existing_numbers: set[int] = set()
+    for fname in os.listdir(story_folder):
+        if not fname.endswith(".txt"):
+            continue
+        match = re.match(r"(\d+)", fname)
+        if not match:
+            continue
+        try:
+            existing_numbers.add(int(match.group(1)))
+        except ValueError:
+            continue
+    return existing_numbers
+
+
+def _collect_dead_chapters(story_folder: str) -> tuple[set[str], set[int]]:
+    """Return the URLs and indexes that are marked as dead."""
+
+    dead_urls: set[str] = set()
+    dead_indexes: set[int] = set()
+    dead_path = os.path.join(story_folder, "dead_chapters.json")
+    if not os.path.exists(dead_path):
+        return dead_urls, dead_indexes
+
+    try:
+        with open(dead_path, "r", encoding="utf-8") as f:
+            dead_list = json.load(f)
+        if not isinstance(dead_list, list):
+            return dead_urls, dead_indexes
+    except Exception:  # pragma: no cover - ignore malformed files
+        return dead_urls, dead_indexes
+
+    for item in dead_list:
+        if not isinstance(item, dict):
+            continue
+        url = item.get("url")
+        if url:
+            dead_urls.add(url)
+        idx = item.get("index")
+        if isinstance(idx, int):
+            dead_indexes.add(idx)
+    return dead_urls, dead_indexes
+
+
+def get_missing_chapters(story_folder: str, chapters: list[dict]) -> list[dict]:
+    """Identify chapters that are missing locally based on sequential numbering."""
+
+    chapter_items = _load_chapter_items(story_folder, chapters)
+    if not chapter_items:
+        return []
+
+    existing_numbers = _collect_existing_chapter_numbers(story_folder)
+    dead_urls, dead_indexes = _collect_dead_chapters(story_folder)
+
+    # Thu thập thông tin chương từ dữ liệu nguồn để xác nhận chương hợp lệ.
+    available_by_index: dict[int, dict] = {}
+    available_urls: set[str] = set()
     for idx, ch in enumerate(chapters or []):
         if not isinstance(ch, dict):
             continue
-
         url = ch.get("url")
         if url:
             available_urls.add(url)
-
         title = ch.get("title", "") or ""
         real_num = ch.get("index") if isinstance(ch.get("index"), int) else extract_real_chapter_number(title)
         if not isinstance(real_num, int):
             real_num = idx + 1
+        available_by_index.setdefault(real_num, ch)
 
-        available_indexes.add(real_num)
-        try:
-            expected_name = get_chapter_filename(title, real_num)
-            available_files.add(expected_name)
-        except Exception:
-            # Trong trường hợp hiếm gặp không tạo được tên file, bỏ qua để không
-            # làm gián đoạn logic nhận diện missing.
-            continue
-    # Skip permanently failed (dead) chapters when calculating missing
-    dead_urls = set()
-    dead_indexes = set()
-    dead_path = os.path.join(story_folder, "dead_chapters.json")
-    try:
-        if os.path.exists(dead_path):
-            with open(dead_path, "r", encoding="utf-8") as f:
-                dead_list = json.load(f)
-            for d in dead_list:
-                u = d.get("url")
-                if u:
-                    dead_urls.add(u)
-                idx = d.get("index")
-                if isinstance(idx, int):
-                    dead_indexes.add(int(idx))
-    except Exception:
-        pass
-
-    missing = []
+    missing: list[dict] = []
     for idx, ch in enumerate(chapter_items):
-        # Dung dung ten file quy chuan tu chapter_metadata.json
-        expected_file = ch.get("file")
-        if not expected_file:
-            # fallback neu chapter_metadata chua chuan hoa
-            real_num = ch.get("index", idx+1)
-            title = ch.get("title", "") or ""
-            expected_file = get_chapter_filename(title, real_num)
-        file_path = os.path.join(story_folder, expected_file)
-        ch_url = ch.get("url")
-        ch_index = ch.get("index", idx + 1)
-        if (ch_url and ch_url in dead_urls) or (isinstance(ch_index, int) and ch_index in dead_indexes):
+        if not isinstance(ch, dict):
             continue
-        if expected_file not in existing_files or not os.path.exists(file_path) or os.path.getsize(file_path) == 0:
-            # Nếu chương không xuất hiện trên website (thiếu link/chỉ số) thì
-            # coi như website bị thiếu và bỏ qua khỏi danh sách cần crawl lại.
-            present_on_web = False
-            if ch_url and ch_url in available_urls:
-                present_on_web = True
-            elif isinstance(ch_index, int) and ch_index in available_indexes:
-                present_on_web = True
-            elif expected_file in available_files:
-                present_on_web = True
+        title = ch.get("title", "") or ""
+        real_num = ch.get("index") if isinstance(ch.get("index"), int) else extract_real_chapter_number(title)
+        if not isinstance(real_num, int):
+            real_num = idx + 1
+        if real_num in existing_numbers:
+            continue
 
-            if not present_on_web:
-                logger.debug(
-                    "[MISSING] Bỏ qua chương thiếu trên website: %s (index=%s, url=%s)",
-                    expected_file,
-                    ch_index,
-                    ch_url,
-                )
-                continue
-            # append du thong tin cho crawl lai
-            ch_for_missing = {**ch, "idx": idx}
-            missing.append(ch_for_missing)
+        expected_file = ch.get("file") or get_chapter_filename(title, real_num)
+        file_path = os.path.join(story_folder, expected_file)
+        if os.path.exists(file_path) and os.path.getsize(file_path) > 0:
+            # File tồn tại nhưng prefix sai -> cập nhật existing_numbers để tránh crawl lại.
+            existing_numbers.add(real_num)
+            continue
+
+        ch_url = ch.get("url")
+        if (ch_url and ch_url in dead_urls) or (real_num in dead_indexes):
+            continue
+
+        # Bỏ qua nếu chương thực sự không có trên web.
+        present_on_web = False
+        if ch_url and ch_url in available_urls:
+            present_on_web = True
+        elif real_num in available_by_index:
+            present_on_web = True
+
+        if not present_on_web:
+            logger.debug(
+                "[MISSING] Bỏ qua chương thiếu trên website: %s (index=%s, url=%s)",
+                expected_file,
+                real_num,
+                ch_url,
+            )
+            continue
+
+        ch_for_missing = {**ch, "idx": idx, "index": real_num}
+        missing.append(ch_for_missing)
+
+    # Sắp xếp theo chỉ số thực tế để crawl tuần tự.
+    missing.sort(key=lambda item: item.get("index", 0))
     return missing
 
 
