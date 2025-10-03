@@ -1,16 +1,43 @@
 import os
 import asyncio
 import re
+from typing import Optional
+from urllib.parse import urlparse
+
 from dotenv import load_dotenv
+
 from config.useragent_list import STATIC_USER_AGENTS
 
 # Load env từ .env hoặc hệ thống
 load_dotenv()
 
+def _sanitize_base_url(raw_value: Optional[str], default: str) -> str:
+    """Normalize BASE_URL style inputs to avoid malformed URLs."""
+
+    candidate = (raw_value or default).strip()
+    if not candidate:
+        return default
+
+    # Remove accidental trailing punctuation that can break requests (e.g. '!').
+    candidate = candidate.rstrip("!?#'\"")
+    # Strip trailing slashes while keeping scheme separators intact.
+    candidate = candidate.rstrip("/ \t\n\r")
+
+    if not candidate:
+        return default
+
+    parsed = urlparse(candidate)
+    if not parsed.scheme:
+        # Fall back to default if the provided value is missing a scheme.
+        return default
+
+    return candidate
+
+
 # ============ BASE URLs ============
 BASE_URLS = {
-    "xtruyen": os.getenv("BASE_XTRUYEN", "https://xtruyen.vn"),
-    "tangthuvien": os.getenv("BASE_TANGTHUVIEN", "https://tangthuvien.net"),
+    "xtruyen": _sanitize_base_url(os.getenv("BASE_XTRUYEN"), "https://xtruyen.vn"),
+    "tangthuvien": _sanitize_base_url(os.getenv("BASE_TANGTHUVIEN"), "https://tangthuvien.net"),
 }
 
 # Allow restricting the active crawl sites via environment variable.
