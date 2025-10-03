@@ -38,6 +38,20 @@ def test_parse_story_list_extracts_rows():
     assert max_pages >= 1
 
 
+def test_parse_story_list_handles_card_layout():
+    html = _load("genre_modern.html")
+    stories, max_pages = parse_story_list(html, "https://tangthuvien.net")
+
+    assert len(stories) == 2
+    assert stories[0]["title"] == "Linh Giới Chi Lữ"
+    assert stories[0]["latest_chapter"] == "Chương 12"
+    assert stories[0]["author"] == "Tác Giả Một"
+    assert stories[1]["title"] == "Kiếm Hiệp Truyện"
+    assert stories[1]["latest_chapter"] == "Chương 45"
+    assert stories[1]["author"] == "Tác Giả Hai"
+    assert max_pages == 3
+
+
 def test_parse_story_info_captures_metadata():
     html = _load("detail_story.txt")
     info = parse_story_info(html, "https://tangthuvien.net")

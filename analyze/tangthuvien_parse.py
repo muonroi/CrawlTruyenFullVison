@@ -47,22 +47,49 @@ def parse_story_list(html_content: str, base_url: str) -> Tuple[List[Dict[str, s
     stories: List[Dict[str, str]] = []
     seen: set[str] = set()
 
-    for row in soup.select("div.update-list table tbody tr"):
-        title_tag = row.select_one("a.name[href]")
+    def _extract_story_from_container(container) -> Optional[Dict[str, str]]:
+        title_tag = None
+        for selector in (
+            "a.name[href]",
+            "a.book-name[href]",
+            "a.bookTitle[href]",
+            "h3 a[href]",
+            "h4 a[href]",
+            "a[href]",
+        ):
+            candidate = container.select_one(selector)
+            if not candidate:
+                continue
+            href_value = candidate.get("href") or ""
+            if "/chuong-" in href_value.lower():
+                continue
+            title_tag = candidate
+            break
+
         if not title_tag:
-            continue
+            return None
+
         title = _normalize_text(html.unescape(title_tag.get_text(" ", strip=True)))
         href = title_tag.get("href")
         if not title or not href:
-            continue
+            return None
         url = urljoin(base_url, href)
         if url in seen:
-            continue
-        seen.add(url)
+            return None
 
         story: Dict[str, str] = {"title": title, "url": url}
 
-        latest_tag = row.select_one("a.section[href]")
+        latest_tag = None
+        for selector in ("a.section[href]", "a.chapter[href]", "a[href]"):
+            candidate = container.select_one(selector)
+            if not candidate:
+                continue
+            href_value = (candidate.get("href") or "").lower()
+            if "/chuong-" not in href_value:
+                continue
+            latest_tag = candidate
+            break
+
         if latest_tag:
             story["latest_chapter"] = _normalize_text(
                 html.unescape(latest_tag.get_text(" ", strip=True))
@@ -70,28 +97,42 @@ def parse_story_list(html_content: str, base_url: str) -> Tuple[List[Dict[str, s
             latest_href = latest_tag.get("href") or ""
             story["latest_chapter_url"] = urljoin(base_url, latest_href)
 
-        author_tag = row.select_one("a.author")
-        if author_tag:
-            story["author"] = _normalize_text(
-                html.unescape(author_tag.get_text(" ", strip=True))
-            )
+        author_tag = None
+        for selector in ("a.author", "a.writer", "span.author", "p.author a", "p.author"):
+            candidate = container.select_one(selector)
+            if not candidate:
+                continue
+            author_text = _normalize_text(html.unescape(candidate.get_text(" ", strip=True)))
+            if author_text:
+                author_tag = author_text
+                break
 
-        stories.append(story)
+        if author_tag:
+            story["author"] = author_tag
+
+        seen.add(url)
+        return story
+
+    for row in soup.select("div.update-list table tbody tr"):
+        story = _extract_story_from_container(row)
+        if story:
+            stories.append(story)
 
     if not stories:
-        for item in soup.select("div.book-list li"):
-            anchor = item.select_one("a[href]")
-            if not anchor:
+        for item in soup.select("div.update-list div.book-wrap, div.update-list li, div.book-list li, div.update-list div.story-card"):
+            story = _extract_story_from_container(item)
+            if story:
+                stories.append(story)
+
+    if not stories:
+        container = soup.select_one("div.update-list") or soup
+        for anchor in container.select("a[href*='/doc-truyen/']"):
+            href = anchor.get("href") or ""
+            if not href or "/chuong-" in href.lower():
                 continue
-            title = _normalize_text(html.unescape(anchor.get_text(" ", strip=True)))
-            href = anchor.get("href")
-            if not title or not href:
-                continue
-            url = urljoin(base_url, href)
-            if url in seen:
-                continue
-            seen.add(url)
-            stories.append({"title": title, "url": url})
+            parent_story = _extract_story_from_container(anchor.parent or container)
+            if parent_story:
+                stories.append(parent_story)
 
     max_page = 1
     for anchor in soup.select("a[href*='page=']"):
@@ -107,6 +148,11 @@ def parse_story_list(html_content: str, base_url: str) -> Tuple[List[Dict[str, s
         value = option.get("value")
         if value and value.isdigit():
             max_page = max(max_page, int(value))
+
+    for element in soup.select("[data-page]"):
+        data_page = element.get("data-page")
+        if data_page and data_page.isdigit():
+            max_page = max(max_page, int(data_page))
 
     return stories, max_page
 
