@@ -73,3 +73,82 @@ def test_get_missing_chapters_skip_when_source_missing(tmp_path):
     # Không nên cố crawl lại chương 2 vì website không có link/chương này
     assert missing == []
 
+
+def test_get_missing_chapters_detects_offset(tmp_path):
+    story_folder = tmp_path / "story"
+    story_folder.mkdir()
+
+    metadata = [
+        {
+            "index": 1,
+            "title": "Chương 1: Start",
+            "url": "https://a/1",
+            "file": chapter_utils.get_chapter_filename("Chương 1: Start", 1),
+        },
+        {
+            "index": 2,
+            "title": "Chương 2: Middle",
+            "url": "https://a/2",
+            "file": chapter_utils.get_chapter_filename("Chương 2: Middle", 2),
+        },
+        {
+            "index": 3,
+            "title": "Chương 3: End",
+            "url": "https://a/3",
+            "file": chapter_utils.get_chapter_filename("Chương 3: End", 3),
+        },
+    ]
+
+    meta_path = story_folder / "chapter_metadata.json"
+    with open(meta_path, "w", encoding="utf-8") as f:
+        json.dump(metadata, f, ensure_ascii=False, indent=2)
+
+    # Đã có chương 1 và 2 ở local
+    for item in metadata[:2]:
+        with open(story_folder / item["file"], "w", encoding="utf-8") as f:
+            f.write("content")
+
+    chapters_from_web = [
+        {"title": "Chương 2: Start", "url": "https://b/2"},
+        {"title": "Chương 3: Middle", "url": "https://b/3"},
+        {"title": "Chương 4: End", "url": "https://b/4"},
+    ]
+
+    missing = chapter_utils.get_missing_chapters(str(story_folder), chapters_from_web)
+
+    assert [m["index"] for m in missing] == [3]
+    assert chapters_from_web[-1]["aligned_index"] == 3
+
+
+def test_get_missing_chapters_skip_inconsistent_source(tmp_path, caplog):
+    story_folder = tmp_path / "story"
+    story_folder.mkdir()
+
+    metadata = [
+        {
+            "index": 1,
+            "title": "Chương 1: Start",
+            "url": "https://a/1",
+            "file": chapter_utils.get_chapter_filename("Chương 1: Start", 1),
+        },
+    ]
+
+    meta_path = story_folder / "chapter_metadata.json"
+    with open(meta_path, "w", encoding="utf-8") as f:
+        json.dump(metadata, f, ensure_ascii=False, indent=2)
+
+    # Có sẵn chương 1
+    with open(story_folder / metadata[0]["file"], "w", encoding="utf-8") as f:
+        f.write("content")
+
+    inconsistent = [
+        {"title": "Chương 10: Completely Different", "url": "https://b/10"},
+        {"title": "Chương 11: Wrong", "url": "https://b/11"},
+    ]
+
+    with caplog.at_level("WARNING"):
+        missing = chapter_utils.get_missing_chapters(str(story_folder), inconsistent)
+
+    assert missing == []
+    assert any("[MISMATCH]" in record.message for record in caplog.records)
+

@@ -165,7 +165,13 @@ async def crawl_missing_until_complete(
         missing_chapters = get_missing_chapters(story_folder, chapters_from_web)
         for ch in chapters_from_web:
             title = ch.get('title', '') or ''
-            real_num = extract_real_chapter_number(title) or (ch.get('idx', 0) + 1)
+            aligned = ch.get('aligned_index')
+            if isinstance(aligned, int):
+                real_num = aligned
+            else:
+                real_num = extract_real_chapter_number(title)
+                if not isinstance(real_num, int):
+                    real_num = ch.get('idx', 0) + 1
             check_and_fix_chapter_filename(story_folder, ch, real_num, ch.get('idx', 0))
 
         if not missing_chapters:
@@ -787,7 +793,10 @@ async def crawl_story_with_limit(
                 continue
 
             title = ch.get("title") or ""
-            real_num = extract_real_chapter_number(title)
+            if isinstance(ch.get("aligned_index"), int):
+                real_num = ch["aligned_index"]
+            else:
+                real_num = extract_real_chapter_number(title)
             if isinstance(real_num, int):
                 index_candidates.append(real_num - 1)
 
