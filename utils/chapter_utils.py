@@ -704,6 +704,93 @@ def _collect_dead_chapters(story_folder: str) -> tuple[set[str], set[int]]:
     return dead_urls, dead_indexes
 
 
+def _normalize_title_for_matching(title: str) -> str:
+    """Normalize a chapter title so that two variants can be compared reliably."""
+
+    cleaned = remove_title_number(title or "")
+    cleaned = unidecode(cleaned)
+    cleaned = cleaned.lower()
+    cleaned = re.sub(r"[^a-z0-9]+", " ", cleaned)
+    return cleaned.strip()
+
+
+def _resolve_numbering_offset(
+    chapter_items: list[dict],
+    chapters: list[dict],
+    existing_numbers: set[int],
+) -> tuple[int, bool]:
+    """Return the best offset and a flag indicating whether the source should be skipped."""
+
+    canonical_map: dict[str, set[int]] = {}
+    for idx, ch in enumerate(chapter_items or []):
+        if not isinstance(ch, dict):
+            continue
+        title = ch.get("title", "") or ""
+        normalized = _normalize_title_for_matching(title)
+        if not normalized:
+            continue
+        real_num = ch.get("index") if isinstance(ch.get("index"), int) else extract_real_chapter_number(title)
+        if not isinstance(real_num, int):
+            real_num = idx + 1
+        canonical_map.setdefault(normalized, set()).add(real_num)
+
+    if not canonical_map:
+        # Không có dữ liệu chuẩn để so sánh -> không thể tính offset nhưng cũng không cần skip.
+        return 0, False
+
+    offset_counter: dict[int, int] = {}
+    match_count = 0
+
+    for idx, ch in enumerate(chapters or []):
+        if not isinstance(ch, dict):
+            continue
+        title = ch.get("title", "") or ""
+        normalized = _normalize_title_for_matching(title)
+        if not normalized or normalized not in canonical_map:
+            continue
+        real_num = ch.get("index") if isinstance(ch.get("index"), int) else extract_real_chapter_number(title)
+        if not isinstance(real_num, int):
+            real_num = idx + 1
+        match_count += 1
+        for canonical_num in canonical_map[normalized]:
+            offset = canonical_num - real_num
+            offset_counter[offset] = offset_counter.get(offset, 0) + 1
+
+    if not offset_counter:
+        # Không match được title nào. Nếu đã có chương local -> nguồn này nguy hiểm, nên skip.
+        if existing_numbers:
+            return 0, True
+        return 0, False
+
+    best_offset, best_count = max(offset_counter.items(), key=lambda item: item[1])
+    total_matched = sum(offset_counter.values())
+    second_best = max(
+        (count for offset, count in offset_counter.items() if offset != best_offset),
+        default=0,
+    )
+
+    # Đánh giá mức độ tin cậy.
+    confidence = best_count / total_matched if total_matched else 0
+    confident = best_count >= 3 or confidence >= 0.6 or match_count <= 2
+
+    # Nếu có hơn một offset ứng viên và chênh lệch quá nhỏ -> coi như không đáng tin.
+    if best_offset != 0 and second_best and (best_count - second_best) <= 1:
+        confident = False
+
+    if not confident and existing_numbers:
+        return best_offset, True
+
+    return best_offset, False
+
+
+def _adjust_real_number(raw_num: int | None, fallback: int, offset: int) -> int:
+    """Utility to apply offset and ensure positive numbering."""
+
+    real_num = raw_num if isinstance(raw_num, int) else fallback
+    adjusted = real_num + offset
+    return max(1, adjusted)
+
+
 def get_missing_chapters(story_folder: str, chapters: list[dict]) -> list[dict]:
     """Identify chapters that are missing locally based on sequential numbering."""
 
@@ -713,6 +800,15 @@ def get_missing_chapters(story_folder: str, chapters: list[dict]) -> list[dict]:
 
     existing_numbers = _collect_existing_chapter_numbers(story_folder)
     dead_urls, dead_indexes = _collect_dead_chapters(story_folder)
+
+    offset, should_skip = _resolve_numbering_offset(chapter_items, chapters, existing_numbers)
+    if should_skip:
+        logger.warning(
+            "[MISMATCH] Bỏ qua nguồn chương vì số chương không đồng nhất với dữ liệu đã crawl." \
+            " (story=%s)",
+            os.path.basename(story_folder),
+        )
+        return []
 
     # Thu thập thông tin chương từ dữ liệu nguồn để xác nhận chương hợp lệ.
     available_by_index: dict[int, dict] = {}
@@ -724,9 +820,9 @@ def get_missing_chapters(story_folder: str, chapters: list[dict]) -> list[dict]:
         if url:
             available_urls.add(url)
         title = ch.get("title", "") or ""
-        real_num = ch.get("index") if isinstance(ch.get("index"), int) else extract_real_chapter_number(title)
-        if not isinstance(real_num, int):
-            real_num = idx + 1
+        raw_num = ch.get("index") if isinstance(ch.get("index"), int) else extract_real_chapter_number(title)
+        real_num = _adjust_real_number(raw_num, idx + 1, offset)
+        ch["aligned_index"] = real_num
         available_by_index.setdefault(real_num, ch)
 
     missing: list[dict] = []
@@ -734,9 +830,8 @@ def get_missing_chapters(story_folder: str, chapters: list[dict]) -> list[dict]:
         if not isinstance(ch, dict):
             continue
         title = ch.get("title", "") or ""
-        real_num = ch.get("index") if isinstance(ch.get("index"), int) else extract_real_chapter_number(title)
-        if not isinstance(real_num, int):
-            real_num = idx + 1
+        raw_num = ch.get("index") if isinstance(ch.get("index"), int) else extract_real_chapter_number(title)
+        real_num = _adjust_real_number(raw_num, idx + 1, 0)
         if real_num in existing_numbers:
             continue
 
@@ -767,7 +862,7 @@ def get_missing_chapters(story_folder: str, chapters: list[dict]) -> list[dict]:
             )
             continue
 
-        ch_for_missing = {**ch, "idx": idx, "index": real_num}
+        ch_for_missing = {**ch, "idx": idx, "index": real_num, "real_num": real_num}
         missing.append(ch_for_missing)
 
     # Sắp xếp theo chỉ số thực tế để crawl tuần tự.
