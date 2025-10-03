@@ -37,6 +37,22 @@ STORY_SEM = asyncio.Semaphore(MAX_CONCURRENT_STORIES)
 MISSING_SUMMARY_LOG = "missing_summary.log"
 MAX_SOURCE_TIMEOUT_RETRY = 3
 
+DEFAULT_MISSING_TIMEOUT = int(os.getenv("MISSING_CRAWL_TIMEOUT_SECONDS", "60"))
+MISSING_TIMEOUT_PER_CHAPTER = float(os.getenv("MISSING_CRAWL_TIMEOUT_PER_CHAPTER", "4"))
+MAX_MISSING_TIMEOUT = int(os.getenv("MISSING_CRAWL_TIMEOUT_MAX", "900"))
+
+
+def calculate_missing_crawl_timeout(num_chapters: int | None = None) -> float:
+    """Return a dynamic timeout for crawling missing chapters."""
+
+    base_timeout = max(1, DEFAULT_MISSING_TIMEOUT)
+    if not num_chapters or num_chapters <= 0:
+        return base_timeout
+
+    dynamic_timeout = base_timeout + num_chapters * MISSING_TIMEOUT_PER_CHAPTER
+    # Avoid unbounded waits but allow large stories more time to finish.
+    return max(base_timeout, min(MAX_MISSING_TIMEOUT, dynamic_timeout))
+
 def get_existing_real_chapter_numbers(story_folder):
     files = [f for f in os.listdir(story_folder) if f.endswith('.txt')]
     nums = set()
@@ -1011,6 +1027,8 @@ async def crawl_missing_with_limit(
     if not state_file:
         state_file = get_missing_worker_state_file(site_key)
     logger.info(f"[START] Crawl missing for {metadata['title']} ...")
+    num_targets = len(target_indexes) if target_indexes else len(chapters_all or [])
+    timeout_seconds = calculate_missing_crawl_timeout(num_targets)
     async with SEM:
         result = await asyncio.wait_for(
             crawl_missing_chapters_for_story(
@@ -1026,8 +1044,10 @@ async def crawl_missing_with_limit(
                 adapter=adapter,
                 target_indexes=target_indexes,
             ),
-            timeout=60,
+            timeout=timeout_seconds,
         )
-    logger.info(f"[DONE] Crawl missing for {metadata['title']} ...")
+    logger.info(
+        f"[DONE] Crawl missing for {metadata['title']} (timeout={timeout_seconds:.0f}s, targets={num_targets}) ..."
+    )
     return result
   
