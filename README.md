@@ -120,6 +120,26 @@ pip install -r requirements-dev.txt
 pytest
 ```
 
+## 🔄 Quy trình crawl đa nguồn an toàn
+
+Để đảm bảo dữ liệu chương luôn toàn vẹn khi một truyện có nhiều nguồn, hệ thống
+áp dụng cơ chế **Nguồn Chuẩn** (Primary Source) cùng worker sửa chương thiếu
+riêng biệt:
+
+1. **Nguồn Chuẩn:** URL đầu tiên trong danh sách `sources` của metadata truyện
+   được xem là nguồn tham chiếu chính.
+2. **Crawl tiêu chuẩn:** Tại mọi thời điểm chỉ có duy nhất một worker được crawl
+   một truyện. Nếu một worker đang xử lý Truyện A từ nguồn X thì các worker khác
+   sẽ được phân công truyện khác, tránh hoàn toàn việc trộn dữ liệu.
+3. **Sửa chương thiếu (fallback):** Khi phát hiện truyện thiếu chương ở nguồn
+   phụ, worker sửa lỗi sẽ ưu tiên crawl bổ sung từ Nguồn Chuẩn. Nếu chương vẫn
+   chưa có, worker tiếp tục dò lần lượt các nguồn còn lại trong `sources` cho
+   tới khi tìm thấy hoặc xác nhận thiếu vắng.
+
+Cách làm này giúp tránh xung đột giữa các worker đồng thời sử dụng Nguồn Chuẩn
+như “chân lý” để lấp đầy các khoảng trống, đảm bảo bộ truyện nhất quán nhất
+có thể.
+
 **Liên hệ & Hỗ trợ**
 **Author**: `muonroi`
 
