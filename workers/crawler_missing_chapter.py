@@ -24,7 +24,7 @@ from utils.chapter_utils import (
     mark_dead_chapter,
 )
 from utils.batch_utils import smart_delay
-from utils.domain_utils import  get_site_key_from_url, is_url_for_site, resolve_site_key
+from utils.domain_utils import get_site_key_from_url, is_url_for_site
 from utils.logger import logger
 from utils.io_utils import create_proxy_template_if_not_exists, move_story_to_completed
 from utils.notifier import send_telegram_notify
@@ -246,36 +246,109 @@ def autofix_category(metadata):
 
 
 def normalize_source_list(metadata):
-    source_list = []
-    source_seen = set()
-    for src in metadata.get("sources", []):
-        if isinstance(src, dict):
-            url = src.get("url")
-            site_key = src.get("site_key") or src.get("site") or get_site_key_from_url(url) or metadata.get("site_key")
-        elif isinstance(src, str):
-            url = src
+    """Chuẩn hoá danh sách nguồn và gắn cờ nguồn chuẩn."""
+
+    normalized: list[dict] = []
+    seen: set[tuple[str, str]] = set()
+    primary_key: tuple[str, str] | None = None
+
+    raw_sources = metadata.get("sources", []) or []
+    for raw in raw_sources:
+        if isinstance(raw, dict):
+            url = raw.get("url")
+            site_key = (
+                raw.get("site_key")
+                or raw.get("site")
+                or get_site_key_from_url(url)
+                or metadata.get("site_key")
+            )
+            entry = dict(raw)
+        elif isinstance(raw, str):
+            url = raw
             site_key = get_site_key_from_url(url) or metadata.get("site_key")
+            entry = {"url": url}
         else:
             continue
 
         if not url or not site_key:
             continue
         if not is_url_for_site(url, site_key):
-            continue  # ⚠️ Bỏ những cặp sai domain
-        if (url, site_key) in source_seen:
             continue
 
-        source_list.append({"url": url, "site_key": site_key})
-        source_seen.add((url, site_key))
+        key = (url, site_key)
+        if key in seen:
+            continue
 
-    # Ưu tiên thêm url chính nếu chưa có
-    main_url = metadata.get("url") 
-    main_key = metadata.get("site_key")
+        entry["url"] = url
+        entry["site_key"] = site_key
+        normalized.append(entry)
+        seen.add(key)
+
+        if primary_key is None:
+            primary_key = key
+
+    main_url = metadata.get("url")
+    main_key = metadata.get("site_key") or get_site_key_from_url(main_url)
     if main_url and main_key and is_url_for_site(main_url, main_key):
-        if (main_url, main_key) not in source_seen:
-            source_list.insert(0, {"url": main_url, "site_key": main_key})
-            source_seen.add((main_url, main_key))
-    return source_list
+        key = (main_url, main_key)
+        if key not in seen:
+            normalized.append({"url": main_url, "site_key": main_key})
+            seen.add(key)
+        if primary_key is None:
+            primary_key = key
+
+    if not normalized:
+        return normalized
+
+    primary_sources: list[dict] = []
+    fallback_sources: list[dict] = []
+    for entry in normalized:
+        entry_copy = dict(entry)
+        key = (entry_copy.get("url"), entry_copy.get("site_key"))
+        is_primary = primary_key is not None and key == primary_key
+        entry_copy["is_primary"] = is_primary
+        if is_primary:
+            primary_sources.append(entry_copy)
+        else:
+            fallback_sources.append(entry_copy)
+
+    return primary_sources + fallback_sources
+
+
+def ensure_primary_source(metadata: dict, metadata_path: str | None = None) -> tuple[list[dict], dict | None]:
+    """Normalize sources, persist them, và đảm bảo site_key trỏ về Nguồn Chuẩn."""
+
+    try:
+        source_list = normalize_source_list(metadata)
+    except Exception as ex:  # pragma: no cover - defensive guard
+        logger.warning(
+            f"[SOURCE] Lỗi khi chuẩn hoá sources của '{metadata.get('title')}': {ex}"
+        )
+        source_list = metadata.get("sources", []) or []
+
+    primary_source = next((src for src in source_list if src.get("is_primary")), None)
+
+    changed = False
+    if source_list and metadata.get("sources") != source_list:
+        metadata["sources"] = source_list
+        changed = True
+
+    if primary_source:
+        primary_site_key = primary_source.get("site_key")
+        if primary_site_key and metadata.get("site_key") != primary_site_key:
+            metadata["site_key"] = primary_site_key
+            changed = True
+
+    if changed and metadata_path:
+        try:
+            with open(metadata_path, "w", encoding="utf-8") as f:
+                json.dump(metadata, f, ensure_ascii=False, indent=4)
+        except Exception as ex:  # pragma: no cover - IO guard
+            logger.warning(
+                f"[SOURCE] Không thể lưu metadata sau khi cập nhật nguồn cho '{metadata.get('title')}': {ex}"
+            )
+
+    return source_list, primary_source
 
 
 async def check_and_crawl_missing_all_stories(adapter, home_page_url, site_key, force_unskip=False):
@@ -301,9 +374,8 @@ async def check_and_crawl_missing_all_stories(adapter, home_page_url, site_key, 
         for f in os.listdir(DATA_FOLDER)
         if os.path.isdir(os.path.join(DATA_FOLDER, cast(str, f)))
     ]
-    tasks = []
 
-    # ============ 1. Tạo tasks crawl missing ============
+    # ============ 1. Kiểm tra và crawl thiếu theo từng truyện ============
     for story_folder in story_folders:
         metadata_path = os.path.join(story_folder, "metadata.json")
         if not os.path.exists(metadata_path):
@@ -311,8 +383,12 @@ async def check_and_crawl_missing_all_stories(adapter, home_page_url, site_key, 
         with open(metadata_path, "r", encoding="utf-8") as f:
             metadata = json.load(f)
 
+        source_list, primary_source = ensure_primary_source(metadata, metadata_path)
+
         if site_key != metadata.get("site_key"):
-            logger.debug(f"[SKIP] '{metadata.get('title')}' không có yy, chỉ crawl site gốc {metadata.get('site_key')}.")
+            logger.debug(
+                f"[SKIP] '{metadata.get('title')}' thuộc nguồn chuẩn {metadata.get('site_key')} – bỏ qua tại worker {site_key}."
+            )
             continue
         need_autofix = False
         metadata = None
@@ -359,13 +435,22 @@ async def check_and_crawl_missing_all_stories(adapter, home_page_url, site_key, 
             fixed_sources = []
             for src in metadata.get("sources", []):
                 s_url = src.get("url") if isinstance(src, dict) else src
-                s_key = get_site_key_from_url(s_url) or (src.get("site_key") if isinstance(src, dict) else None) or (src.get("site") if isinstance(src, dict) else None) or metadata.get("site_key")
+                s_key = (
+                    get_site_key_from_url(s_url)
+                    or (src.get("site_key") if isinstance(src, dict) else None)
+                    or (src.get("site") if isinstance(src, dict) else None)
+                    or metadata.get("site_key")
+                )
                 if s_url and s_key and is_url_for_site(s_url, s_key):
                     fixed_sources.append(src)
                 else:
-                    logger.warning(f"[FIX] Source có url {s_url} không đúng domain với key {s_key}, đã loại khỏi sources.")
+                    logger.warning(
+                        f"[FIX] Source có url {s_url} không đúng domain với key {s_key}, đã loại khỏi sources."
+                    )
             metadata["sources"] = fixed_sources
             # --------------------------------------
+
+            source_list, primary_source = ensure_primary_source(metadata, metadata_path)
 
             # Validate cấu trúc sources và các trường bắt buộc
             if not isinstance(metadata.get("sources", []), list):
@@ -385,6 +470,8 @@ async def check_and_crawl_missing_all_stories(adapter, home_page_url, site_key, 
                 logger.error(f"Lỗi xóa metadata lỗi: {ex}")
             metadata = autofix_metadata(story_folder, site_key)
             auto_fixed_titles.append(metadata["title"])
+
+        source_list, primary_source = ensure_primary_source(metadata, metadata_path)
 
         # Nếu force_unskip: Xoá skip_crawl & meta_retry_count nếu có
         if force_unskip:
@@ -414,114 +501,143 @@ async def check_and_crawl_missing_all_stories(adapter, home_page_url, site_key, 
 
         crawled_files = count_txt_files(story_folder)
         if crawled_files < latest_total: #type:ignore
-            logger.info(f"[MISSING] '{metadata['title']}' thiếu chương ({crawled_files}/{latest_total}) -> Đang kiểm tra/crawl bù từ mọi nguồn...") #type:ignore
+            logger.info(
+                f"[MISSING] '{metadata['title']}' thiếu chương ({crawled_files}/{latest_total}) -> Đang kiểm tra/crawl bù theo nguồn chuẩn trước."
+            )
 
-            # 1. Lấy danh sách nguồn đã được sắp xếp ưu tiên
-            source_list = normalize_source_list(metadata)
             if not source_list:
                 logger.error(f"Không có nguồn nào hợp lệ cho truyện '{metadata['title']}'. Bỏ qua.")
                 continue
 
-            # 2. Lấy danh sách chương chuẩn từ nguồn ưu tiên cao nhất
-            canonical_chapters = None
-            for source in source_list:
-                url = source.get("url")
-                src_site_key = source.get("site_key")
-                adapter = get_adapter(src_site_key)
-                try:
-                    logger.info(f"Đang lấy danh sách chương chuẩn từ nguồn ưu tiên: {src_site_key}")
-                    canonical_chapters = await cached_get_chapter_list(
-                        adapter, url, metadata['title'], src_site_key,
-                        total_chapters=metadata.get("total_chapters_on_site"),
-                    )
-                    if canonical_chapters:
-                        logger.info(f"Lấy được {len(canonical_chapters)} chương chuẩn từ {src_site_key}.")
-                        export_chapter_metadata_sync(story_folder, canonical_chapters)
-                        break 
-                except Exception as ex:
-                    logger.warning(f"Lỗi khi lấy chương chuẩn từ {src_site_key}: {ex}. Thử nguồn tiếp theo.")
-            
-            if not canonical_chapters:
-                logger.error(f"Không thể lấy danh sách chương từ bất kỳ nguồn nào cho '{metadata['title']}'. Bỏ qua.")
-                continue
+            primary_source = next((src for src in source_list if src.get("is_primary")), source_list[0]) if source_list else None
+            fallback_sources = [src for src in source_list if src is not primary_source]
+            ordered_sources = [primary_source] + fallback_sources if primary_source else source_list
 
-            # 3. Lặp qua tất cả các nguồn để crawl chương còn thiếu
-            for idx, source in enumerate(source_list):
+            canonical_chapters = None
+            canonical_source = None
+            for source in ordered_sources:
                 url = source.get("url")
                 src_site_key = source.get("site_key")
                 if not src_site_key or not url:
                     continue
-                
-                logger.info(f"[CRAWL SOURCE {idx+1}/{len(source_list)}] site_key={src_site_key}, url={url}")
+
                 adapter = get_adapter(src_site_key)
-                
                 try:
-                    # Lấy danh sách chương từ nguồn hiện tại để so sánh
-                    chapters_from_source = await cached_get_chapter_list(
-                        adapter, url, metadata['title'], src_site_key,
+                    if source.get("is_primary"):
+                        logger.info(
+                            f"Đang lấy danh sách chương chuẩn từ Nguồn Chuẩn ({src_site_key})."
+                        )
+                    else:
+                        logger.info(
+                            f"Nguồn Chuẩn không khả dụng, thử lấy danh sách chương chuẩn từ nguồn dự phòng: {src_site_key}."
+                        )
+                    chapters = await cached_get_chapter_list(
+                        adapter,
+                        url,
+                        metadata['title'],
+                        src_site_key,
                         total_chapters=metadata.get("total_chapters_on_site"),
                     )
+                    if chapters:
+                        canonical_chapters = chapters
+                        canonical_source = source
+                        export_chapter_metadata_sync(story_folder, canonical_chapters)
+                        logger.info(
+                            f"Lấy được {len(canonical_chapters)} chương chuẩn từ nguồn {src_site_key}."
+                        )
+                        break
+                except Exception as ex:
+                    logger.warning(
+                        f"Lỗi khi lấy chương chuẩn từ nguồn {src_site_key}: {ex}. Thử nguồn tiếp theo."
+                    )
+
+            if not canonical_chapters:
+                logger.error(
+                    f"Không thể lấy danh sách chương từ bất kỳ nguồn nào cho '{metadata['title']}'. Bỏ qua."
+                )
+                continue
+
+            canonical_site_key = canonical_source.get("site_key") if canonical_source else None
+
+            def remaining_missing() -> list[dict]:
+                if not canonical_chapters or not canonical_site_key:
+                    return []
+                return get_missing_chapters(story_folder, canonical_chapters, canonical_site_key)
+
+            current_category = get_current_category(metadata)
+
+            for idx, source in enumerate(ordered_sources, start=1):
+                url = source.get("url")
+                src_site_key = source.get("site_key")
+                if not src_site_key or not url:
+                    continue
+
+                adapter = get_adapter(src_site_key)
+                logger.info(
+                    f"[CRAWL SOURCE {idx}/{len(ordered_sources)}] site_key={src_site_key}, url={url}"
+                )
+
+                try:
+                    if (
+                        canonical_source
+                        and canonical_source.get("url") == url
+                        and canonical_source.get("site_key") == src_site_key
+                    ):
+                        chapters_from_source = canonical_chapters
+                    else:
+                        chapters_from_source = await cached_get_chapter_list(
+                            adapter,
+                            url,
+                            metadata['title'],
+                            src_site_key,
+                            total_chapters=metadata.get("total_chapters_on_site"),
+                        )
                     if not chapters_from_source:
                         logger.warning(f"Nguồn {src_site_key} không trả về danh sách chương.")
                         continue
 
-                    # Xác định chương thiếu dựa trên file chuẩn chapter_metadata.json
-                    missing_chapters = get_missing_chapters(story_folder, chapters_from_source, src_site_key)
-                    
+                    missing_chapters = get_missing_chapters(
+                        story_folder, chapters_from_source, src_site_key
+                    )
                     if not missing_chapters:
-                        logger.info(f"Không tìm thấy chương nào thiếu cần crawl từ nguồn {src_site_key}.")
-                        # Kiểm tra xem đã đủ chưa
-                        if count_txt_files(story_folder) + count_dead_chapters(story_folder) >= len(canonical_chapters):
-                             logger.info(f"Truyện '{metadata['title']}' đã đủ chương. Dừng crawl các nguồn khác.")
-                             break # Đã đủ, không cần check các nguồn khác
+                        logger.info(
+                            f"Không phát hiện chương thiếu nào từ nguồn {src_site_key}."
+                        )
+                        if not remaining_missing():
+                            logger.info(
+                                f"Truyện '{metadata['title']}' đã đủ chương sau khi đối chiếu nguồn {src_site_key}."
+                            )
+                            break
                         continue
 
-                    logger.info(f"Bắt đầu crawl {len(missing_chapters)} chương thiếu từ nguồn {src_site_key}")
-                    current_category = get_current_category(metadata)
-                    
-                    # Lên lịch crawl các chương thiếu
-                    tasks.append(asyncio.create_task(
-                        crawl_story_with_limit(
-                            src_site_key, None, missing_chapters, metadata,
-                            current_category, story_folder, crawl_state,
-                            state_file=state_file, adapter=adapter, chapters_all=chapters_from_source
-                        )
-                    ))
-                    
-                    # Sau khi lên lịch, kiểm tra xem đã đủ chưa để có thể break sớm
-                    if count_txt_files(story_folder) + count_dead_chapters(story_folder) >= len(canonical_chapters):
-                        logger.info(f"Truyện '{metadata['title']}' đã đủ chương sau khi lên lịch. Dừng crawl các nguồn khác.")
-                        break
-
-                except Exception as ex:
-                    logger.error(f"Lỗi không xác định khi xử lý nguồn {src_site_key}: {ex}")
-                    continue
-                if not os.path.exists(story_folder):
-                    logger.warning(f"[SKIP][TASK] Không tồn tại folder, bỏ qua: {story_folder}")
-                    continue
-                tasks.append(asyncio.create_task(
-                    crawl_story_with_limit(
+                    logger.info(
+                        f"Bắt đầu crawl {len(missing_chapters)} chương thiếu từ nguồn {src_site_key}."
+                    )
+                    await crawl_story_with_limit(
                         src_site_key,
                         None,
                         missing_chapters,
                         metadata,
-                        current_category,  # type:ignore
+                        current_category,
                         story_folder,
                         crawl_state,
-                        num_batches=num_batches,
                         state_file=state_file,
                         adapter=adapter,
-                        chapters_all=chapters,
+                        chapters_all=chapters_from_source,
                     )
-                ))
+
+                    if not remaining_missing():
+                        logger.info(
+                            f"Truyện '{metadata['title']}' đã đủ chương sau khi crawl từ nguồn {src_site_key}."
+                        )
+                        break
+                except Exception as ex:
+                    logger.error(
+                        f"Lỗi không xác định khi xử lý nguồn {src_site_key}: {ex}"
+                    )
+                    continue
+
         logger.info(f"[NEXT] Kết thúc process cho story: {story_folder}")
-
-
-    # ============ 2. Chờ crawl bù xong ============
-    if tasks:
-        await asyncio.gather(*tasks)
-    if 'metadata' in locals() and metadata and metadata.get("title"):
-        logger.info(f"[NEXT STORY] Done process for {metadata['title']}")
 
 
     # ============ 3. Quét lại & move, cảnh báo, đồng bộ ============
