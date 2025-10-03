@@ -13,6 +13,24 @@ BASE_URLS = {
     "tangthuvien": os.getenv("BASE_TANGTHUVIEN", "https://tangthuvien.net"),
 }
 
+# Allow restricting the active crawl sites via environment variable.
+ENABLED_SITE_KEYS = [
+    key.strip()
+    for key in os.getenv("ENABLED_SITE_KEYS", "").split(",")
+    if key.strip()
+]
+
+if ENABLED_SITE_KEYS:
+    filtered_base_urls = {key: BASE_URLS[key] for key in ENABLED_SITE_KEYS if key in BASE_URLS}
+    missing_sites = [key for key in ENABLED_SITE_KEYS if key not in BASE_URLS]
+    if missing_sites:
+        raise ValueError(
+            "ENABLED_SITE_KEYS contains unsupported site(s): " + ", ".join(missing_sites)
+        )
+    if not filtered_base_urls:
+        raise ValueError("No valid site keys found in ENABLED_SITE_KEYS")
+    BASE_URLS = filtered_base_urls
+
 # ============ CRAWL CONFIG ============
 REQUEST_DELAY = float(os.getenv("REQUEST_DELAY", "5"))
 TIMEOUT_REQUEST = int(os.getenv("TIMEOUT_REQUEST", 30))
