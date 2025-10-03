@@ -15,7 +15,7 @@ async def test_save_and_load_crawl_state(tmp_path):
     }
 
     # Save the state
-    await save_crawl_state(sample_state, str(state_file))
+    await save_crawl_state(sample_state, str(state_file), site_key="test_site")
 
     # Load the state
     loaded_state = await load_crawl_state(str(state_file), "test_site")
@@ -47,7 +47,7 @@ async def test_clear_specific_state_keys(tmp_path):
     }
 
     # Save initial state
-    await save_crawl_state(initial_state, str(state_file), debounce=0)
+    await save_crawl_state(initial_state, str(state_file), debounce=0, site_key="test_site")
 
     # The state is modified in-place
     state_to_modify = initial_state.copy()
@@ -67,3 +67,16 @@ async def test_clear_specific_state_keys(tmp_path):
     assert "current_genre_url" not in persisted_state
     assert "current_story_index_in_genre" not in persisted_state
     assert persisted_state["to_keep"] == "this should remain"
+    assert persisted_state["site_key"] == "test_site"
+
+
+@pytest.mark.asyncio
+async def test_ignore_state_with_mismatched_site(tmp_path):
+    """Loading a state file for a different site should reset the state."""
+    state_file = tmp_path / "state.json"
+    sample_state = {"current_genre_url": "https://example.com"}
+    await save_crawl_state(sample_state, str(state_file), site_key="xtruyen")
+
+    loaded_state = await load_crawl_state(str(state_file), "tangthuvien")
+
+    assert loaded_state == {}

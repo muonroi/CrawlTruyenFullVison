@@ -557,7 +557,7 @@ async def process_story_item(
         crawl_state["processed_chapter_urls_for_current_story"] = []
     crawl_state["previous_story_url_in_state_for_chapters"] = story_data_item["url"]
     state_file = get_state_file(site_key)
-    await save_crawl_state(crawl_state, state_file)
+    await save_crawl_state(crawl_state, state_file, site_key=site_key)
 
     # 2. Crawl tất cả nguồn cho đến khi đủ chương
     chapter_limit_hint = await crawl_all_sources_until_full(
@@ -694,7 +694,7 @@ async def process_story_item(
         crawl_state["globally_completed_story_urls"] = sorted(completed)
     backup_crawl_state(state_file)
     state_file = get_state_file(site_key)
-    await save_crawl_state(crawl_state, state_file)
+    await save_crawl_state(crawl_state, state_file, site_key=site_key)
     await clear_specific_state_keys(
         crawl_state, ["processed_chapter_urls_for_current_story"], state_file
     )
@@ -807,7 +807,7 @@ async def process_genre_item(
         crawl_state["current_story_index_in_genre"] = 0
     crawl_state["previous_genre_url_in_state_for_stories"] = genre_data["url"]
     state_file = get_state_file(site_key)
-    await save_crawl_state(crawl_state, state_file)
+    await save_crawl_state(crawl_state, state_file, site_key=site_key)
 
     retry_time = 0
     max_retry = 5
@@ -924,7 +924,7 @@ async def process_genre_item(
                 await smart_delay()
         crawl_state["globally_completed_story_urls"] = sorted(completed_global)
         crawl_state["current_story_index_in_genre"] = batch[-1][0] + 1
-        await save_crawl_state(crawl_state, state_file)
+        await save_crawl_state(crawl_state, state_file, site_key=site_key)
         if skipped_in_batch:
             logger.warning(
                 "[BATCH] Các truyện bị skip trong batch này: " + ", ".join(skipped_in_batch)

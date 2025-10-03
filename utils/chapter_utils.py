@@ -222,7 +222,7 @@ async def crawl_missing_chapters_for_story(
             tasks.append(asyncio.create_task(wrapped()))
         await asyncio.gather(*tasks, return_exceptions=True)
         if state_file:
-            await save_crawl_state(crawl_state, state_file)
+            await save_crawl_state(crawl_state, state_file, site_key=site_key)
         return successful, failed
 
     while retry_count < normal_rounds:
@@ -502,7 +502,11 @@ async def async_download_and_save_chapter(
                     processed.append(url)
                     crawl_state['processed_chapter_urls_for_current_story'] = processed
                     file_to_save = state_file or get_state_file(site_key)
-                    await save_crawl_state(crawl_state, file_to_save)
+                    await save_crawl_state(
+                        crawl_state,
+                        file_to_save,
+                        site_key=site_key,
+                    )
         except Exception as e:
             logger.error(f"          Loi luu '{chapter_filename_only}': {e}")
             await log_error_chapter({

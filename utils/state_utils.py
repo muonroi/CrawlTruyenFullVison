@@ -3,7 +3,7 @@ import glob
 import json
 import os
 import time
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional
 import aiofiles
 from config.config import COMPLETED_FOLDER, DATA_FOLDER, STATE_FOLDER, get_state_file
 from utils import logger
@@ -22,6 +22,17 @@ async def load_crawl_state(state_file, site_key) -> Dict[str, Any]:
             async with aiofiles.open(state_file, 'r', encoding='utf-8') as f:
                 data = await f.read()
             state = json.loads(data)
+            stored_site = state.get("site_key")
+            if stored_site and stored_site != site_key:
+                logger.warning(
+                    "State file %s belongs to site %s but was requested for %s. Ignoring stale state.",
+                    state_file,
+                    stored_site,
+                    site_key,
+                )
+                return {}
+            if site_key and stored_site != site_key:
+                state["site_key"] = site_key
             logger.info(f"Đã tải trạng thái crawl từ {state_file}: {state}")
             return state
         except Exception as e:
@@ -31,7 +42,13 @@ async def load_crawl_state(state_file, site_key) -> Dict[str, Any]:
 CSTATE_LOCK = asyncio.Lock()
 _last_save_time = {}
 
-async def save_crawl_state(state: Dict[str, Any], state_file: str, debounce=2.0) -> None:
+async def save_crawl_state(
+    state: Dict[str, Any],
+    state_file: str,
+    debounce: float = 2.0,
+    *,
+    site_key: Optional[str] = None,
+) -> None:
     logger.debug(f"1")
     global _last_save_time
     now = time.monotonic()
@@ -41,6 +58,10 @@ async def save_crawl_state(state: Dict[str, Any], state_file: str, debounce=2.0)
         return
     _last_save_time[state_file] = now
     logger.debug(f"2")
+    if site_key:
+        state["site_key"] = site_key
+    elif "site_key" in state:
+        site_key = state.get("site_key")
     async with CSTATE_LOCK:
         try:
             logger.debug(f"[SAVE_STATE] Bắt đầu lưu state vào {state_file}")
@@ -60,7 +81,12 @@ async def clear_specific_state_keys(state: Dict[str, Any], keys_to_remove: List[
             updated = True
             logger.debug(f"Đã xóa key '{key}' khỏi trạng thái crawl.")
     if updated:
-        await save_crawl_state(state, state_file, debounce=debounce)
+        await save_crawl_state(
+            state,
+            state_file,
+            debounce=debounce,
+            site_key=state.get("site_key"),
+        )
 
 async def clear_crawl_state_component(state: Dict[str, Any], component_key: str, state_file: str) -> None:
     if component_key in state:
@@ -71,7 +97,7 @@ async def clear_crawl_state_component(state: Dict[str, Any], component_key: str,
             state.pop("processed_chapter_urls_for_current_story", None)
         elif component_key == "current_story_url":
             state.pop("processed_chapter_urls_for_current_story", None)
-    await save_crawl_state(state, state_file)
+    await save_crawl_state(state, state_file, site_key=state.get("site_key"))
 
 async def clear_all_crawl_state(state_file:str) -> None:
     loop = asyncio.get_event_loop()
@@ -114,6 +140,7 @@ def merge_all_missing_workers_to_main(site_key):
         # Xóa file phụ sau khi merge
         os.remove(fname)
     main_state["globally_completed_story_urls"] = sorted(all_completed)
+    main_state["site_key"] = site_key
     with open(main_state_file, "w", encoding="utf-8") as f:
         json.dump(main_state, f, ensure_ascii=False, indent=4)
 
