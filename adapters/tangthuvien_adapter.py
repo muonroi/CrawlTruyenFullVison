@@ -240,6 +240,7 @@ class TangThuVienAdapter(BaseSiteAdapter):
             return []
 
         chapters = list(details.get("chapters") or [])
+        chapter_source = "details"
         if not chapters:
             expected = None
             if isinstance(total_chapters, int):
@@ -255,6 +256,7 @@ class TangThuVienAdapter(BaseSiteAdapter):
             )
             if chapters:
                 details["chapters"] = chapters
+                chapter_source = "api"
 
         if not chapters:
             html = await self._fetch_text(story_url, wait_for_selector="div.book-info")
@@ -262,6 +264,7 @@ class TangThuVienAdapter(BaseSiteAdapter):
                 logger.error(f"[{self.site_key}] Fallback HTML fetch failed for {story_url}.")
                 return []
             chapters = parse_chapter_list(html, self.base_url)
+            chapter_source = "html"
 
         for chapter in chapters:
             chapter.setdefault("site_key", self.site_key)
@@ -281,7 +284,11 @@ class TangThuVienAdapter(BaseSiteAdapter):
                     f"[{self.site_key}] Applying chapter page limit: keeping first {limit}/{len(chapters)} entries."
                 )
                 chapters = chapters[:limit]
+                chapter_source = f"{chapter_source}-trimmed"
 
+        logger.info(
+            f"[{self.site_key}] Retrieved {len(chapters)} chapters for '{story_title}' from {chapter_source}."
+        )
         return chapters
 
 

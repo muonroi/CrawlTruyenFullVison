@@ -40,6 +40,7 @@ from utils.logger import logger
 
 def get_async_client_for_proxy(proxy_url):
     return httpx.AsyncClient(
+        follow_redirects=True,
         mounts={
             "http://": httpx.AsyncHTTPTransport(proxy=proxy_url),
             "https://": httpx.AsyncHTTPTransport(proxy=proxy_url),
@@ -60,7 +61,11 @@ async def fetch(
 
         proxy_url = get_proxy_url(GLOBAL_PROXY_USERNAME, GLOBAL_PROXY_PASSWORD)
         try:
-            client_kwargs = {'headers': headers, 'timeout': timeout}
+            client_kwargs = {
+                'headers': headers,
+                'timeout': timeout,
+                'follow_redirects': True,
+            }
             if USE_PROXY and proxy_url:
                 async with get_async_client_for_proxy(proxy_url) as client:
                     if method.upper() == 'POST':
