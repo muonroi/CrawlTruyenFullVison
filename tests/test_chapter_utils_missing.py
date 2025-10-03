@@ -30,7 +30,7 @@ def test_get_missing_chapters_detects_missing_numbers(tmp_path):
         for item in chapter_meta
     ]
 
-    missing = get_missing_chapters(str(story_dir), chapters_from_web)
+    missing = get_missing_chapters(str(story_dir), chapters_from_web, "test_site")
 
     assert len(missing) == 1
     assert missing[0]["index"] == 2

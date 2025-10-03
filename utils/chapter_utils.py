@@ -791,7 +791,7 @@ def _adjust_real_number(raw_num: int | None, fallback: int, offset: int) -> int:
     return max(1, adjusted)
 
 
-def get_missing_chapters(story_folder: str, chapters: list[dict]) -> list[dict]:
+def get_missing_chapters(story_folder: str, chapters: list[dict], site_key: str) -> list[dict]:
     """Identify chapters that are missing locally based on sequential numbering."""
 
     chapter_items = _load_chapter_items(story_folder, chapters)

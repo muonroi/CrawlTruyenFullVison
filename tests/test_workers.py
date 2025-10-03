@@ -206,7 +206,7 @@ async def test_missing_crawler_fetches_genres(monkeypatch, tmp_path):
         crawler_missing_chapter, "send_telegram_notify", AsyncMock(return_value=None)
     )
     monkeypatch.setattr(
-        crawler_missing_chapter, "get_missing_chapters", lambda folder, chapters: []
+        crawler_missing_chapter, "get_missing_chapters", lambda folder, chapters, site_key: []
     )
     monkeypatch.setattr(
         crawler_missing_chapter,
