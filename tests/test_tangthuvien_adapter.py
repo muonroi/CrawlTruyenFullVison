@@ -1,4 +1,6 @@
 from pathlib import Path
+from typing import List
+from unittest.mock import AsyncMock
 
 import pytest
 
@@ -45,3 +47,31 @@ async def test_get_chapter_content_handles_missing_content(monkeypatch):
     )
 
     assert content is None
+
+
+@pytest.mark.asyncio
+async def test_get_story_details_normalizes_alias_to_doc_truyen(monkeypatch):
+    adapter = TangThuVienAdapter()
+    sample_html = (FIXTURE_DIR / "detail_story.txt").read_text(encoding="utf-8")
+    requested_urls: List[str] = []
+
+    async def fake_fetch(self, url, wait_for_selector=None):
+        requested_urls.append(url)
+        return sample_html
+
+    monkeypatch.setattr(TangThuVienAdapter, "_fetch_text", fake_fetch)
+    monkeypatch.setattr(
+        TangThuVienAdapter,
+        "_fetch_chapters_via_api",
+        AsyncMock(return_value=[]),
+    )
+
+    alias_url = "https://tangthuvien.net/tu-phe-linh-can-bat-dau-van-ma-tu-hanh-tong-phe-linh-can-khai-thuy-van-ma-tu-hanh"
+    details = await adapter.get_story_details(alias_url, "Dummy title")
+
+    assert requested_urls, "Expected the adapter to fetch story details"
+    normalized = "https://tangthuvien.net/doc-truyen/tu-phe-linh-can-bat-dau-van-ma-tu-hanh-tong-phe-linh-can-khai-thuy-van-ma-tu-hanh"
+    assert requested_urls[0] == normalized
+    assert details is not None
+    assert details["url"] == normalized
+    assert details["sources"][0]["url"] == normalized

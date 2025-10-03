@@ -55,6 +55,22 @@ class TangThuVienAdapter(BaseSiteAdapter):
         self._details_cache: Dict[str, Dict[str, Any]] = {}
         self._details_lock = asyncio.Lock()
 
+    def _normalize_story_url(self, story_url: str) -> str:
+        if not story_url:
+            return story_url
+
+        absolute_url = urljoin(self.base_url.rstrip("/") + "/", story_url)
+        parsed = urlparse(absolute_url)
+        path = parsed.path or ""
+        normalized_path = "/" + path.lstrip("/") if path else "/"
+
+        if not normalized_path.lower().startswith("/doc-truyen/"):
+            alias = normalized_path.strip("/")
+            normalized_path = f"/doc-truyen/{alias}" if alias else "/doc-truyen"
+
+        normalized = parsed._replace(path=normalized_path)
+        return urlunparse(normalized)
+
     def get_chapters_per_page_hint(self) -> int:
         return self._CHAPTER_PAGE_SIZE
 
@@ -71,6 +87,10 @@ class TangThuVienAdapter(BaseSiteAdapter):
         if isinstance(response, str):
             return response
         if response and getattr(response, "text", None):
+            status = getattr(response, "status_code", None)
+            if status == 404:
+                logger.warning(f"[{self.site_key}] Received 404 when fetching {url}")
+                return None
             return response.text
         logger.error(f"[{self.site_key}] Failed to fetch URL: {url}")
         return None
@@ -215,13 +235,15 @@ class TangThuVienAdapter(BaseSiteAdapter):
         return details
 
     async def get_story_details(self, story_url: str, story_title: str) -> Optional[Dict[str, Any]]:
+        normalized_url = self._normalize_story_url(story_url)
+
         async with self._details_lock:
-            cached = self._details_cache.get(story_url)
+            cached = self._details_cache.get(normalized_url)
             if cached:
                 return cached
-            details = await self._get_story_details_internal(story_url)
+            details = await self._get_story_details_internal(normalized_url)
             if details:
-                self._details_cache[story_url] = details
+                self._details_cache[normalized_url] = details
             return details
 
     async def get_chapter_list(
@@ -232,11 +254,12 @@ class TangThuVienAdapter(BaseSiteAdapter):
         max_pages: Optional[int] = None,
         total_chapters: Optional[int] = None,
     ) -> List[Dict[str, str]]:
+        normalized_url = self._normalize_story_url(story_url)
         logger.debug(f"[{self.site_key}] Getting chapter list for '{story_title}'.")
 
-        details = await self.get_story_details(story_url, story_title)
+        details = await self.get_story_details(normalized_url, story_title)
         if not details:
-            logger.error(f"[{self.site_key}] Could not load story details for {story_url}")
+            logger.error(f"[{self.site_key}] Could not load story details for {normalized_url}")
             return []
 
         chapters = list(details.get("chapters") or [])
@@ -250,7 +273,7 @@ class TangThuVienAdapter(BaseSiteAdapter):
 
             chapters = await self._fetch_chapters_via_api(
                 story_id=details.get("story_id"),
-                story_url=story_url,
+                story_url=normalized_url,
                 total_expected=expected,
                 max_pages=max_pages,
             )
@@ -259,9 +282,9 @@ class TangThuVienAdapter(BaseSiteAdapter):
                 chapter_source = "api"
 
         if not chapters:
-            html = await self._fetch_text(story_url, wait_for_selector="div.book-info")
+            html = await self._fetch_text(normalized_url, wait_for_selector="div.book-info")
             if not html:
-                logger.error(f"[{self.site_key}] Fallback HTML fetch failed for {story_url}.")
+                logger.error(f"[{self.site_key}] Fallback HTML fetch failed for {normalized_url}.")
                 return []
             chapters = parse_chapter_list(html, self.base_url)
             chapter_source = "html"
@@ -270,11 +293,11 @@ class TangThuVienAdapter(BaseSiteAdapter):
             chapter.setdefault("site_key", self.site_key)
 
         async with self._details_lock:
-            cached = self._details_cache.get(story_url)
+            cached = self._details_cache.get(normalized_url)
             if cached is not None:
                 cached["chapters"] = chapters
             else:
-                self._details_cache[story_url] = details
+                self._details_cache[normalized_url] = details
 
         if max_pages and chapters:
             per_page = max(1, self.get_chapters_per_page_hint())

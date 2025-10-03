@@ -349,13 +349,18 @@ async def make_request(
     resp = await fetch(url, site_key, timeout, extra_headers=extra_headers)
     fallback_stats["httpx_success"].setdefault(site_key, 0)
     fallback_stats["fallback_count"].setdefault(site_key, 0)
-    if resp and resp.status_code == 200 and resp.text and not is_anti_bot_content(resp.text):
-        class R:
-            def __init__(self, text):
-                self.text = text
+    if resp:
+        if resp.status_code == 200 and resp.text and not is_anti_bot_content(resp.text):
+            class R:
+                def __init__(self, text):
+                    self.text = text
 
-        fallback_stats["httpx_success"][site_key] += 1
-        return R(resp.text)
+            fallback_stats["httpx_success"][site_key] += 1
+            return R(resp.text)
+
+        if resp.status_code == 404:
+            logger.warning(f"[{site_key}] Received HTTP 404 for {url}; skipping Playwright fallback.")
+            return resp
     logger.info("[request] Fallback to Playwright due to block or bad status")
     fallback_stats["fallback_count"][site_key] += 1
     return await _make_request_playwright(url, site_key, timeout, max_retries, wait_for_selector=wait_for_selector)
