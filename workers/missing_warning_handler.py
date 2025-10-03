@@ -14,7 +14,7 @@ from workers.crawler_single_missing_chapter import crawl_single_story_worker
 
 MISSING_WARNING_TOPIC = os.getenv("MISSING_WARNING_TOPIC", "missing_warnings")
 MISSING_WARNING_GROUP = os.getenv("MISSING_WARNING_GROUP", "missing-warning-group")
-KAFKA_BOOTSTRAP_SERVERS = os.getenv("KAFKA_BROKERS", "kafka:9092")
+KAFKA_BOOTSTRAP_SERVERS = os.getenv("KAFKA_BROKERS", "kafka:29092")
 KAFKA_BOOTSTRAP_MAX_RETRIES = int(os.getenv("KAFKA_BOOTSTRAP_MAX_RETRIES", "0"))
 KAFKA_BOOTSTRAP_RETRY_DELAY = float(os.getenv("KAFKA_BOOTSTRAP_RETRY_DELAY", "5"))
 

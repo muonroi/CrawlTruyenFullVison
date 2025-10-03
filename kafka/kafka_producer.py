@@ -17,7 +17,7 @@ else:
 
 # Sử dụng chung cấu hình với consumer
 KAFKA_TOPIC = os.getenv("KAFKA_TOPIC", "crawl_truyen")
-KAFKA_BOOTSTRAP_SERVERS = os.getenv("KAFKA_BROKERS", "kafka:9092")
+KAFKA_BOOTSTRAP_SERVERS = os.getenv("KAFKA_BROKERS", "kafka:29092")
 
 _producer = None
 _producer_lock = asyncio.Lock()

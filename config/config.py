@@ -48,7 +48,7 @@ MAX_CHAPTER_RETRY = int(os.getenv("MAX_CHAPTER_RETRY", 3))
 
 # ============ KAFKA CONFIG ============
 KAFKA_TOPIC = os.getenv("KAFKA_TOPIC", "crawl_truyen")
-KAFKA_BOOTSTRAP_SERVERS = os.getenv("KAFKA_BROKERS", "kafka:9092")
+KAFKA_BOOTSTRAP_SERVERS = os.getenv("KAFKA_BROKERS", "kafka:29092")
 KAFKA_GROUP_ID = os.getenv("KAFKA_GROUP_ID", "novel-crawler-group")
 
 # ============ PROXY CONFIG ============
