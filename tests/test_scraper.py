@@ -75,3 +75,23 @@ async def test_make_request_succeeds_with_httpx(monkeypatch):
 
     # Assert we got the successful response from httpx
     assert response.text == "Successful content"
+
+
+@pytest.mark.asyncio
+async def test_make_request_handles_404_without_fallback(monkeypatch):
+    """Ensure 404 responses are returned directly without triggering Playwright."""
+
+    mock_httpx_fetch = AsyncMock(return_value=MockResponse("Missing", 404))
+    monkeypatch.setattr("scraper.fetch", mock_httpx_fetch)
+
+    mock_is_anti_bot = MagicMock(return_value=False)
+    monkeypatch.setattr("scraper.is_anti_bot_content", mock_is_anti_bot)
+
+    mock_playwright_request = AsyncMock()
+    monkeypatch.setattr("scraper._make_request_playwright", mock_playwright_request)
+
+    response = await make_request("https://example.com/missing", "test_site")
+
+    assert response.status_code == 404
+    assert response.text == "Missing"
+    mock_playwright_request.assert_not_called()

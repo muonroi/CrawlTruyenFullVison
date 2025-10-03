@@ -82,6 +82,9 @@ async def fetch(
             await asyncio.sleep(random.uniform(0, REQUEST_DELAY))
             if resp.status_code == 200 and resp.text and not is_anti_bot_content(resp.text):
                 return resp
+            if resp.status_code == 404:
+                logger.warning(f"[httpx] Not found (404) for {url}")
+                return resp
             logger.warning(f"[httpx] Potential anti-bot or bad status for {url} (status: {resp.status_code})")
             if proxy_url and should_blacklist_proxy(proxy_url, LOADED_PROXIES):
                 await mark_bad_proxy(proxy_url)
