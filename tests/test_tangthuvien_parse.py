@@ -1,6 +1,7 @@
 import pathlib
 
 from analyze.tangthuvien_parse import (
+    find_genre_listing_url,
     parse_chapter_content,
     parse_chapter_list,
     parse_genres,
@@ -24,6 +25,13 @@ def test_parse_genres_includes_tien_hiep():
     assert "Tiên Hiệp" in names
     tien_hiep = next(g for g in genres if g["name"] == "Tiên Hiệp")
     assert tien_hiep["url"].startswith("https://tangthuvien.net/the-loai/tien-hiep")
+
+
+def test_find_genre_listing_url_prefers_full_listing():
+    html = _load("home.txt")
+    listing_url = find_genre_listing_url(html, "https://tangthuvien.net")
+
+    assert listing_url == "https://tangthuvien.net/tong-hop?tp=cv&ctg=1"
 
 
 def test_parse_story_list_extracts_rows():
@@ -63,6 +71,12 @@ def test_parse_story_info_captures_metadata():
     assert info["total_chapters_on_site"] == 689
     assert isinstance(info.get("chapters"), list)
     assert any(g["name"] == "Tiên Hiệp" for g in info["categories"])
+    assert info["stats"]["likes"] == 22
+    assert info["stats"]["views"] == 370845
+    assert "Tu chân" in info["tags"]
+    latest = info["latest_chapters"]
+    assert len(latest) >= 5
+    assert latest[0]["url"].endswith("/chuong-689")
 
 
 def test_parse_chapter_list_from_ajax_snippet():

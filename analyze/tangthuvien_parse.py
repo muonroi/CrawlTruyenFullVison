@@ -18,8 +18,8 @@ def _normalize_text(value: Optional[str]) -> str:
 def _extract_first_int(text: Optional[str]) -> Optional[int]:
     if not text:
         return None
-    match = re.search(r"(\d+)", text)
-    return int(match.group(1)) if match else None
+    normalized = re.sub(r"[^0-9]", "", text)
+    return int(normalized) if normalized else None
 
 
 def parse_genres(html_content: str, base_url: str) -> List[Dict[str, str]]:
@@ -27,19 +27,61 @@ def parse_genres(html_content: str, base_url: str) -> List[Dict[str, str]]:
     results: List[Dict[str, str]] = []
     seen: set[str] = set()
 
-    for anchor in soup.select("a[href*='/the-loai/']"):
-        name = _normalize_text(html.unescape(anchor.get_text(" ", strip=True)))
-        href = anchor.get("href")
-        if not name or not href:
-            continue
-        url = urljoin(base_url, href)
-        key = url.lower()
-        if key in seen:
-            continue
-        seen.add(key)
-        results.append({"name": name, "url": url})
+    selectors = [
+        "header a[href^='/the-loai/']",
+        "nav a[href^='/the-loai/']",
+        "div.nav-list a[href^='/the-loai/']",
+        "a[href*='/the-loai/']",
+    ]
+
+    for selector in selectors:
+        for anchor in soup.select(selector):
+            name = _normalize_text(html.unescape(anchor.get_text(" ", strip=True)))
+            href = anchor.get("href")
+            if not name or not href:
+                continue
+            url = urljoin(base_url, href)
+            key = url.lower()
+            if key in seen:
+                continue
+            seen.add(key)
+            results.append({"name": name, "url": url})
+        if results:
+            break
 
     return results
+
+
+def find_genre_listing_url(html_content: str, base_url: str) -> Optional[str]:
+    """Locate the canonical listing url (/tong-hop?ctg=...) for a genre page."""
+
+    soup = BeautifulSoup(html_content, _DEFAULT_PARSER)
+    candidates: List[Tuple[int, str]] = []
+
+    for anchor in soup.select("a[href*='/tong-hop']"):
+        href = anchor.get("href") or ""
+        if "ctg=" not in href:
+            continue
+        url = urljoin(base_url, href)
+        text = _normalize_text(anchor.get_text(" ", strip=True)).lower()
+
+        score = 0
+        if "tp=cv" in href:
+            score += 3
+        if "xem thêm" in text:
+            score += 2
+        if "rank=" in href or "time=" in href:
+            score -= 1
+        if "ord=" in href:
+            score -= 1
+
+        candidates.append((score, url))
+
+    if not candidates:
+        return None
+
+    candidates.sort(key=lambda item: (item[0], item[1]), reverse=True)
+    return candidates[0][1]
 
 
 def parse_story_list(html_content: str, base_url: str) -> Tuple[List[Dict[str, str]], int]:
@@ -232,6 +274,26 @@ def parse_story_info(html_content: str, base_url: str = "") -> Dict[str, Any]:
         if inline_html:
             inline_chapters = parse_chapter_list(inline_html, base_url)
 
+    latest_chapters: List[Dict[str, str]] = []
+    for volume in soup.select("div.volume-wrap div.volume"):
+        heading = volume.find("h3")
+        if not heading:
+            continue
+        heading_text = _normalize_text(html.unescape(heading.get_text(" ", strip=True))).lower()
+        if "chương mới nhất" not in heading_text:
+            continue
+        for anchor in volume.select("ul li a[href]"):
+            href = anchor.get("href")
+            text = _normalize_text(html.unescape(anchor.get_text(" ", strip=True)))
+            if not href or not text:
+                continue
+            latest_chapters.append({
+                "title": text,
+                "url": urljoin(base_url, href),
+            })
+        if latest_chapters:
+            break
+
     rating_value = None
     rating_count = None
     json_ld_tag = soup.find("script", type="application/ld+json")
@@ -244,6 +306,25 @@ def parse_story_info(html_content: str, base_url: str = "") -> Dict[str, Any]:
                 rating_count = rating.get("reviewCount") or rating.get("ratingCount")
         except (json.JSONDecodeError, AttributeError, TypeError):
             pass
+
+    stats_map = {
+        "ULtwOOTH-like": "likes",
+        "ULtwOOTH-view": "views",
+        "ULtwOOTH-follow": "follows",
+        "ULtwOOTH-nomi": "monthly_votes",
+    }
+    stats: Dict[str, Optional[int]] = {}
+    for cls, key in stats_map.items():
+        span = soup.select_one(f"span.{cls}")
+        if not span:
+            continue
+        stats[key] = _extract_first_int(span.get_text(" ", strip=True))
+
+    tags: List[str] = []
+    for anchor in soup.select("a.tags, .tags a[href*='/tong-hop?tag=']"):
+        text = _normalize_text(html.unescape(anchor.get_text(" ", strip=True)))
+        if text:
+            tags.append(text)
 
     return {
         "title": title,
@@ -260,6 +341,9 @@ def parse_story_info(html_content: str, base_url: str = "") -> Dict[str, Any]:
         "story_path": story_path,
         "rating_value": rating_value,
         "rating_count": rating_count,
+        "stats": stats,
+        "tags": tags,
+        "latest_chapters": latest_chapters,
         "source": "tangthuvien.net",
         "ajax_nonce": None,
         "chapter_ranges": [],

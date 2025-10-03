@@ -5,6 +5,7 @@ from urllib.parse import parse_qs, urlencode, urljoin, urlparse, urlunparse
 
 from adapters.base_site_adapter import BaseSiteAdapter
 from analyze.tangthuvien_parse import (
+    find_genre_listing_url,
     parse_chapter_content,
     parse_chapter_list,
     parse_genres,
@@ -54,6 +55,13 @@ class TangThuVienAdapter(BaseSiteAdapter):
         self.base_url = BASE_URLS.get(self.site_key, "https://tangthuvien.net")
         self._details_cache: Dict[str, Dict[str, Any]] = {}
         self._details_lock = asyncio.Lock()
+        self._genre_listing_cache: Dict[str, str] = {}
+        self._genre_listing_lock = asyncio.Lock()
+
+    def _normalize_category_url(self, category_url: str) -> str:
+        if not category_url:
+            return self.base_url
+        return urljoin(self.base_url.rstrip("/") + "/", category_url)
 
     def _normalize_story_url(self, story_url: str) -> str:
         if not story_url:
@@ -82,6 +90,31 @@ class TangThuVienAdapter(BaseSiteAdapter):
         logger.info(f"[{self.site_key}] Found {len(genres)} genres")
         return genres
 
+    async def _resolve_genre_listing_url(self, genre_url: str) -> str:
+        normalized = self._normalize_category_url(genre_url)
+        parsed = urlparse(normalized)
+        if "/tong-hop" in (parsed.path or ""):
+            return normalized
+
+        async with self._genre_listing_lock:
+            cached = self._genre_listing_cache.get(normalized)
+            if cached:
+                return cached
+
+        html = await self._fetch_text(normalized, wait_for_selector="div.update-wrap")
+        listing_url = None
+        if html:
+            listing_url = find_genre_listing_url(html, self.base_url)
+            if listing_url:
+                logger.debug(
+                    f"[{self.site_key}] Resolved listing url for {normalized} -> {listing_url}"
+                )
+
+        resolved = listing_url or normalized
+        async with self._genre_listing_lock:
+            self._genre_listing_cache[normalized] = resolved
+        return resolved
+
     async def _fetch_text(self, url: str, wait_for_selector: Optional[str] = None) -> Optional[str]:
         response = await make_request(url, self.site_key, wait_for_selector=wait_for_selector)
         if isinstance(response, str):
@@ -96,7 +129,8 @@ class TangThuVienAdapter(BaseSiteAdapter):
         return None
 
     async def get_stories_in_genre(self, genre_url: str, page: int = 1) -> Tuple[List[Dict[str, str]], int]:
-        url = _with_page_parameter(genre_url, page)
+        listing_url = await self._resolve_genre_listing_url(genre_url)
+        url = _with_page_parameter(listing_url, page)
         logger.debug(f"[{self.site_key}] Fetching stories page: {url}")
         html = await self._fetch_text(url, wait_for_selector="div.update-list")
         if not html:
