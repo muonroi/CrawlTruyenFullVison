@@ -5,7 +5,7 @@ import json
 import os
 import datetime
 import math
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 import re
 import unicodedata
 from bs4 import BeautifulSoup
@@ -950,6 +950,18 @@ def get_actual_chapters_for_export(story_folder):
             "url": ""  # Neu lay duoc thi bo sung them, con khong de rong
         })
     return chapters
+
+
+
+def get_chapter_sort_key(chapter: Dict[str, str]) -> Tuple[int, str]:
+    url = chapter.get('url', '')
+    title = chapter.get('title', '')
+    number_match = re.search(r'(?:chuong|chapter)[^0-9]*([0-9]+)', url, re.IGNORECASE)
+    if not number_match:
+        number_match = re.search(r'(?:ch(?:u|\u01b0)\u01a1ng|chapter)\s*([0-9]+)', title, re.IGNORECASE)
+    number = int(number_match.group(1)) if number_match else 0
+    return number, url
+
 
 async def get_real_total_chapters(metadata, adapter: BaseSiteAdapter):
     # Uu tien lay tu sources neu co

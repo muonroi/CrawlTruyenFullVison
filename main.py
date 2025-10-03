@@ -16,7 +16,7 @@ if _AIOHTTP_SPEC:
 else:  # pragma: no cover - optional dependency missing
     aiohttp = None  # type: ignore
 import os
-from typing import Dict, Any, Optional, Tuple
+from typing import Dict, Any, Optional, Tuple, List
 try:
     _AIOGRAM_SPEC = importlib.util.find_spec("aiogram")
 except ModuleNotFoundError:  # pragma: no cover - optional dependency missing
@@ -51,7 +51,7 @@ from utils.chapter_utils import (
     count_dead_chapters,
     get_real_total_chapters,
 )
-from utils.domain_utils import get_site_key_from_url
+from utils.domain_utils import get_site_key_from_url, is_url_for_site
 from utils.io_utils import (
     create_proxy_template_if_not_exists,
     ensure_directory_exists,
@@ -172,6 +172,86 @@ def sort_sources(sources):
     return sorted(sources, key=lambda s: s.get("priority", 100))
 
 
+def _normalize_story_sources(
+    story_data_item: Dict[str, Any],
+    current_site_key: str,
+    metadata: Optional[Dict[str, Any]] = None,
+) -> bool:
+    """Merge and normalize source list between story data and metadata."""
+
+    def _iter_raw_sources() -> List[Any]:
+        raw: List[Any] = []
+        if metadata and isinstance(metadata.get("sources"), list):
+            raw.extend(metadata["sources"])
+        if isinstance(story_data_item.get("sources"), list):
+            raw.extend(story_data_item["sources"])
+        primary_url = metadata.get("url") if metadata else None
+        if primary_url:
+            raw.append({"url": primary_url, "site_key": metadata.get("site_key")})
+        current_url = story_data_item.get("url")
+        if current_url:
+            raw.append({"url": current_url, "site_key": current_site_key, "priority": 1})
+        return raw
+
+    raw_sources = _iter_raw_sources()
+    normalized: List[Dict[str, Any]] = []
+    seen: Dict[tuple[str, str], int] = {}
+
+    def _upsert(url: Optional[str], site_key: Optional[str], priority: Any) -> None:
+        if not url:
+            return
+        url = url.strip()
+        if not url:
+            return
+
+        derived_site = get_site_key_from_url(url)
+        site_candidate = site_key or derived_site or current_site_key
+        if not site_candidate:
+            return
+        if derived_site and derived_site != site_candidate:
+            site_candidate = derived_site
+        if not is_url_for_site(url, site_candidate):
+            return
+
+        identity = (url, site_candidate)
+        priority_val = priority if isinstance(priority, (int, float)) else None
+
+        if identity in seen:
+            existing = normalized[seen[identity]]
+            if priority_val is not None:
+                existing_priority = existing.get("priority")
+                if (
+                    not isinstance(existing_priority, (int, float))
+                    or priority_val < existing_priority
+                ):
+                    existing["priority"] = priority_val
+            return
+
+        entry: Dict[str, Any] = {"url": url, "site_key": site_candidate}
+        if priority_val is not None:
+            entry["priority"] = priority_val
+        normalized.append(entry)
+        seen[identity] = len(normalized) - 1
+
+    for source in raw_sources:
+        if isinstance(source, str):
+            _upsert(source, None, None)
+        elif isinstance(source, dict):
+            _upsert(source.get("url"), source.get("site_key") or source.get("site"), source.get("priority"))
+
+    normalized_sorted = sort_sources(normalized)
+    previous_story_sources = story_data_item.get("sources")
+    story_data_item["sources"] = normalized_sorted
+
+    metadata_changed = False
+    if metadata is not None:
+        if metadata.get("sources") != normalized_sorted:
+            metadata["sources"] = normalized_sorted
+            metadata_changed = True
+
+    return metadata_changed or previous_story_sources != normalized_sorted
+
+
 async def crawl_all_sources_until_full(
     site_key,
     session,
@@ -186,6 +266,13 @@ async def crawl_all_sources_until_full(
     sources = sort_sources(story_data_item.get("sources", []))
     error_count_by_source = {src["url"]: 0 for src in sources}
     MAX_SOURCE_RETRY = 3
+
+    adapter_cache: Dict[str, BaseSiteAdapter] = getattr(
+        crawl_all_sources_until_full, "_adapter_cache", {}
+    )
+    if adapter and site_key not in adapter_cache:
+        adapter_cache[site_key] = adapter
+    crawl_all_sources_until_full._adapter_cache = adapter_cache  # type: ignore[attr-defined]
 
     total_chapters = story_data_item.get(
         "total_chapters_on_site"
@@ -225,11 +312,27 @@ async def crawl_all_sources_until_full(
             if error_count_by_source.get(url, 0) >= MAX_SOURCE_RETRY:
                 logger.warning(f"[SKIP] Nguồn {url} bị lỗi quá nhiều, bỏ qua.")
                 continue
+            source_site_key = (
+                source.get("site_key")
+                or story_data_item.get("site_key")
+                or get_site_key_from_url(url)
+                or site_key
+            )
             try:
-                chapters = await adapter.get_chapter_list(
+                if source_site_key not in crawl_all_sources_until_full._adapter_cache:  # type: ignore[attr-defined]
+                    crawl_all_sources_until_full._adapter_cache[source_site_key] = get_adapter(source_site_key)
+                    await initialize_scraper(source_site_key)
+                source_adapter = crawl_all_sources_until_full._adapter_cache[source_site_key]
+            except Exception as ex:
+                logger.warning(
+                    f"[SOURCE] Không lấy được adapter cho site '{source_site_key}' (url={url}): {ex}"
+                )
+                continue
+            try:
+                chapters = await source_adapter.get_chapter_list(
                     story_url=url,
                     story_title=story_data_item["title"],
-                    site_key=site_key,
+                    site_key=source_site_key,
                     total_chapters=total_chapters,
                     max_pages=MAX_CHAPTER_PAGES_TO_CRAWL,
                 )
@@ -239,7 +342,7 @@ async def crawl_all_sources_until_full(
                 continue
 
             limit_from_missing = await crawl_missing_chapters_for_story(
-                site_key,
+                source_site_key,
                 session,
                 chapters,
                 story_data_item,
@@ -248,7 +351,7 @@ async def crawl_all_sources_until_full(
                 crawl_state,
                 num_batches=num_batches,
                 state_file=state_file,
-                adapter=adapter,
+                adapter=source_adapter,
             )
             if isinstance(limit_from_missing, int):
                 applied_chapter_limit = (
@@ -263,7 +366,7 @@ async def crawl_all_sources_until_full(
             files_now = len(get_saved_chapters_files(story_folder_path))
             if (files_now + count_dead_chapters(story_folder_path)) >= (len(chapters) if chapters else (total_chapters or 0)):
                 logger.info(
-                    f"Đã crawl đủ chương {files_now}/{total_chapters} cho '{story_data_item['title']}' (từ nguồn {source.get('site_key')})"
+                    f"Đã crawl đủ chương {files_now}/{total_chapters} cho '{story_data_item['title']}' (từ nguồn {source_site_key})"
                 )
                 return
             crawled = True
@@ -374,6 +477,8 @@ async def process_story_item(
     metadata = None
     need_update = False
 
+    story_data_item.setdefault("site_key", site_key)
+
     # 1. Đọc hoặc cập nhật metadata nếu thiếu
     if os.path.exists(metadata_file):
         with open(metadata_file, "r", encoding="utf-8") as f:
@@ -406,8 +511,43 @@ async def process_story_item(
     else:
         details = metadata or {}
 
+    # Sau khi có thể đã cập nhật, đọc lại metadata mới nhất để đồng bộ
+    if os.path.exists(metadata_file):
+        try:
+            with open(metadata_file, "r", encoding="utf-8") as f:
+                metadata = json.load(f)
+        except Exception:
+            pass
+
     if details:
         story_data_item.update(details)
+
+    metadata_for_update = metadata.copy() if isinstance(metadata, dict) else {}
+    metadata_dirty = False
+
+    primary_site_key = (
+        metadata_for_update.get("site_key")
+        or story_data_item.get("site_key")
+        or site_key
+    )
+    if not primary_site_key:
+        primary_site_key = site_key
+
+    if story_data_item.get("site_key") != primary_site_key:
+        story_data_item["site_key"] = primary_site_key
+
+    if metadata_for_update.get("site_key") != primary_site_key:
+        metadata_for_update["site_key"] = primary_site_key
+        metadata_dirty = True
+
+    if _normalize_story_sources(story_data_item, primary_site_key, metadata_for_update):
+        metadata_dirty = True
+
+    if metadata_for_update and story_data_item.get("sources"):
+        # Đảm bảo thông tin nguồn có mặt trong story_data_item trước khi crawl
+        story_data_item["sources"] = metadata_for_update.get(
+            "sources", story_data_item.get("sources")
+        )
 
     crawl_state["current_story_url"] = story_data_item["url"]
     if (
@@ -566,10 +706,32 @@ async def process_story_item(
             url = src.get("url")
             if not url:
                 continue
-            chapters = await adapter.get_chapter_list(
+            source_site = (
+                src.get("site_key")
+                or story_data_item.get("site_key")
+                or get_site_key_from_url(url)
+                or site_key
+            )
+            try:
+                adapter_cache_meta: Dict[str, BaseSiteAdapter] = getattr(
+                    crawl_all_sources_until_full, "_adapter_cache", {}
+                )
+                source_adapter = adapter_cache_meta.get(source_site)
+                if not source_adapter:
+                    source_adapter = get_adapter(source_site)
+                    adapter_cache_meta[source_site] = source_adapter
+                    crawl_all_sources_until_full._adapter_cache = adapter_cache_meta  # type: ignore[attr-defined]
+                    await initialize_scraper(source_site)
+            except Exception as ex:
+                logger.debug(
+                    f"[CHAPTER_META] Bỏ qua nguồn {url} do không lấy được adapter: {ex}"
+                )
+                continue
+
+            chapters = await source_adapter.get_chapter_list(
                 story_url=url,
                 story_title=story_data_item.get("title"),
-                site_key=site_key,
+                site_key=source_site,
                 total_chapters=expected_total_chapters,
             )
             if chapters and len(chapters) > 0:
@@ -593,6 +755,41 @@ async def process_story_item(
         logger.info(
             f"[MISSING][SKIP] '{story_title}' chưa đủ chương (txt={len(files_actual)}) nên chưa gửi job kiểm tra missing."
         )
+
+    if metadata_dirty:
+        if metadata_for_update:
+            metadata_for_write = metadata_for_update.copy()
+            metadata_for_write.pop("chapters", None)
+        else:
+            metadata_for_write = {}
+            for key in (
+                "title",
+                "url",
+                "author",
+                "cover",
+                "description",
+                "categories",
+                "status",
+                "source",
+                "rating_value",
+                "rating_count",
+                "total_chapters_on_site",
+            ):
+                if story_data_item.get(key) is not None:
+                    metadata_for_write[key] = story_data_item.get(key)
+            metadata_for_write["metadata_updated_at"] = time.strftime("%Y-%m-%d %H:%M:%S")
+            metadata_for_write.setdefault(
+                "crawled_at", time.strftime("%Y-%m-%d %H:%M:%S")
+            )
+        metadata_for_write["site_key"] = primary_site_key
+        metadata_for_write["sources"] = story_data_item.get("sources", [])
+        try:
+            with open(metadata_file, "w", encoding="utf-8") as f:
+                json.dump(metadata_for_write, f, ensure_ascii=False, indent=4)
+        except Exception as ex:
+            logger.error(
+                f"[META] Không thể lưu metadata đã cập nhật nguồn cho '{story_title}': {ex}"
+            )
 
     return is_complete
 

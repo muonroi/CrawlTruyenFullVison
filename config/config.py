@@ -10,6 +10,7 @@ load_dotenv()
 # ============ BASE URLs ============
 BASE_URLS = {
     "xtruyen": os.getenv("BASE_XTRUYEN", "https://xtruyen.vn"),
+    "tangthuvien": os.getenv("BASE_TANGTHUVIEN", "https://tangthuvien.net"),
 }
 
 # ============ CRAWL CONFIG ============

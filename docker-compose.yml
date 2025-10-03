@@ -68,6 +68,44 @@ services:
       - ./logs:/app/logs
       - ./state:/app/state
 
+
+  missing-warning-watcher:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: muonroii/storyflow-core:latest
+    container_name: missing-warning-watcher
+    depends_on:
+      - kafka
+    command: python scripts/watch_missing_warnings.py --emit-kafka
+    environment:
+      - KAFKA_BROKERS=kafka:29092
+      - MISSING_WARNING_TOPIC=missing_warnings
+    volumes:
+      - ./logs:/app/logs
+      - ./state:/app/state
+      - ./truyen_data:/app/truyen_data
+      - ./completed_stories:/app/completed_stories
+
+  missing-warning-worker:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: muonroii/storyflow-core:latest
+    container_name: missing-warning-worker
+    depends_on:
+      - kafka
+    command: python -m workers.missing_warning_handler
+    environment:
+      - KAFKA_BROKERS=kafka:29092
+      - MISSING_WARNING_TOPIC=missing_warnings
+      - MISSING_WARNING_GROUP=missing-warning-group
+    volumes:
+      - ./logs:/app/logs
+      - ./state:/app/state
+      - ./truyen_data:/app/truyen_data
+      - ./completed_stories:/app/completed_stories
+
   telegram-bot:
     image: muonroii/storyflow-core:latest
     container_name: telegram-bot

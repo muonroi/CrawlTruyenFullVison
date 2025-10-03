@@ -13,6 +13,7 @@ from analyze.xtruyen_parse import (
 )
 from config.config import BASE_URLS
 from scraper import make_request
+from utils.chapter_utils import get_chapter_sort_key
 from utils.logger import logger
 
 
@@ -20,30 +21,39 @@ def _with_page_parameter(url: str, page: int) -> str:
     if page <= 1:
         return url
     parsed = urlparse(url)
+    path = parsed.path
+    segment_pattern = re.compile(r'/(page|trang|p)/(\d+)$', re.IGNORECASE)
+    suffix_pattern = re.compile(r'-(page|trang|p)-(\d+)$', re.IGNORECASE)
+
+    if segment_pattern.search(path):
+        path = segment_pattern.sub(lambda match: f"/{match.group(1)}/{page}", path)
+        return urlunparse(parsed._replace(path=path))
+
+    if suffix_pattern.search(path):
+        path = suffix_pattern.sub(lambda match: f"-{match.group(1)}-{page}", path)
+        return urlunparse(parsed._replace(path=path))
+
     query = parse_qs(parsed.query, keep_blank_values=True)
-    query['page'] = [str(page)]
+    replaced = False
+    for key in ("page", "paged", "pageindex"):
+        if key in query:
+            query[key] = [str(page)]
+            replaced = True
+    if not replaced:
+        query["page"] = [str(page)]
     new_query = urlencode(query, doseq=True)
     return urlunparse(parsed._replace(query=new_query))
 
 
+
 class XTruyenAdapter(BaseSiteAdapter):
-    _CHAPTER_LIST_BATCH = 200
+    _CHAPTER_LIST_BATCH = 100
 
     def __init__(self) -> None:
         self.site_key = "xtruyen"
         self.base_url = BASE_URLS.get(self.site_key, "https://xtruyen.vn")
         self._details_cache: Dict[str, Dict[str, Any]] = {}
         self._details_lock = asyncio.Lock()
-
-    @staticmethod
-    def _chapter_sort_key(chapter: Dict[str, str]) -> Tuple[int, str]:
-        url = chapter.get('url', '')
-        title = chapter.get('title', '')
-        number_match = re.search(r'(?:chuong|chapter)[^0-9]*([0-9]+)', url, re.IGNORECASE)
-        if not number_match:
-            number_match = re.search(r'(?:ch(?:u|\u01b0)\u01a1ng|chapter)\s*([0-9]+)', title, re.IGNORECASE)
-        number = int(number_match.group(1)) if number_match else 0
-        return number, url
 
     @staticmethod
     def _normalize_ranges(raw_ranges: Optional[List[Any]]) -> List[Tuple[int, int]]:
@@ -185,7 +195,7 @@ class XTruyenAdapter(BaseSiteAdapter):
                 )
                 break
 
-        collected.sort(key=self._chapter_sort_key)
+        collected.sort(key=get_chapter_sort_key)
         logger.info(f"[{self.site_key}] Loaded {len(collected)} chapters via AJAX for {story_url}.")
         return collected
 
