@@ -40,8 +40,12 @@ Một project crawl truyện nâng cao, hỗ trợ async, đa nguồn, đa thể
     PROXIES_FOLDER=proxies
     TELEGRAM_BOT_TOKEN=your_telegram_bot_token
     TELEGRAM_CHAT_ID=your_telegram_chat_id
+    ENABLED_SITE_KEYS=tangthuvien
     # ... các biến khác (xem file config.py hoặc file cấu hình liên quan)
     ```
+
+    > 🆕 `ENABLED_SITE_KEYS` nhận danh sách site (phân tách bởi dấu phẩy) được phép crawl. 
+    > Ví dụ `ENABLED_SITE_KEYS=tangthuvien` sẽ chỉ bật crawler cho TangThuVien giúp bạn kiểm tra hoạt động trước khi mở rộng sang các nguồn khác.
 
 3.  **Chuẩn bị proxy:**
     * Thêm danh sách proxy vào thư mục `proxies/` (ví dụ: `proxies/proxies.txt`).
