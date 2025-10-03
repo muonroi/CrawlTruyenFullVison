@@ -35,6 +35,7 @@ auto_fixed_titles = []
 MAX_CONCURRENT_STORIES = 3
 STORY_SEM = asyncio.Semaphore(MAX_CONCURRENT_STORIES)
 MISSING_SUMMARY_LOG = "missing_summary.log"
+MAX_SOURCE_TIMEOUT_RETRY = 3
 
 def get_existing_real_chapter_numbers(story_folder):
     files = [f for f in os.listdir(story_folder) if f.endswith('.txt')]
@@ -374,6 +375,7 @@ async def check_and_crawl_missing_all_stories(adapter, home_page_url, site_key, 
         for f in os.listdir(DATA_FOLDER)
         if os.path.isdir(os.path.join(DATA_FOLDER, cast(str, f)))
     ]
+    story_retry_counts: dict[str, int] = {}
 
     # ============ 1. Kiểm tra và crawl thiếu theo từng truyện ============
     for story_folder in story_folders:
@@ -515,6 +517,7 @@ async def check_and_crawl_missing_all_stories(adapter, home_page_url, site_key, 
 
             canonical_chapters = None
             canonical_source = None
+            retry_story = False
             for source in ordered_sources:
                 url = source.get("url")
                 src_site_key = source.get("site_key")
@@ -631,11 +634,32 @@ async def check_and_crawl_missing_all_stories(adapter, home_page_url, site_key, 
                             f"Truyện '{metadata['title']}' đã đủ chương sau khi crawl từ nguồn {src_site_key}."
                         )
                         break
-                except Exception as ex:
-                    logger.error(
-                        f"Lỗi không xác định khi xử lý nguồn {src_site_key}: {ex}"
+                except asyncio.TimeoutError:
+                    attempt = story_retry_counts.get(story_folder, 0) + 1
+                    story_retry_counts[story_folder] = attempt
+                    if attempt < MAX_SOURCE_TIMEOUT_RETRY:
+                        logger.warning(
+                            f"[TIMEOUT] Crawl thiếu chương cho '{metadata.get('title')}' từ nguồn {src_site_key} quá 60s (lần {attempt}/{MAX_SOURCE_TIMEOUT_RETRY}). Sẽ thử lại sau.",
+                            exc_info=True,
+                        )
+                        story_folders.append(story_folder)
+                        retry_story = True
+                        await smart_delay()
+                        break
+                    else:
+                        logger.error(
+                            f"[TIMEOUT] Crawl thiếu chương cho '{metadata.get('title')}' từ nguồn {src_site_key} đã quá hạn {MAX_SOURCE_TIMEOUT_RETRY} lần, bỏ qua.",
+                            exc_info=True,
+                        )
+                        continue
+                except Exception:
+                    logger.exception(
+                        f"Lỗi không xác định khi xử lý nguồn {src_site_key}"
                     )
                     continue
+
+            if retry_story:
+                continue
 
         logger.info(f"[NEXT] Kết thúc process cho story: {story_folder}")
 
