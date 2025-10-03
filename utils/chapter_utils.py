@@ -791,8 +791,19 @@ def _adjust_real_number(raw_num: int | None, fallback: int, offset: int) -> int:
     return max(1, adjusted)
 
 
-def get_missing_chapters(story_folder: str, chapters: list[dict], site_key: str) -> list[dict]:
-    """Identify chapters that are missing locally based on sequential numbering."""
+def get_missing_chapters(
+    story_folder: str,
+    chapters: list[dict],
+    site_key: str | None = None,
+) -> list[dict]:
+    """Identify chapters that are missing locally based on sequential numbering.
+
+    The ``site_key`` argument used to be mandatory for integration with some
+    workers, but several callers – including a number of tests – only rely on
+    the first two parameters.  Making the third argument optional keeps the
+    public API backward compatible while allowing existing usages to function
+    without providing an unused value.
+    """
 
     chapter_items = _load_chapter_items(story_folder, chapters)
     if not chapter_items:
