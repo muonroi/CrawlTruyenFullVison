@@ -49,6 +49,7 @@ from core.crawl_planner import (
     build_crawl_plan,
 )
 from core.category_store import CategoryStore
+from core.story_registry import StoryRegistry, StoryCrawlStatus
 from utils.batch_utils import get_optimal_batch_size, smart_delay, split_batches
 from utils.chapter_utils import (
     crawl_missing_chapters_for_story,
@@ -130,6 +131,7 @@ refresh_runtime_settings()
 
 
 category_store = CategoryStore(app_config.CATEGORY_SNAPSHOT_DB_PATH)
+story_registry = StoryRegistry(app_config.CATEGORY_SNAPSHOT_DB_PATH, category_store)
 
 
 class WorkerSettings:
@@ -884,9 +886,32 @@ async def process_genre_item(
         load_skipped_stories()
         title = story.get("title", f"Story #{idx + 1}")
         story_url = story.get("url")
+        registry_entry = story_registry.ensure_entry(site_key, story, genre_name)
+
         if is_story_skipped(story):
             logger.warning(f"[SKIP] Truyện {title} đã bị skip vĩnh viễn trước đó, bỏ qua.")
-            return True, story_url, idx, False, False
+            story_registry.mark_status(
+                registry_entry.story_id,
+                StoryCrawlStatus.SKIPPED,
+                result="permanent_skip",
+                category_name=genre_name,
+            )
+            return True, story_url, idx, False, False, StoryCrawlStatus.SKIPPED
+
+        acquired_entry = story_registry.try_acquire(
+            registry_entry.story_id,
+            category_name=genre_name,
+        )
+        if not acquired_entry:
+            logger.info(
+                "[REGISTRY] '%s' đang được worker khác xử lý, bỏ qua batch hiện tại.",
+                title,
+            )
+            return False, story_url, idx, False, False, StoryCrawlStatus.IN_PROGRESS
+
+        registry_story_id = acquired_entry.story_id
+        registry_status = StoryCrawlStatus.IN_PROGRESS
+        registry_result: Optional[str] = None
 
         async with STORY_SEM:
             cooldowns = crawl_state.setdefault("story_cooldowns", {})
@@ -916,10 +941,14 @@ async def process_genre_item(
             try:
                 if cooldown_candidate and cooldown_candidate > time.time():
                     story["_cooldown_until"] = cooldown_candidate
-                    human_ts = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(cooldown_candidate))
+                    human_ts = time.strftime(
+                        "%Y-%m-%d %H:%M:%S", time.localtime(cooldown_candidate)
+                    )
                     logger.info(
                         f"[COOLDOWN][STORY] Bỏ qua '{title}' trong batch cho đến {human_ts}."
                     )
+                    registry_status = StoryCrawlStatus.COOLDOWN
+                    registry_result = f"cooldown_until={human_ts}"
                     skip_due_to_cooldown = True
                 else:
                     slug = slugify_title(title)
@@ -927,21 +956,52 @@ async def process_genre_item(
                     await ensure_directory_exists(folder)
                     if story_url and story_url in completed_global:
                         details = await adapter.get_story_details(story_url, title)
-                        await save_story_metadata_file(story, genre_data, folder, details, None)
+                        await save_story_metadata_file(
+                            story, genre_data, folder, details, None
+                        )
                         done = True
                         processed_successfully = True
+                        registry_status = StoryCrawlStatus.COMPLETED
+                        registry_result = "completed"
                     else:
                         local_state = crawl_state.copy()
                         local_state["current_story_index_in_genre"] = idx
                         result = await process_story_item(
-                            session, story, genre_data, folder, local_state, adapter, site_key
+                            session,
+                            story,
+                            genre_data,
+                            folder,
+                            local_state,
+                            adapter,
+                            site_key,
                         )
                         done = bool(result)
                         processed_successfully = bool(result)
                         cooldown_after = story.get("_cooldown_until")
-                        is_cooldown = isinstance(cooldown_after, (int, float)) and cooldown_after > time.time()
+                        is_cooldown = (
+                            isinstance(cooldown_after, (int, float))
+                            and cooldown_after > time.time()
+                        )
                         if story_url and is_cooldown:
                             crawl_state.setdefault("story_cooldowns", {})[story_url] = cooldown_after
+                            registry_status = StoryCrawlStatus.COOLDOWN
+                            human_ts = time.strftime(
+                                "%Y-%m-%d %H:%M:%S", time.localtime(cooldown_after)
+                            )
+                            registry_result = f"cooldown_until={human_ts}"
+                        elif done and processed_successfully:
+                            registry_status = StoryCrawlStatus.COMPLETED
+                            registry_result = "completed"
+                        elif processed_successfully:
+                            registry_status = StoryCrawlStatus.FAILED
+                            registry_result = "partial_success"
+                        else:
+                            registry_status = StoryCrawlStatus.FAILED
+                            registry_result = "no_progress"
+            except Exception as exc:
+                registry_status = StoryCrawlStatus.FAILED
+                registry_result = f"exception:{exc}"
+                raise
             finally:
                 metrics_tracker.genre_story_finished(
                     site_key,
@@ -949,11 +1009,24 @@ async def process_genre_item(
                     title,
                     processed=processed_successfully,
                 )
+                story_registry.mark_status(
+                    registry_story_id,
+                    registry_status,
+                    result=registry_result,
+                    category_name=genre_name,
+                )
 
             if skip_due_to_cooldown:
-                return False, story_url, idx, True, False
+                return False, story_url, idx, True, False, registry_status
 
-            return done, story_url, idx, is_cooldown, processed_successfully
+            return (
+                done,
+                story_url,
+                idx,
+                is_cooldown,
+                processed_successfully,
+                registry_status,
+            )
 
     for batch in batches:
         story_lookup.clear()
@@ -987,8 +1060,26 @@ async def process_genre_item(
             tasks = [asyncio.create_task(handle_story(i, s)) for i, s in remaining]
             results = await asyncio.gather(*tasks)
             remaining = []
-            for done, url, idx, cooldown, processed_successfully in results:
+            for (
+                done,
+                url,
+                idx,
+                cooldown,
+                processed_successfully,
+                registry_status,
+            ) in results:
                 story_obj = story_lookup[idx]
+                if (
+                    registry_status == StoryCrawlStatus.IN_PROGRESS
+                    and not done
+                    and not processed_successfully
+                    and not cooldown
+                ):
+                    logger.debug(
+                        "[REGISTRY] Bỏ qua retry cho '%s' vì đang được xử lý ở worker khác.",
+                        story_obj.get("title", f"Story #{idx + 1}"),
+                    )
+                    continue
                 if processed_successfully:
                     processed_count += 1
                 if done:

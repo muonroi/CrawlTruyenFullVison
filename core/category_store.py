@@ -398,6 +398,17 @@ class CategoryStore:
         )
         return int(cur.lastrowid)
 
+    def ensure_story_record(self, site_key: str, story: Dict[str, Any]) -> int:
+        """Ensure a story exists in the ``stories`` table and return its id."""
+
+        if not isinstance(story, dict):
+            raise TypeError("story must be a mapping")
+
+        with self._lock:
+            with self._connect() as conn:
+                timestamp = self._now()
+                return self._upsert_story(conn, site_key, story, timestamp)
+
     def _finalise_missing_categories(
         self,
         conn: sqlite3.Connection,
