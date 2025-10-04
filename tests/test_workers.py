@@ -6,6 +6,7 @@ sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")
 
 import asyncio
 import json
+import time
 from types import SimpleNamespace
 import pytest
 from unittest.mock import AsyncMock, MagicMock
@@ -16,6 +17,7 @@ from workers import (
     crawler_single_missing_chapter,
     retry_failed_chapters,
 )
+from workers.multi_source_story_crawler import MultiSourceStoryCrawler, StoryCrawlRequest
 
 
 @pytest.fixture
@@ -305,6 +307,36 @@ async def test_main_sends_kafka_job(tmp_path, monkeypatch, mock_kafka_producer):
     )
 
     mock_kafka_producer.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_multi_source_crawler_respects_story_cooldown(tmp_path, monkeypatch):
+    crawler = MultiSourceStoryCrawler()
+    future_time = time.time() + 300
+    story = {
+        "title": "Demo Story",
+        "url": "https://example.com/story",
+        "sources": [{"url": "https://example.com/story", "site_key": "demo"}],
+        "total_chapters_on_site": 5,
+    }
+    request = StoryCrawlRequest(
+        site_key="demo",
+        session=None,
+        story_data_item=story,
+        current_discovery_genre_data={},
+        story_folder_path=str(tmp_path / "story"),
+        crawl_state={"story_cooldowns": {story["url"]: future_time}},
+    )
+    (tmp_path / "story").mkdir()
+
+    ensure_adapter_mock = AsyncMock()
+    monkeypatch.setattr(crawler, "_ensure_adapter", ensure_adapter_mock)
+
+    result = await crawler.crawl_story_until_complete(request)
+
+    assert result is None
+    ensure_adapter_mock.assert_not_called()
+    assert story["_cooldown_until"] == pytest.approx(future_time, rel=0.01)
 
 # Kept original test for main logic, as it's still relevant
 @pytest.mark.asyncio
