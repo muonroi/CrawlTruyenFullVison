@@ -1,11 +1,14 @@
 import json
 
+import pytest
+
 from utils import chapter_utils
 from utils.chapter_utils import (
     slugify_title,
     extract_real_chapter_number,
     remove_chapter_number_from_title,
     get_chapter_filename,
+    async_save_chapter_with_hash_check,
 )
 
 
@@ -151,4 +154,28 @@ def test_get_missing_chapters_skip_inconsistent_source(tmp_path, caplog):
 
     assert missing == []
     assert any("[MISMATCH]" in record.message for record in caplog.records)
+
+
+@pytest.mark.asyncio
+async def test_async_save_chapter_with_hash_check_rejects_none(tmp_path):
+    target = tmp_path / "chapter.txt"
+    with pytest.raises(ValueError):
+        await async_save_chapter_with_hash_check(str(target), None)  # type: ignore[arg-type]
+
+
+@pytest.mark.asyncio
+async def test_async_save_chapter_with_hash_check_accepts_bytes(tmp_path):
+    target = tmp_path / "chapter_bytes.txt"
+    result = await async_save_chapter_with_hash_check(str(target), b"Noi dung thu nghiem")
+    assert result == "new"
+    assert target.exists()
+    content = target.read_text(encoding="utf-8")
+    assert "Noi dung thu nghiem" in content
+
+
+@pytest.mark.asyncio
+async def test_async_save_chapter_with_hash_check_rejects_non_string_like(tmp_path):
+    target = tmp_path / "chapter_invalid.txt"
+    with pytest.raises(TypeError):
+        await async_save_chapter_with_hash_check(str(target), 12345)  # type: ignore[arg-type]
 
