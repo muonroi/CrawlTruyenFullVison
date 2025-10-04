@@ -1,5 +1,5 @@
 import time
-from typing import Any, Callable, Dict, Tuple
+from typing import Any, Callable, Dict, Tuple, Optional
 
 # Simple in-memory TTL cache for async functions
 
@@ -9,29 +9,35 @@ def _build_key(prefix: str, args: Tuple[Any, ...]) -> Tuple[str, Tuple[Any, ...]
 class AsyncTTLCache:
     def __init__(self, ttl: float = 300.0):
         self.ttl = ttl
-        self.cache: Dict[Tuple[str, Tuple[Any, ...]], Tuple[float, Any]] = {}
+        # Store (created_at, ttl, value)
+        self.cache: Dict[Tuple[str, Tuple[Any, ...]], Tuple[float, float, Any]] = {}
 
-    def get(self, key: Tuple[str, Tuple[Any, ...]]):
+    def get(self, key: Tuple[str, Tuple[Any, ...]], ttl: Optional[float] = None):
         now = time.time()
-        val = self.cache.get(key)
-        if val and now - val[0] < self.ttl:
-            return val[1]
-        if val:
-            self.cache.pop(key, None)
-        return None
+        record = self.cache.get(key)
+        if not record:
+            return None
 
-    def set(self, key: Tuple[str, Tuple[Any, ...]], value: Any):
-        self.cache[key] = (time.time(), value)
+        created_at, stored_ttl, value = record
+        effective_ttl = stored_ttl if ttl is None else min(stored_ttl, ttl)
+        if effective_ttl <= 0 or now - created_at >= effective_ttl:
+            self.cache.pop(key, None)
+            return None
+        return value
+
+    def set(self, key: Tuple[str, Tuple[Any, ...]], value: Any, ttl: Optional[float] = None):
+        entry_ttl = self.ttl if ttl is None else ttl
+        self.cache[key] = (time.time(), entry_ttl, value)
 
 cache = AsyncTTLCache()
 
 async def cached_get_story_details(adapter, url: str, title: str, ttl: float = 300.0):
     key = _build_key("story", (getattr(adapter, "SITE_KEY", str(id(adapter))), url))
-    val = cache.get(key)
+    val = cache.get(key, ttl=ttl)
     if val is not None:
         return val
     result = await adapter.get_story_details(url, title)
-    cache.set(key, result)
+    cache.set(key, result, ttl=ttl)
     return result
 
 async def cached_get_chapter_list(
@@ -43,9 +49,9 @@ async def cached_get_chapter_list(
     ttl: float = 300.0,
 ):
     key = _build_key("chapters", (site_key, url))
-    val = cache.get(key)
+    val = cache.get(key, ttl=ttl)
     if val is not None:
         return val
     result = await adapter.get_chapter_list(url, title, site_key, total_chapters=total_chapters)
-    cache.set(key, result)
+    cache.set(key, result, ttl=ttl)
     return result
