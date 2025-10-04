@@ -50,6 +50,7 @@ from core.crawl_planner import (
     build_category_plan,
     build_crawl_plan,
 )
+from core.category_change_detector import CategoryChangeDetector
 from core.category_store import CategoryStore
 from core.story_registry import StoryRegistry, StoryCrawlStatus
 from utils.batch_utils import get_optimal_batch_size, smart_delay, split_batches
@@ -338,6 +339,62 @@ def _derive_category_identifier(
     if isinstance(fallback, str) and fallback.strip():
         return fallback.strip()
     return f"{site_key}:unknown"
+
+
+def _load_previous_category_change_state(
+    crawl_state: Dict[str, Any], site_key: str
+) -> Dict[str, Any]:
+    container = crawl_state.get("category_change_detector")
+    if isinstance(container, dict):
+        previous = container.get(site_key)
+        if isinstance(previous, dict):
+            return previous
+    return {}
+
+
+def _store_category_change_state(
+    crawl_state: Dict[str, Any], site_key: str, state: Dict[str, Any]
+) -> None:
+    container = crawl_state.setdefault("category_change_detector", {})
+    if isinstance(container, dict):
+        container[site_key] = state
+
+
+def _build_category_refresh_jobs(
+    category: CategoryCrawlPlan,
+    site_key: str,
+    *,
+    category_id: str,
+    batch_size: int,
+    change_summary: Dict[str, Any],
+) -> List[Dict[str, Any]]:
+    stories = list(category.stories)
+    if not stories:
+        return []
+
+    chunk_size = max(1, int(batch_size))
+    batches: List[Dict[str, Any]] = []
+    total_parts = (len(stories) + chunk_size - 1) // chunk_size
+    for index, start in enumerate(range(0, len(stories), chunk_size), start=1):
+        chunk = stories[start : start + chunk_size]
+        if not chunk:
+            continue
+        batches.append(
+            {
+                "type": "category_batch_refresh",
+                "site_key": site_key,
+                "category_id": category_id,
+                "category_name": category.name,
+                "category_url": category.url,
+                "metadata": dict(category.metadata),
+                "raw_genre": dict(category.raw_genre),
+                "stories": list(chunk),
+                "part_index": index,
+                "total_parts": total_parts,
+                "change_summary": dict(change_summary),
+            }
+        )
+    return batches
 
 
 async def crawl_all_sources_until_full(
@@ -1418,6 +1475,69 @@ async def run_crawler(
         await save_crawl_state(crawl_state, state_file, site_key=site_key)
         return
 
+    change_ratio_threshold = float(
+        getattr(app_config, "CATEGORY_CHANGE_REFRESH_RATIO", 0.35) or 0.35
+    )
+    change_absolute_threshold = int(
+        getattr(app_config, "CATEGORY_CHANGE_REFRESH_ABSOLUTE", 50) or 50
+    )
+    change_min_story_count = int(
+        getattr(app_config, "CATEGORY_CHANGE_MIN_STORIES", 40) or 40
+    )
+    refresh_batch_size = int(
+        getattr(app_config, "CATEGORY_REFRESH_BATCH_SIZE", app_config.STORY_BATCH_SIZE)
+        or app_config.STORY_BATCH_SIZE
+    )
+
+    detector = CategoryChangeDetector(
+        ratio_threshold=change_ratio_threshold,
+        absolute_threshold=change_absolute_threshold,
+        min_story_count=change_min_story_count,
+    )
+    previous_change_state = _load_previous_category_change_state(crawl_state, site_key)
+    new_change_state: Dict[str, Any] = {}
+    scheduled_refresh_jobs: List[Dict[str, Any]] = []
+
+    for category in crawl_plan.categories:
+        category_id = _derive_category_identifier(category, category.metadata, site_key)
+        previous_entry = previous_change_state.get(category_id)
+        change_result = detector.evaluate(category.stories, previous_entry)
+        new_change_state[category_id] = {
+            "url_checksum": change_result.signature.url_checksum,
+            "content_signature": change_result.signature.content_signature,
+            "urls": change_result.urls,
+            "story_count": change_result.signature.story_count,
+        }
+        if change_result.requires_refresh:
+            summary_payload = {
+                "change_count": change_result.change_count,
+                "change_ratio": change_result.change_ratio,
+                "content_changed": change_result.content_changed,
+                "added_urls": change_result.added_urls[:10],
+                "removed_urls": change_result.removed_urls[:10],
+                "url_checksum": change_result.signature.url_checksum,
+                "content_signature": change_result.signature.content_signature,
+                "story_count": change_result.signature.story_count,
+            }
+            logger.warning(
+                "[CHANGE DETECTOR] Thể loại %s (%s) thay đổi lớn (%d mục, %.2f%%). Lên lịch refresh batch.",
+                category.name,
+                category_id,
+                change_result.change_count,
+                change_result.change_ratio * 100.0,
+            )
+            scheduled_refresh_jobs.extend(
+                _build_category_refresh_jobs(
+                    category,
+                    site_key,
+                    category_id=category_id,
+                    batch_size=refresh_batch_size,
+                    change_summary=summary_payload,
+                )
+            )
+
+    _store_category_change_state(crawl_state, site_key, new_change_state)
+
     snapshot_info = None
     try:
         snapshot_info = category_store.persist_snapshot(site_key, crawl_plan)
@@ -1440,6 +1560,16 @@ async def run_crawler(
     for category in crawl_plan.categories:
         _update_category_progress(crawl_state, category.name, len(category.stories), 0)
     await save_crawl_state(crawl_state, state_file, site_key=site_key)
+
+    if scheduled_refresh_jobs:
+        logger.info(
+            "[CHANGE DETECTOR] Gửi %d batch refresh cho %d thể loại tại %s.",
+            len(scheduled_refresh_jobs),
+            len({job.get("category_id") for job in scheduled_refresh_jobs}),
+            site_key,
+        )
+        for job in scheduled_refresh_jobs:
+            await send_job(job)
 
     indexed_categories = list(enumerate(crawl_plan.categories, start=1))
     total_genres = len(indexed_categories)
