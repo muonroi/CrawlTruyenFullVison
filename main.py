@@ -6,6 +6,7 @@ import random
 import sys
 import time
 import importlib.util
+import inspect
 try:
     _AIOHTTP_SPEC = importlib.util.find_spec("aiohttp")
 except ModuleNotFoundError:  # pragma: no cover - optional dependency missing
@@ -1150,9 +1151,20 @@ async def run_crawler(
         batches = split_batches(
             indexed_genres, max(1, (len(indexed_genres) + batch_size - 1) // batch_size)
         )
+        try:
+            process_params = inspect.signature(process_genre_with_limit).parameters
+        except (ValueError, TypeError):  # pragma: no cover - builtins or C functions
+            process_params = {}
+        supports_position = "position" in process_params
+        supports_total_genres = "total_genres" in process_params
         for batch_idx, genre_batch in enumerate(batches):
             tasks = []
             for position, genre in genre_batch:
+                call_kwargs = {}
+                if supports_position:
+                    call_kwargs["position"] = position
+                if supports_total_genres:
+                    call_kwargs["total_genres"] = total_genres
                 tasks.append(
                     process_genre_with_limit(
                         session,
@@ -1160,8 +1172,7 @@ async def run_crawler(
                         crawl_state,
                         adapter,
                         site_key,
-                        position=position,
-                        total_genres=total_genres,
+                        **call_kwargs,
                     )
                 )
             logger.info(
