@@ -104,6 +104,13 @@ def _load_settings() -> Dict[str, Any]:
         log_folder or "",
     )
 
+    category_snapshot_db = get_str("CATEGORY_SNAPSHOT_DB_PATH")
+    if not category_snapshot_db:
+        category_snapshot_db = os.path.join(state_folder, "category_snapshots.sqlite3")
+    snapshot_dir = os.path.dirname(category_snapshot_db)
+    if snapshot_dir:
+        _ensure_directories(snapshot_dir)
+
     retry_genre_round_limit = get_int("RETRY_GENRE_ROUND_LIMIT", required=True)
     retry_sleep_seconds = get_int("RETRY_SLEEP_SECONDS", required=True)
     retry_failed_chapters_passes = get_int("RETRY_FAILED_CHAPTERS_PASSES", required=True)
@@ -183,6 +190,7 @@ def _load_settings() -> Dict[str, Any]:
         "BACKUP_FOLDER": backup_folder,
         "STATE_FOLDER": state_folder,
         "LOG_FOLDER": log_folder,
+        "CATEGORY_SNAPSHOT_DB_PATH": category_snapshot_db,
         "RETRY_GENRE_ROUND_LIMIT": retry_genre_round_limit,
         "RETRY_SLEEP_SECONDS": retry_sleep_seconds,
         "RETRY_FAILED_CHAPTERS_PASSES": retry_failed_chapters_passes,

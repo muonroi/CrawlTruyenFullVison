@@ -9,6 +9,7 @@ import pytest
 
 import main
 from core.crawl_planner import CategoryCrawlPlan, CrawlPlan
+from core.category_store import SnapshotInfo
 
 
 @pytest.mark.asyncio
@@ -163,6 +164,17 @@ async def test_run_crawler_batches_all_genres(monkeypatch, tmp_path):
 
     monkeypatch.setattr(main, "build_crawl_plan", fake_build_crawl_plan)
 
+    class DummyStore:
+        def __init__(self):
+            self.calls = []
+
+        def persist_snapshot(self, site_key, plan, *, version=None):
+            self.calls.append((site_key, plan, version))
+            return SnapshotInfo(id=1, site_key=site_key, version="v-test", created_at="2024-01-01 00:00:00")
+
+    dummy_store = DummyStore()
+    monkeypatch.setattr(main, "category_store", dummy_store)
+
     await main.run_crawler(adapter="dummy", site_key="demo", genres=genres, settings=settings)
 
     assert len(process_calls) == len(genres)
@@ -172,6 +184,9 @@ async def test_run_crawler_batches_all_genres(monkeypatch, tmp_path):
     assert first_state["loaded"] is True
     assert "category_story_plan" in first_state
     assert first_state["category_story_plan"]["genre1"][0]["title"] == "genre1 Story"
+    assert "category_snapshots" in first_state
+    assert first_state["category_snapshots"]["demo"]["version"] == "v-test"
+    assert dummy_store.calls and dummy_store.calls[0][0] == "demo"
 
 
 @pytest.mark.asyncio
