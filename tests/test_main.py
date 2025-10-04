@@ -246,3 +246,77 @@ async def test_process_story_item_detects_missing_chapters(monkeypatch, tmp_path
     assert result is False
     add_missing_mock.assert_awaited_once_with("Sample Story", "http://example.com/story", 50, 1)
 
+
+@pytest.mark.asyncio
+async def test_process_genre_item_retries_and_skips(monkeypatch, tmp_path, caplog):
+    caplog.set_level("WARNING")
+
+    monkeypatch.setattr(main.app_config, "MAX_STORIES_PER_GENRE_PAGE", 2, raising=False)
+    monkeypatch.setattr(main.app_config, "MAX_STORIES_TOTAL_PER_GENRE", 0, raising=False)
+    monkeypatch.setattr(main.app_config, "RETRY_STORY_ROUND_LIMIT", 2, raising=False)
+    monkeypatch.setattr(
+        main.app_config,
+        "get_state_file",
+        lambda site_key: str(tmp_path / f"{site_key}.json"),
+        raising=False,
+    )
+
+    save_state_mock = AsyncMock()
+    monkeypatch.setattr(main, "save_crawl_state", save_state_mock)
+
+    sleep_mock = AsyncMock()
+    monkeypatch.setattr(main.asyncio, "sleep", sleep_mock)
+
+    ensure_dir_mock = AsyncMock()
+    monkeypatch.setattr(main, "ensure_directory_exists", ensure_dir_mock)
+
+    process_story_mock = AsyncMock(return_value=True)
+    monkeypatch.setattr(main, "process_story_item", process_story_mock)
+
+    monkeypatch.setattr(main, "load_skipped_stories", MagicMock())
+    monkeypatch.setattr(
+        main,
+        "is_story_skipped",
+        lambda story: story["title"] == "Skip me",
+    )
+
+    monkeypatch.setattr(main, "log_failed_genre", MagicMock())
+
+    main.DATA_FOLDER = str(tmp_path)
+    main.STORY_BATCH_SIZE = 2
+
+    stories = [
+        {"title": "Skip me", "url": "https://example.com/skip"},
+        {"title": "Process me", "url": "https://example.com/process"},
+    ]
+
+    adapter = SimpleNamespace(
+        get_all_stories_from_genre_with_page_check=AsyncMock(
+            side_effect=[(stories, 5, 3), (stories, 5, 5)]
+        ),
+        get_story_details=AsyncMock(return_value={}),
+    )
+
+    crawl_state = {}
+    genre_data = {"name": "Tiên Hiệp", "url": "https://example.com/the-loai"}
+
+    await main.process_genre_item(None, genre_data, crawl_state, adapter, "demo")
+
+    assert adapter.get_all_stories_from_genre_with_page_check.await_count == 2
+    assert sleep_mock.await_count >= 1
+
+    retry_messages = [rec.message for rec in caplog.records if "retry" in rec.message.lower()]
+    assert retry_messages, "Expected retry warning to be logged"
+
+    assert any("[SKIP]" in rec.message for rec in caplog.records)
+
+    process_story_mock.assert_awaited_once()
+    ensure_dir_mock.assert_awaited_once()
+
+    assert sorted(crawl_state.get("globally_completed_story_urls", [])) == sorted(
+        ["https://example.com/process", "https://example.com/skip"]
+    )
+
+    # save_crawl_state should be called at least twice: before fetching and after processing
+    assert save_state_mock.await_count >= 2
+
