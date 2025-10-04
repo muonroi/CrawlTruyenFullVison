@@ -1,7 +1,4 @@
-from typing import Any, Dict, List, Optional
-
-import pytest
-
+from collections import Counter
 from typing import Any, Dict, List, Optional
 
 import pytest
@@ -177,4 +174,60 @@ def test_split_into_batches_rejects_invalid_size():
     plan = CrawlPlan(site_key="stub")
     with pytest.raises(ValueError):
         plan.split_into_batches(0)
+
+
+def test_schedule_batches_by_quota_balances_workloads():
+    plan = CrawlPlan(site_key="stub")
+
+    def add_category(name: str, domain: str, count: int, category_id: str) -> None:
+        url = f"https://{domain}/{name.lower().replace(' ', '-')}"
+        stories = [
+            {"title": f"{name} Story {i}", "url": f"https://{domain}/story-{category_id}-{i}"}
+            for i in range(count)
+        ]
+        plan.add_category(
+            CategoryCrawlPlan(
+                name=name,
+                url=url,
+                stories=stories,
+                metadata={"category_id": category_id},
+            )
+        )
+
+    add_category("Tiên Hiệp", "example.com", 5, "cat-1")
+    add_category("Kiếm Hiệp", "example.com", 3, "cat-2")
+    add_category("Đô Thị", "another.com", 2, "cat-3")
+
+    batches = plan.schedule_batches_by_quota(
+        max_batch_size=3,
+        max_category_batch_size=2,
+        max_jobs_per_category=1,
+        max_jobs_per_domain=2,
+    )
+
+    assert batches
+
+    cat1_jobs = [job for batch in batches for job in batch if job.category_id == "cat-1"]
+    assert len(cat1_jobs) == 3  # 5 stories split into 3 parts (2, 2, 1)
+    assert cat1_jobs[0].part_index == 1
+    assert cat1_jobs[0].total_parts == 3
+
+    seen_batch_indexes = {
+        batch_index
+        for batch_index, batch in enumerate(batches)
+        if any(job.category_id == "cat-1" for job in batch)
+    }
+    assert len(seen_batch_indexes) > 1  # spread across multiple batches
+
+    for batch in batches:
+        assert len(batch) <= 3
+        per_category = Counter(job.category_id for job in batch)
+        per_domain = Counter(job.domain for job in batch if job.domain)
+        assert all(count <= 1 for count in per_category.values())
+        assert all(count <= 2 for count in per_domain.values())
+        assert all(len(job.stories) <= 2 for job in batch)
+
+    sample_payload = batches[0][0].to_payload()
+    assert sample_payload["category_id"]
+    assert sample_payload["stories"]
 
