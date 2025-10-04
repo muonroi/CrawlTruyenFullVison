@@ -894,7 +894,10 @@ def get_missing_chapters(
     return missing
 
 
-def slugify_title(title: str) -> str:
+def slugify_title(title: Optional[str]) -> str:
+    if not title:
+        return ""
+
     s = unidecode(title)
     s = re.sub(r'[^\w\s-]', '', s.lower())  # bo ky tu dac biet, lowercase
     s = re.sub(r'[\s]+', '-', s)            # khoang trang thanh dau -
