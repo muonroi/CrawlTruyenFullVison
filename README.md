@@ -12,6 +12,7 @@ Một project crawl truyện nâng cao, hỗ trợ async, đa nguồn, đa thể
 -   **Clean nội dung thông minh:** Lọc quảng cáo, dòng thừa, anti-spam theo pattern dễ mở rộng.
 -   **Lưu metadata chuẩn:** Metadata đầy đủ cho từng truyện, backup & validate tự động.
 -   **Phục hồi chương/thể loại bị miss:** Tự động detect và crawl bù chương/truyện/thể loại thiếu hoặc lỗi.
+-   **Dashboard & cảnh báo realtime:** Theo dõi tiến độ crawl, sức khỏe từng site và cảnh báo lỗi đột biến qua Telegram.
 
 ## 🗂️ Cấu trúc thư mục chính
 ```json
@@ -73,7 +74,9 @@ python main.py metruyenfull
 
 **scraper.py (hoặc module tương tự)**: *Quản lý việc gửi request HTTP, fake User-Agent, luân chuyển proxy, xử lý các lỗi thường gặp (như 403), retry và tự động loại bỏ proxy lỗi*
 
-**utils/logger.py**: *Ghi log chi tiết quá trình hoạt động ra file (ví dụ: crawler.log) và hiển thị trên console.*
+**utils/logger.py**: *Ghi log chi tiết theo từng nhóm (core, anti-bot, chương lỗi, tiến trình) ra các file riêng và hiển thị trên console.*
+
+**utils/metrics_tracker.py**: *Thu thập số liệu crawl (tiến độ truyện, hàng đợi skip, sức khỏe site) và xuất ra `logs/dashboard.json` để giám sát.*
 
 **utils/notifier.py**: *Gửi thông báo qua Telegram khi hoàn tất quá trình crawl, hoặc khi có cảnh báo quan trọng (ví dụ: hết proxy khả dụng).*
 
@@ -123,6 +126,14 @@ thư viện được khai báo trong `requirements.txt` (có thể thông qua fi
 pip install -r requirements-dev.txt
 pytest
 ```
+
+## 📊 Dashboard giám sát & CLI
+
+-   Hệ thống tự động cập nhật số liệu vào `logs/dashboard.json`. Bạn có thể mở
+    file này để tích hợp vào dashboard tĩnh hoặc đẩy lên dịch vụ giám sát.
+-   Chạy `python scripts/show_crawl_dashboard.py` để xem nhanh thống kê ngay
+    trên terminal (truyện đang crawl, chương còn thiếu, hàng đợi skip, tỷ lệ
+    lỗi từng site...).
 
 ## 🔄 Quy trình crawl đa nguồn an toàn
 
