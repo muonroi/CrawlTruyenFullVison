@@ -5,7 +5,8 @@ import datetime
 import re
 import traceback
 import shutil
-from typing import cast
+from dataclasses import dataclass
+from typing import Any, Dict, List, Optional, cast
 from adapters.factory import get_adapter
 from config import config as app_config
 from config.config import BASE_URLS, COMPLETED_FOLDER, DATA_FOLDER, LOADED_PROXIES, PROXIES_FILE, PROXIES_FOLDER
@@ -38,6 +39,166 @@ MAX_CONCURRENT_STORIES = 3
 STORY_SEM = asyncio.Semaphore(MAX_CONCURRENT_STORIES)
 MISSING_SUMMARY_LOG = "missing_summary.log"
 MAX_SOURCE_TIMEOUT_RETRY = 3
+
+
+@dataclass(slots=True)
+class MissingStoryContext:
+    story_folder: str
+    metadata: Dict[str, Any]
+    metadata_path: str
+    source_list: List[Dict[str, Any]]
+    primary_source: Optional[Dict[str, Any]]
+    latest_total: int
+
+
+def _iter_story_folders() -> List[str]:
+    return [
+        os.path.join(DATA_FOLDER, cast(str, folder_name))
+        for folder_name in os.listdir(DATA_FOLDER)
+        if os.path.isdir(os.path.join(DATA_FOLDER, cast(str, folder_name)))
+    ]
+
+
+def _flush_autofix_titles() -> None:
+    if not auto_fixed_titles:
+        return
+
+    msg = "[AUTO-FIX] Đã tự động tạo metadata cho các truyện: " + ", ".join(auto_fixed_titles[:10])
+    if len(auto_fixed_titles) > 10:
+        msg += f" ... (và {len(auto_fixed_titles) - 10} truyện nữa)"
+    logger.debug(msg)
+    auto_fixed_titles.clear()
+
+
+async def _prepare_missing_story_context(
+    story_folder: str,
+    site_key: str,
+    adapter,
+    force_unskip: bool = False,
+) -> Optional[MissingStoryContext]:
+    metadata_path = os.path.join(story_folder, "metadata.json")
+
+    if os.path.dirname(story_folder) == os.path.abspath(COMPLETED_FOLDER):
+        return None
+
+    metadata: Optional[Dict[str, Any]] = None
+    need_autofix = False
+
+    if not os.path.exists(metadata_path):
+        guessed_url = f"{BASE_URLS.get(site_key, '').rstrip('/')}/{os.path.basename(story_folder)}"
+        logger.info(f"[AUTO-FIX] Không có metadata.json, đang lấy metadata chi tiết từ {guessed_url}")
+        details = await cached_get_story_details(
+            adapter, guessed_url, os.path.basename(story_folder).replace("-", " ")
+        )
+        logger.info("... sau await get_story_details ...")
+        metadata = autofix_metadata(story_folder, site_key)
+        if details:
+            for k, v in details.items():
+                if v is not None and v != "" and metadata.get(k) != v:
+                    logger.info(f"[UPDATE] {metadata['title']}: Trường '{k}' được cập nhật.")
+                    metadata[k] = v
+            with open(metadata_path, "w", encoding="utf-8") as f:
+                json.dump(metadata, f, ensure_ascii=False, indent=4)
+            logger.info(
+                f"[AUTO-FIX] Đã tạo metadata đầy đủ/merge cho '{metadata.get('title')}' ({metadata.get('total_chapters_on_site', 0)} chương)"
+            )
+            fields_required = ["title", "categories", "total_chapters_on_site", "author", "description", "cover", "sources"]
+            missing = [f for f in fields_required if not metadata.get(f)]
+            if missing:
+                logger.warning(f"[AUTO-FIX] Metadata của '{metadata.get('title')}' vẫn còn thiếu các trường: {missing}")
+        else:
+            logger.info(
+                f"[AUTO-FIX] Tạo metadata tạm cho '{metadata['title']}' ({metadata.get('total_chapters_on_site', 0)} chương)"
+            )
+        auto_fixed_titles.append(metadata["title"])
+    else:
+        try:
+            with open(metadata_path, "r", encoding="utf-8") as f:
+                metadata = json.load(f)
+
+            fixed_sources = []
+            for src in metadata.get("sources", []):
+                s_url = src.get("url") if isinstance(src, dict) else src
+                s_key = (
+                    get_site_key_from_url(s_url)
+                    or (src.get("site_key") if isinstance(src, dict) else None)
+                    or (src.get("site") if isinstance(src, dict) else None)
+                    or metadata.get("site_key")
+                )
+                if s_url and s_key and is_url_for_site(s_url, s_key):
+                    fixed_sources.append(src)
+                else:
+                    logger.warning(
+                        f"[FIX] Source có url {s_url} không đúng domain với key {s_key}, đã loại khỏi sources."
+                    )
+            metadata["sources"] = fixed_sources
+
+            if not isinstance(metadata.get("sources", []), list):
+                need_autofix = True
+            fields_required = ["title", "categories", "total_chapters_on_site"]
+            if not all(metadata.get(f) for f in fields_required):
+                need_autofix = True
+        except Exception as ex:
+            logger.warning(
+                f"[AUTO-FIX] metadata.json lỗi/parsing fail tại {story_folder}, sẽ xoá file và tạo lại! {ex}"
+            )
+            need_autofix = True
+
+    if need_autofix:
+        try:
+            os.remove(metadata_path)
+        except Exception as ex:
+            logger.error(f"Lỗi xóa metadata lỗi: {ex}")
+        metadata = autofix_metadata(story_folder, site_key)
+        auto_fixed_titles.append(metadata["title"])
+
+    if not metadata:
+        return None
+
+    source_list, primary_source = ensure_primary_source(metadata, metadata_path)
+
+    if metadata.get("site_key") and metadata.get("site_key") != site_key:
+        logger.debug(
+            f"[SKIP] '{metadata.get('title')}' thuộc nguồn chuẩn {metadata.get('site_key')} – bỏ qua tại worker {site_key}."
+        )
+        return None
+
+    if force_unskip:
+        changed = False
+        if metadata.get("skip_crawl"):
+            metadata.pop("skip_crawl", None)
+            changed = True
+        if "meta_retry_count" in metadata:
+            metadata.pop("meta_retry_count", None)
+            changed = True
+        if changed:
+            with open(metadata_path, "w", encoding="utf-8") as f:
+                json.dump(metadata, f, ensure_ascii=False, indent=4)
+            logger.info(f"[UNSKIP] Tự động unskip: {metadata.get('title')}")
+
+    if metadata.get("skip_crawl", False):
+        logger.info(
+            f"[SKIP] Truyện '{metadata.get('title')}' đã bị đánh dấu bỏ qua (skip_crawl), không crawl lại nữa."
+        )
+        return None
+
+    if not await fix_metadata_with_retry(
+        metadata, metadata_path, story_folder, site_key=site_key, adapter=adapter
+    ):
+        return None
+
+    latest_total = await refresh_total_chapters_from_web(metadata, metadata_path, adapter)
+    if not latest_total:
+        latest_total = metadata.get("total_chapters_on_site") or 0
+
+    return MissingStoryContext(
+        story_folder=story_folder,
+        metadata=metadata,
+        metadata_path=metadata_path,
+        source_list=source_list,
+        primary_source=primary_source,
+        latest_total=latest_total,
+    )
 
 def calculate_missing_crawl_timeout(num_chapters: int | None = None) -> float:
     """Return a dynamic timeout for crawling missing chapters."""
@@ -382,137 +543,26 @@ async def check_and_crawl_missing_all_stories(adapter, home_page_url, site_key, 
     await initialize_scraper(site_key)
     crawl_state = await load_crawl_state(state_file, site_key)
 
-    # Lấy danh sách tất cả story folder cần crawl
-    story_folders = [
-        os.path.join(DATA_FOLDER, cast(str, f))
-        for f in os.listdir(DATA_FOLDER)
-        if os.path.isdir(os.path.join(DATA_FOLDER, cast(str, f)))
-    ]
+    story_folders = _iter_story_folders()
     story_retry_counts: dict[str, int] = {}
 
     # ============ 1. Kiểm tra và crawl thiếu theo từng truyện ============
     for story_folder in story_folders:
-        metadata_path = os.path.join(story_folder, "metadata.json")
-        if not os.path.exists(metadata_path):
-            continue
-        with open(metadata_path, "r", encoding="utf-8") as f:
-            metadata = json.load(f)
-
-        source_list, primary_source = ensure_primary_source(metadata, metadata_path)
-
-        if site_key != metadata.get("site_key"):
-            logger.debug(
-                f"[SKIP] '{metadata.get('title')}' thuộc nguồn chuẩn {metadata.get('site_key')} – bỏ qua tại worker {site_key}."
-            )
-            continue
-        need_autofix = False
-        metadata = None
-        if auto_fixed_titles:
-            msg = "[AUTO-FIX] Đã tự động tạo metadata cho các truyện: " + ", ".join(auto_fixed_titles[:10])
-            if len(auto_fixed_titles) > 10:
-                msg += f" ... (và {len(auto_fixed_titles)-10} truyện nữa)"
-            #await send_discord_notify(msg)
-            auto_fixed_titles.clear()
-        if os.path.dirname(story_folder) == os.path.abspath(COMPLETED_FOLDER):
-            continue
-        metadata_path = os.path.join(story_folder, "metadata.json")
-        if not os.path.exists(metadata_path):
-            guessed_url = f"{BASE_URLS.get(site_key, '').rstrip('/')}/{os.path.basename(story_folder)}"
-            logger.info(f"[AUTO-FIX] Không có metadata.json, đang lấy metadata chi tiết từ {guessed_url}")
-            details = await cached_get_story_details(
-                adapter, guessed_url, os.path.basename(story_folder).replace("-", " ")
-            )
-            logger.info("... sau await get_story_details ...")
-            metadata = autofix_metadata(story_folder, site_key)
-            if details:
-                # Merge tất cả các trường (kể cả trường mới hoặc chỉ có trong details)
-                for k, v in details.items():
-                    if v is not None and v != "" and metadata.get(k) != v:
-                        logger.info(f"[UPDATE] {metadata['title']}: Trường '{k}' được cập nhật.")
-                        metadata[k] = v
-                with open(metadata_path, "w", encoding="utf-8") as f:
-                    json.dump(metadata, f, ensure_ascii=False, indent=4)
-                logger.info(f"[AUTO-FIX] Đã tạo metadata đầy đủ/merge cho '{metadata.get('title')}' ({metadata.get('total_chapters_on_site', 0)} chương)")
-                # Log trường thiếu cho dev dễ debug adapter
-                fields_required = ['title', 'categories', 'total_chapters_on_site', 'author', 'description', 'cover', 'sources']
-                missing = [f for f in fields_required if not metadata.get(f)]
-                if missing:
-                    logger.warning(f"[AUTO-FIX] Metadata của '{metadata.get('title')}' vẫn còn thiếu các trường: {missing}")
-            else:
-                logger.info(f"[AUTO-FIX] Tạo metadata tạm cho '{metadata['title']}' ({metadata.get('total_chapters_on_site', 0)} chương)")
-            auto_fixed_titles.append(metadata["title"])
-
-
-        try:
-            with open(metadata_path, "r", encoding="utf-8") as f:
-                metadata = json.load(f)
-            # --- Clean sources sai domain ở đây ---
-            fixed_sources = []
-            for src in metadata.get("sources", []):
-                s_url = src.get("url") if isinstance(src, dict) else src
-                s_key = (
-                    get_site_key_from_url(s_url)
-                    or (src.get("site_key") if isinstance(src, dict) else None)
-                    or (src.get("site") if isinstance(src, dict) else None)
-                    or metadata.get("site_key")
-                )
-                if s_url and s_key and is_url_for_site(s_url, s_key):
-                    fixed_sources.append(src)
-                else:
-                    logger.warning(
-                        f"[FIX] Source có url {s_url} không đúng domain với key {s_key}, đã loại khỏi sources."
-                    )
-            metadata["sources"] = fixed_sources
-            # --------------------------------------
-
-            source_list, primary_source = ensure_primary_source(metadata, metadata_path)
-
-            # Validate cấu trúc sources và các trường bắt buộc
-            if not isinstance(metadata.get("sources", []), list):
-                need_autofix = True
-            fields_required = ['title', 'categories', 'total_chapters_on_site']
-            if not all(metadata.get(f) for f in fields_required):
-                need_autofix = True
-        except Exception as ex:
-            logger.warning(f"[AUTO-FIX] metadata.json lỗi/parsing fail tại {story_folder}, sẽ xoá file và tạo lại! {ex}")
-            need_autofix = True
-
-
-        if need_autofix:
-            try:
-                os.remove(metadata_path)
-            except Exception as ex:
-                logger.error(f"Lỗi xóa metadata lỗi: {ex}")
-            metadata = autofix_metadata(story_folder, site_key)
-            auto_fixed_titles.append(metadata["title"])
-
-        source_list, primary_source = ensure_primary_source(metadata, metadata_path)
-
-        # Nếu force_unskip: Xoá skip_crawl & meta_retry_count nếu có
-        if force_unskip:
-            changed = False
-            if metadata.get("skip_crawl"): #type:ignore
-                metadata.pop("skip_crawl", None) #type:ignore
-                changed = True
-            if "meta_retry_count" in metadata: #type:ignore
-                metadata.pop("meta_retry_count", None) #type:ignore
-                changed = True
-            if changed:
-                with open(metadata_path, "w", encoding="utf-8") as f:
-                    json.dump(metadata, f, ensure_ascii=False, indent=4)
-                logger.info(f"[UNSKIP] Tự động unskip: {metadata.get('title')}") #type:ignore
-
-        if metadata.get("skip_crawl", False): #type:ignore
-            logger.info(f"[SKIP] Truyện '{metadata.get('title')}' đã bị đánh dấu bỏ qua (skip_crawl), không crawl lại nữa.") #type:ignore
+        _flush_autofix_titles()
+        context = await _prepare_missing_story_context(
+            story_folder,
+            site_key,
+            adapter,
+            force_unskip=force_unskip,
+        )
+        if not context:
             continue
 
-        # Auto fix metadata nếu thiếu (và skip nếu quá 3 lần)
-        if not await fix_metadata_with_retry(metadata, metadata_path, story_folder, site_key=site_key, adapter=adapter):
-            continue
-
-        latest_total = await refresh_total_chapters_from_web(metadata, metadata_path, adapter)
-        if not latest_total:
-            latest_total = metadata.get("total_chapters_on_site") or 0
+        metadata = context.metadata
+        metadata_path = context.metadata_path
+        source_list = context.source_list
+        primary_source = context.primary_source
+        latest_total = context.latest_total
 
         crawled_files = count_txt_files(story_folder)
         if crawled_files < latest_total: #type:ignore
@@ -524,7 +574,11 @@ async def check_and_crawl_missing_all_stories(adapter, home_page_url, site_key, 
                 logger.error(f"Không có nguồn nào hợp lệ cho truyện '{metadata['title']}'. Bỏ qua.")
                 continue
 
-            primary_source = next((src for src in source_list if src.get("is_primary")), source_list[0]) if source_list else None
+            primary_source = primary_source or (
+                next((src for src in source_list if src.get("is_primary")), source_list[0])
+                if source_list
+                else None
+            )
             fallback_sources = [src for src in source_list if src is not primary_source]
             ordered_sources = [primary_source] + fallback_sources if primary_source else source_list
 
