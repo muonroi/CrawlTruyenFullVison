@@ -161,10 +161,6 @@ def _load_settings() -> Dict[str, Any]:
     default_mode = get_str("MODE")
     default_crawl_mode = get_str("CRAWL_MODE")
 
-    discord_webhook_url = get_str("DISCORD_WEBHOOK_URL")
-    discord_bot_token = get_str("DISCORD_TOKEN_BOT")
-    discord_user_id = get_str("DISCORD_USER_ID")
-    discord_server_id = get_str("DISCORD_SERVER_ID")
 
     missing_timeout = get_int("MISSING_CRAWL_TIMEOUT_SECONDS", required=True)
     missing_timeout_per_chapter = get_float("MISSING_CRAWL_TIMEOUT_PER_CHAPTER", required=True)
@@ -180,10 +176,6 @@ def _load_settings() -> Dict[str, Any]:
         "TIMEOUT_REQUEST": timeout_request,
         "RETRY_ATTEMPTS": retry_attempts,
         "DELAY_ON_RETRY": delay_on_retry,
-        "DISCORD_WEBHOOK_URL": discord_webhook_url,
-        "DISCORD_BOT_TOKEN": discord_bot_token,
-        "DISCORD_USER_ID": discord_user_id,
-        "DISCORD_SERVER_ID": discord_server_id,
         "DATA_FOLDER": data_folder,
         "COMPLETED_FOLDER": completed_folder,
         "BACKUP_FOLDER": backup_folder,

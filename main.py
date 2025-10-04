@@ -50,6 +50,7 @@ from utils.chapter_utils import (
     slugify_title,
     count_dead_chapters,
     get_real_total_chapters,
+    get_chapter_filename,
 )
 from utils.domain_utils import get_site_key_from_url, is_url_for_site
 from utils.io_utils import (
@@ -568,7 +569,7 @@ async def process_story_item(
         current_discovery_genre_data,
         story_global_folder_path,
         crawl_state,
-        num_batches=10,
+        num_batches=app_config.NUM_CHAPTER_BATCHES,
         state_file=state_file,
         adapter=adapter,
     )
@@ -1077,7 +1078,7 @@ async def run_crawler(
     genres_done = 0
 
     async with aiohttp.ClientSession() as session:
-        batch_size = int(app_config.BATCH_SIZE_OVERRIDE or get_optimal_batch_size(len(genres)))
+        batch_size = settings.genre_batch_size
         batches = split_batches(
             genres, max(1, (len(genres) + batch_size - 1) // batch_size)
         )
@@ -1116,6 +1117,61 @@ async def run_all_sites(crawl_mode: Optional[str] = None):
 
     await asyncio.gather(*tasks)
 
+
+
+async def run_retry_passes(site_key: str):
+    passes = app_config.RETRY_FAILED_CHAPTERS_PASSES
+    if not passes or passes <= 0:
+        return
+
+    logger.info(f"=== BẮT ĐẦU CÁC LƯỢT RETRY CHƯƠNG ĐÃ LỖI (PASSES={passes}) ===")
+    for i in range(passes):
+        logger.info(f"--- Lượt {i+1}/{passes} ---")
+        
+        dead_files = glob.glob(os.path.join(app_config.DATA_FOLDER, "**", "dead_chapters.json"), recursive=True)
+        if not dead_files:
+            logger.info("Không tìm thấy chương nào bị đánh dấu 'dead'. Bỏ qua lượt này.")
+            break
+
+        total_queued = 0
+        for dead_file in dead_files:
+            try:
+                with open(dead_file, 'r', encoding='utf-8') as f:
+                    dead_chapters = json.load(f)
+                
+                story_folder = os.path.dirname(dead_file)
+                metadata_path = os.path.join(story_folder, "metadata.json")
+                with open(metadata_path, 'r', encoding='utf-8') as f:
+                    metadata = json.load(f)
+
+                for chapter in dead_chapters:
+                    job = {
+                        "type": "retry_chapter",
+                        "site_key": metadata.get("site_key"),
+                        "chapter_url": chapter.get("url"),
+                        "chapter_title": chapter.get("title"),
+                        "story_title": metadata.get("title"),
+                        "filename": os.path.join(story_folder, get_chapter_filename(chapter.get("title"), chapter.get("index")))
+                    }
+                    await send_job(job)
+                    total_queued += 1
+                
+                # Xóa file sau khi đã gửi job
+                os.remove(dead_file)
+                logger.info(f"Đã gửi {len(dead_chapters)} job retry từ file {dead_file} và xóa file.")
+
+            except Exception as e:
+                logger.error(f"Lỗi khi xử lý file dead_chapters: {dead_file} - {e}")
+
+        if total_queued == 0:
+            logger.info("Không có chương nào cần retry trong lượt này.")
+            break
+
+        if i < passes - 1:
+            logger.info(f"Đã gửi {total_queued} job. Chờ {app_config.RETRY_SLEEP_SECONDS} giây trước khi bắt đầu lượt tiếp theo...")
+            await asyncio.sleep(app_config.RETRY_SLEEP_SECONDS)
+
+    logger.info("=== KẾT THÚC CÁC LƯỢT RETRY ===")
 
 
 async def run_single_site(
@@ -1172,6 +1228,9 @@ async def run_single_site(
                 get_adapter(site_key), site_key, settings, shuffle_proxies
             )
             await crawl_all_missing_stories(site_key, homepage_url)
+
+        # Cuối cùng, chạy các lượt retry cho các chương đã thất bại
+        await run_retry_passes(site_key)
     finally:
         if background_started:
             await stop_missing_background_loop()

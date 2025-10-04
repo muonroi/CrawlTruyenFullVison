@@ -5,6 +5,7 @@ import time
 from typing import Any, Dict, Optional
 from utils.logger import logger
 from utils.io_utils import ensure_backup_folder, ensure_directory_exists, safe_write_file, safe_write_json
+from config import config as app_config
 
 
 async def save_story_metadata_file(
@@ -120,10 +121,9 @@ async def add_missing_story(story_title, story_url, total_chapters, crawled_chap
     await safe_write_json(path,data)
 
 
-def backup_crawl_state(state_file='crawl_state.json', backup_folder="backup"):
-    if not os.path.exists(state_file):
-        print(f"[Backup] Không tìm thấy file state: {state_file} => Bỏ qua backup.")
-        return
+def backup_crawl_state(state_file='crawl_state.json', backup_folder=None):
+    if backup_folder is None:
+        backup_folder = app_config.BACKUP_FOLDER
     ensure_backup_folder(backup_folder)
     ts = time.strftime("%Y%m%d_%H%M%S")
     base_name = os.path.basename(state_file)

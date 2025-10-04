@@ -1,9 +1,10 @@
 import json
 import asyncio
 from aiokafka import AIOKafkaProducer
+from config import config as app_config
 
-KAFKA_TOPIC = "crawl_truyen"
-KAFKA_BOOTSTRAP_SERVERS = "localhost:9092"
+KAFKA_TOPIC = app_config.KAFKA_TOPIC
+KAFKA_BOOTSTRAP_SERVERS = app_config.KAFKA_BOOTSTRAP_SERVERS
 
 sample_jobs = {
     "full_site": {
