@@ -80,3 +80,42 @@ def test_metrics_tracker_genre_tracking(monkeypatch, tmp_path):
     assert site_genres[0]["total_genres"] >= 3
     assert site_genres[0]["completed_genres"] == 1
     assert site_genres[0]["genres"][0]["stories"] == 1
+
+
+def test_metrics_tracker_genre_progress_reset(monkeypatch, tmp_path):
+    dashboard = tmp_path / "dashboard_genres_reset.json"
+    monkeypatch.setenv("STORYFLOW_DASHBOARD_FILE", str(dashboard))
+
+    tracker = CrawlMetricsTracker()
+    site_key = "site-a"
+    genre_url = "https://example.com/genre/tien-hiep"
+
+    tracker.genre_started(site_key, "Tiên Hiệp", genre_url)
+    tracker.update_genre_pages(
+        site_key,
+        genre_url,
+        crawled_pages=50,
+        total_pages=70,
+        current_page=50,
+    )
+
+    snapshot = tracker.get_snapshot()
+    active_genre = snapshot["genres"]["in_progress"][0]
+    assert active_genre["crawled_pages"] == 50
+    assert active_genre["current_page"] == 50
+
+    tracker.genre_completed(site_key, genre_url)
+
+    tracker.genre_started(site_key, "Tiên Hiệp", genre_url)
+    tracker.update_genre_pages(
+        site_key,
+        genre_url,
+        crawled_pages=1,
+        total_pages=70,
+        current_page=1,
+    )
+
+    refreshed_snapshot = tracker.get_snapshot()
+    refreshed_genre = refreshed_snapshot["genres"]["in_progress"][0]
+    assert refreshed_genre["crawled_pages"] == 1
+    assert refreshed_genre["current_page"] == 1
