@@ -100,3 +100,74 @@ async def test_get_genres_falls_back_to_desktop_domain(monkeypatch):
     assert len(requested_urls) >= 2
     assert any("tangthuvien.net" in url and "m.tangthuvien.net" not in url for url in requested_urls)
     assert any("/the-loai/" in genre["url"] for genre in genres)
+
+
+@pytest.mark.asyncio
+async def test_get_all_stories_handles_missing_total_pages(monkeypatch):
+    adapter = TangThuVienAdapter()
+
+    pages = {
+        1: (
+            [
+                {"title": "Story 1", "url": "https://tangthuvien.net/doc-truyen/story-1"},
+            ],
+            1,
+        ),
+        2: (
+            [
+                {"title": "Story 2", "url": "https://tangthuvien.net/doc-truyen/story-2"},
+            ],
+            1,
+        ),
+        3: ([], 1),
+    }
+
+    async def fake_get(self, genre_url, page=1):
+        return pages.get(page, ([], 0))
+
+    monkeypatch.setattr(TangThuVienAdapter, "get_stories_in_genre", fake_get)
+
+    stories, total_pages, crawled_pages = await adapter.get_all_stories_from_genre_with_page_check(
+        genre_name="Tiên Hiệp",
+        genre_url="https://tangthuvien.net/the-loai/tien-hiep",
+        site_key="tangthuvien",
+    )
+
+    assert [story["title"] for story in stories] == ["Story 1", "Story 2"]
+    assert total_pages >= 2
+    assert crawled_pages == 3
+
+
+@pytest.mark.asyncio
+async def test_get_all_stories_stops_on_duplicates(monkeypatch):
+    adapter = TangThuVienAdapter()
+
+    pages = {
+        1: (
+            [
+                {"title": "Story 1", "url": "https://tangthuvien.net/doc-truyen/story-1"},
+            ],
+            5,
+        ),
+        2: (
+            [
+                {"title": "Story 1", "url": "https://tangthuvien.net/doc-truyen/story-1"},
+            ],
+            5,
+        ),
+    }
+
+    async def fake_get(self, genre_url, page=1):
+        return pages.get(page, ([], 0))
+
+    monkeypatch.setattr(TangThuVienAdapter, "get_stories_in_genre", fake_get)
+
+    stories, total_pages, crawled_pages = await adapter.get_all_stories_from_genre_with_page_check(
+        genre_name="Tiên Hiệp",
+        genre_url="https://tangthuvien.net/the-loai/tien-hiep",
+        site_key="tangthuvien",
+    )
+
+    assert len(stories) == 1
+    assert total_pages >= 1
+    assert crawled_pages == 2

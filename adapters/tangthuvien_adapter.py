@@ -49,6 +49,8 @@ def _with_page_parameter(url: str, page: int) -> str:
 
 class TangThuVienAdapter(BaseSiteAdapter):
     _CHAPTER_PAGE_SIZE = 75
+    _GENRE_PAGING_FALLBACK_STEP = 5
+    _GENRE_PAGING_FALLBACK_MAX = 50
     def __init__(self) -> None:
         self.site_key = "tangthuvien"
         configured_base_url = BASE_URLS.get(self.site_key)
@@ -235,18 +237,73 @@ class TangThuVienAdapter(BaseSiteAdapter):
             return [], 0, 0
 
         all_stories = list(first_page_stories)
-        limit = max_pages or total_pages or 1
-        crawled_pages = 1
+        seen_urls: Set[str] = set()
+        for story in all_stories:
+            url_key = story.get("url")
+            if url_key:
+                seen_urls.add(url_key)
 
-        for page_number in range(2, limit + 1):
+        limit_hint = max_pages or total_pages or self._GENRE_PAGING_FALLBACK_STEP
+        limit_hint = max(limit_hint, 1)
+        dynamic_limit = limit_hint
+        if max_pages is None and (total_pages or 0) <= 1:
+            dynamic_limit = max(dynamic_limit, self._GENRE_PAGING_FALLBACK_STEP)
+        crawled_pages = 1
+        observed_max_page = 1
+        saw_new_items = False
+        page_number = 2
+
+        while True:
+            if max_pages is not None and page_number > max_pages:
+                break
+
+            if max_pages is None and page_number > dynamic_limit:
+                if not saw_new_items:
+                    break
+                if dynamic_limit >= self._GENRE_PAGING_FALLBACK_MAX:
+                    break
+                new_limit = min(
+                    max(dynamic_limit + self._GENRE_PAGING_FALLBACK_STEP, page_number),
+                    self._GENRE_PAGING_FALLBACK_MAX,
+                )
+                if new_limit == dynamic_limit:
+                    break
+                logger.debug(
+                    f"[{self.site_key}] Extending paging window for {genre_name} to {new_limit} pages",
+                )
+                dynamic_limit = new_limit
+                saw_new_items = False
+                continue
+
             stories, _ = await self.get_stories_in_genre(genre_url, page_number)
             crawled_pages += 1
             if not stories:
-                logger.info(f"[{self.site_key}] Stop paging {genre_name}: empty page {page_number}")
+                logger.info(
+                    f"[{self.site_key}] Stop paging {genre_name}: empty page {page_number}"
+                )
                 break
-            all_stories.extend(stories)
+
+            new_batch: List[Dict[str, Any]] = []
+            for story in stories:
+                url_key = story.get("url")
+                if not url_key or url_key in seen_urls:
+                    continue
+                seen_urls.add(url_key)
+                new_batch.append(story)
+
+            if not new_batch:
+                logger.info(
+                    f"[{self.site_key}] Stop paging {genre_name}: no new stories on page {page_number}"
+                )
+                break
+
+            all_stories.extend(new_batch)
+            observed_max_page = max(observed_max_page, page_number)
+            saw_new_items = True
+            page_number += 1
             await asyncio.sleep(0.5)
 
+        total_pages = max(total_pages or 0, observed_max_page)
         logger.info(f"[{self.site_key}] Total stories for {genre_name}: {len(all_stories)}")
         return all_stories, total_pages, crawled_pages
 
