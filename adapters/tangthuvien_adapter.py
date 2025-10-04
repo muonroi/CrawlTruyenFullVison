@@ -282,6 +282,9 @@ class TangThuVienAdapter(BaseSiteAdapter):
             if url_key:
                 seen_urls.add(url_key)
 
+        if all_stories:
+            metrics_tracker.set_genre_story_total(site_key, genre_url, len(all_stories))
+
         limit_hint = max_pages or total_pages or self._genre_paging_fallback_step
         limit_hint = max(limit_hint, 1)
         dynamic_limit = limit_hint
@@ -344,12 +347,15 @@ class TangThuVienAdapter(BaseSiteAdapter):
                 break
 
             all_stories.extend(new_batch)
+            metrics_tracker.set_genre_story_total(site_key, genre_url, len(all_stories))
             observed_max_page = max(observed_max_page, page_number)
             saw_new_items = True
             page_number += 1
             await asyncio.sleep(0.5)
 
         total_pages = max(total_pages or 0, observed_max_page)
+        if all_stories:
+            metrics_tracker.set_genre_story_total(site_key, genre_url, len(all_stories))
         logger.info(f"[{self.site_key}] Total stories for {genre_name}: {len(all_stories)}")
         return all_stories, total_pages, crawled_pages
 
