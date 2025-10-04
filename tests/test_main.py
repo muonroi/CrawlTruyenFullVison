@@ -1,6 +1,8 @@
 import json
 import os
+import time
 from types import SimpleNamespace
+from typing import Any, Dict
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
@@ -245,6 +247,48 @@ async def test_process_story_item_detects_missing_chapters(monkeypatch, tmp_path
 
     assert result is False
     add_missing_mock.assert_awaited_once_with("Sample Story", "http://example.com/story", 50, 1)
+
+
+@pytest.mark.asyncio
+async def test_process_story_item_respects_story_cooldown(monkeypatch, tmp_path):
+    story_folder = tmp_path / "story"
+    story_folder.mkdir()
+
+    monkeypatch.setattr(main, "ensure_directory_exists", AsyncMock())
+    monkeypatch.setattr(main, "save_story_metadata_file", AsyncMock())
+    monkeypatch.setattr(main, "save_crawl_state", AsyncMock())
+    monkeypatch.setattr(main, "crawl_all_sources_until_full", AsyncMock())
+    monkeypatch.setattr(main, "get_saved_chapters_files", MagicMock(return_value=set()))
+    monkeypatch.setattr(main, "get_real_total_chapters", AsyncMock(return_value=0))
+    monkeypatch.setattr(main, "count_dead_chapters", MagicMock(return_value=0))
+    monkeypatch.setattr(main, "backup_crawl_state", MagicMock())
+    monkeypatch.setattr(main, "clear_specific_state_keys", AsyncMock())
+    monkeypatch.setattr(main, "export_chapter_metadata_sync", MagicMock())
+    monkeypatch.setattr(main, "send_job", AsyncMock())
+    monkeypatch.setattr(main, "_normalize_story_sources", lambda *args, **kwargs: False)
+
+    future_time = time.time() + 120
+    story_data_item = {
+        "title": "Cool Story",
+        "url": "http://example.com/story",
+        "_cooldown_until": future_time,
+    }
+
+    crawl_state: Dict[str, Any] = {}
+
+    result = await main.process_story_item(
+        session=None,
+        story_data_item=story_data_item,
+        current_discovery_genre_data={},
+        story_global_folder_path=str(story_folder),
+        crawl_state=crawl_state,
+        adapter=SimpleNamespace(get_story_details=AsyncMock(return_value={})),
+        site_key="demo",
+    )
+
+    assert result is False
+    cooldowns = crawl_state.get("story_cooldowns", {})
+    assert pytest.approx(cooldowns.get("http://example.com/story"), rel=0.01) == future_time
 
 
 @pytest.mark.asyncio

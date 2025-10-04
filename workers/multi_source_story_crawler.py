@@ -14,6 +14,7 @@ encapsulated and easier to test.
 
 from __future__ import annotations
 
+import time
 from dataclasses import dataclass
 from typing import Any, Dict, Iterable, List, Optional
 
@@ -34,6 +35,56 @@ from utils.skip_manager import (
     load_skipped_stories,
     mark_story_as_skipped,
 )
+from utils.errors import CrawlError, classify_crawl_exception, is_retryable_error
+
+
+DEFAULT_SOURCE_COOLDOWN_SECONDS = 180.0
+DEFAULT_SITE_COOLDOWN_SECONDS = 420.0
+DEFAULT_STORY_COOLDOWN_SECONDS = 900.0
+DEFAULT_COOLDOWN_BACKOFF = 2.0
+
+
+@dataclass(slots=True)
+class SourceFailureState:
+    """Keep track of the health of a particular story source."""
+
+    total_failures: int = 0
+    permanent_failures: int = 0
+    transient_failures: int = 0
+    cooldown_until: float = 0.0
+    last_error: CrawlError = CrawlError.UNKNOWN
+
+    def register_success(self) -> None:
+        self.transient_failures = 0
+        self.last_error = CrawlError.UNKNOWN
+        self.cooldown_until = 0.0
+
+    def register_failure(
+        self,
+        error: CrawlError,
+        now: float,
+        base_cooldown: float,
+        backoff_multiplier: float,
+        max_retry: int,
+    ) -> None:
+        self.total_failures += 1
+        self.last_error = error
+        if is_retryable_error(error):
+            self.transient_failures += 1
+            delay = base_cooldown * (backoff_multiplier ** (self.transient_failures - 1))
+            self.cooldown_until = max(self.cooldown_until, now + delay)
+        else:
+            self.permanent_failures = max(self.permanent_failures, max_retry)
+            self.transient_failures = 0
+            self.cooldown_until = 0.0
+
+    def is_in_cooldown(self, now: float) -> bool:
+        return self.cooldown_until > now
+
+    def is_exhausted(self, max_retry: int) -> bool:
+        if self.permanent_failures >= max_retry:
+            return True
+        return self.total_failures >= max_retry and not is_retryable_error(self.last_error)
 
 
 @dataclass(slots=True)
@@ -93,6 +144,20 @@ class MultiSourceStoryCrawler:
 
     def __init__(self) -> None:
         self._adapter_cache: Dict[str, BaseSiteAdapter] = {}
+        self._source_failures: Dict[str, SourceFailureState] = {}
+        self._site_cooldowns: Dict[str, float] = {}
+        self._source_cooldown_seconds = float(
+            getattr(app_config, "SOURCE_COOLDOWN_SECONDS", DEFAULT_SOURCE_COOLDOWN_SECONDS)
+        )
+        self._site_cooldown_seconds = float(
+            getattr(app_config, "SITE_COOLDOWN_SECONDS", DEFAULT_SITE_COOLDOWN_SECONDS)
+        )
+        self._story_cooldown_seconds = float(
+            getattr(app_config, "STORY_COOLDOWN_SECONDS", DEFAULT_STORY_COOLDOWN_SECONDS)
+        )
+        self._cooldown_backoff = float(
+            getattr(app_config, "COOLDOWN_BACKOFF_MULTIPLIER", DEFAULT_COOLDOWN_BACKOFF)
+        )
 
     async def crawl_story_until_complete(
         self, request: StoryCrawlRequest
@@ -109,6 +174,24 @@ class MultiSourceStoryCrawler:
         if not total_chapters:
             logger.error(f"Không xác định được tổng số chương cho '{story['title']}'")
             return None
+
+        story_url = story.get("url")
+        story_cooldowns = request.crawl_state.setdefault("story_cooldowns", {})
+        current_ts = time.time()
+        if story_url:
+            cooldown_until = max(
+                float(story.get("_cooldown_until") or 0),
+                float(story_cooldowns.get(story_url) or 0),
+            )
+            if cooldown_until and cooldown_until > current_ts:
+                human_ts = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(cooldown_until))
+                logger.info(
+                    f"[COOLDOWN][STORY] '{story['title']}' đang trong thời gian chờ đến {human_ts}, bỏ qua lượt này."
+                )
+                story["_cooldown_until"] = cooldown_until
+                return None
+            story_cooldowns.pop(story_url, None)
+            story.pop("_cooldown_until", None)
 
         sources = _sort_sources(story.get("sources", []))
         if not sources:
@@ -131,12 +214,12 @@ class MultiSourceStoryCrawler:
         if request.adapter and request.site_key not in self._adapter_cache:
             self._adapter_cache[request.site_key] = request.adapter
 
-        error_count_by_source: Dict[str, int] = {source.url: 0 for source in sources}
         max_retry = 3
         retry_round = 0
         applied_chapter_limit: Optional[int] = None
 
         while True:
+            current_ts = time.time()
             if is_story_skipped(story):
                 logger.warning(
                     f"[SKIP][LOOP] Truyện '{story['title']}' đã bị đánh dấu skip, bỏ qua vòng lặp sources."
@@ -148,8 +231,23 @@ class MultiSourceStoryCrawler:
             crawled_any = False
 
             for source in sources:
-                if error_count_by_source.get(source.url, 0) >= max_retry:
+                state = self._source_failures.setdefault(source.url, SourceFailureState())
+                now_monotonic = time.monotonic()
+                if state.is_exhausted(max_retry):
                     logger.warning(f"[SKIP] Nguồn {source.url} bị lỗi quá nhiều, bỏ qua.")
+                    continue
+
+                site_cooldown_until = self._site_cooldowns.get(source.site_key)
+                if site_cooldown_until and site_cooldown_until > current_ts:
+                    logger.info(
+                        f"[COOLDOWN][SITE] Tạm hoãn crawl {source.site_key} đến {time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(site_cooldown_until))}"
+                    )
+                    continue
+
+                if state.is_in_cooldown(now_monotonic):
+                    logger.debug(
+                        f"[COOLDOWN][SOURCE] {source.url} đang chờ thêm {state.cooldown_until - now_monotonic:.1f}s trước khi thử lại"
+                    )
                     continue
 
                 try:
@@ -158,7 +256,16 @@ class MultiSourceStoryCrawler:
                     logger.warning(
                         f"[SOURCE] Không lấy được adapter cho site '{source.site_key}' (url={source.url}): {ex}"
                     )
-                    error_count_by_source[source.url] = error_count_by_source.get(source.url, 0) + 1
+                    error_type = classify_crawl_exception(ex)
+                    state.register_failure(
+                        error_type,
+                        now_monotonic,
+                        self._source_cooldown_seconds,
+                        self._cooldown_backoff,
+                        max_retry,
+                    )
+                    if error_type in {CrawlError.ANTI_BOT, CrawlError.RATE_LIMIT}:
+                        self._apply_site_cooldown(source.site_key)
                     continue
 
                 try:
@@ -170,10 +277,20 @@ class MultiSourceStoryCrawler:
                         max_pages=app_config.MAX_CHAPTER_PAGES_TO_CRAWL,
                     )
                 except Exception as ex:  # pragma: no cover - adapter/network guard
-                    logger.warning(f"[SOURCE] Lỗi crawl chapters từ {source.url}: {ex}")
-                    error_count_by_source[source.url] = error_count_by_source.get(source.url, 0) + 1
+                    error_type = classify_crawl_exception(ex)
+                    state.register_failure(
+                        error_type,
+                        now_monotonic,
+                        self._source_cooldown_seconds,
+                        self._cooldown_backoff,
+                        max_retry,
+                    )
+                    self._log_source_error(source, error_type, ex)
+                    if error_type in {CrawlError.ANTI_BOT, CrawlError.RATE_LIMIT}:
+                        self._apply_site_cooldown(source.site_key)
                     continue
 
+                state.register_success()
                 limit_from_missing = await crawl_missing_chapters_for_story(
                     source.site_key,
                     request.session,
@@ -214,6 +331,17 @@ class MultiSourceStoryCrawler:
                     return applied_chapter_limit
 
             if not crawled_any or files_after == files_before:
+                if self._has_viable_sources(sources, max_retry):
+                    cooldown_until = current_ts + self._story_cooldown_seconds
+                    story["_cooldown_until"] = cooldown_until
+                    if story_url:
+                        story_cooldowns[story_url] = cooldown_until
+                    human_ts = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(cooldown_until))
+                    logger.warning(
+                        f"[COOLDOWN][STORY] Đặt truyện '{story['title']}' vào hàng chờ đến {human_ts} do lỗi tạm thời từ các nguồn."
+                    )
+                    break
+
                 logger.warning(
                     f"[ALERT] Đã thử hết nguồn nhưng không crawl thêm được chương nào cho '{story['title']}'. Đánh dấu skip và next truyện."
                 )
@@ -247,6 +375,50 @@ class MultiSourceStoryCrawler:
             await initialize_scraper(site_key)
             self._adapter_cache[site_key] = adapter
         return self._adapter_cache[site_key]
+
+    def _apply_site_cooldown(self, site_key: str) -> None:
+        cooldown_until = time.time() + self._site_cooldown_seconds
+        self._site_cooldowns[site_key] = cooldown_until
+        logger.warning(
+            f"[COOLDOWN][SITE] Site '{site_key}' gặp lỗi tạm thời, sẽ thử lại sau {self._site_cooldown_seconds:.0f}s."
+        )
+
+    @staticmethod
+    def _log_source_error(source: StorySource, error_type: CrawlError, exc: Exception) -> None:
+        prefix = "[SOURCE]"
+        if error_type == CrawlError.NOT_FOUND:
+            logger.warning(
+                f"{prefix} Nguồn {source.url} trả về 404/không tồn tại. Sẽ không retry nhiều lần."
+            )
+        elif error_type == CrawlError.ANTI_BOT:
+            logger.warning(
+                f"{prefix} Bị chặn anti-bot khi crawl {source.url}. Sẽ tạm dừng trước khi retry."
+            )
+        elif error_type == CrawlError.RATE_LIMIT:
+            logger.warning(
+                f"{prefix} Gặp giới hạn truy cập khi crawl {source.url}. Sẽ chuyển sang nguồn khác tạm thời."
+            )
+        elif error_type == CrawlError.TIMEOUT:
+            logger.warning(f"{prefix} Timeout khi crawl {source.url}. Sẽ thử lại sau.")
+        elif error_type == CrawlError.CONNECTION:
+            logger.warning(f"{prefix} Lỗi kết nối khi crawl {source.url}: {exc}")
+        else:
+            logger.warning(f"{prefix} Lỗi crawl chapters từ {source.url}: {exc}")
+
+    def _has_viable_sources(self, sources: List[StorySource], max_retry: int) -> bool:
+        now_ts = time.time()
+        for source in sources:
+            state = self._source_failures.get(source.url)
+            if state is None:
+                return True
+            if not state.is_exhausted(max_retry):
+                return True
+            if is_retryable_error(state.last_error) and state.total_failures < max_retry:
+                return True
+            site_cooldown = self._site_cooldowns.get(source.site_key)
+            if site_cooldown and site_cooldown > now_ts:
+                return True
+        return False
 
 
 # Singleton used across modules to avoid recreating the cache repeatedly.

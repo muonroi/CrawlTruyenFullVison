@@ -350,6 +350,31 @@ async def process_story_item(
     await ensure_directory_exists(story_global_folder_path)
     logger.info(f"\n  --- Xử lý truyện: {story_data_item['title']} ---")
 
+    story_url = story_data_item.get("url")
+    story_cooldowns = crawl_state.setdefault("story_cooldowns", {})
+    cooldown_hint = story_data_item.get("_cooldown_until")
+    cooldown_candidate = (
+        float(cooldown_hint)
+        if isinstance(cooldown_hint, (int, float))
+        else None
+    )
+    if story_url:
+        stored = story_cooldowns.get(story_url)
+        if isinstance(stored, (int, float)):
+            cooldown_candidate = max(cooldown_candidate or 0, float(stored))
+    if cooldown_candidate and cooldown_candidate > time.time():
+        story_data_item["_cooldown_until"] = cooldown_candidate
+        if story_url:
+            story_cooldowns[story_url] = cooldown_candidate
+        human_ts = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(cooldown_candidate))
+        logger.info(
+            f"[COOLDOWN][STORY] Bỏ qua '{story_data_item['title']}' tạm thời đến {human_ts}."
+        )
+        return False
+    if story_url and story_url in story_cooldowns:
+        story_cooldowns.pop(story_url, None)
+    story_data_item.pop("_cooldown_until", None)
+
     metadata_file = os.path.join(story_global_folder_path, "metadata.json")
     fields_need_check = [
         "description",
@@ -458,6 +483,19 @@ async def process_story_item(
     )
     if isinstance(chapter_limit_hint, int) and chapter_limit_hint >= 0:
         story_data_item["_chapter_limit"] = chapter_limit_hint
+
+    cooldown_after_crawl = story_data_item.get("_cooldown_until")
+    if isinstance(cooldown_after_crawl, (int, float)) and cooldown_after_crawl > time.time():
+        if story_url:
+            story_cooldowns[story_url] = cooldown_after_crawl
+        human_ts = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(cooldown_after_crawl))
+        logger.warning(
+            f"[COOLDOWN][STORY] Truyện '{story_data_item['title']}' tạm hoãn xử lý thêm đến {human_ts}."
+        )
+        return False
+    if story_url:
+        story_cooldowns.pop(story_url, None)
+    story_data_item.pop("_cooldown_until", None)
 
     # 3. Kiểm tra số chương đã crawl thực tế
     files_actual = get_saved_chapters_files(story_global_folder_path)
@@ -759,49 +797,105 @@ async def process_genre_item(
     )
     batches = split_batches(stories_to_process, num_batches)
 
+    story_lookup: Dict[int, Dict[str, Any]] = {}
+
     async def handle_story(idx, story):
         load_skipped_stories()
         if is_story_skipped(story):
             logger.warning(f"[SKIP] Truyện {story['title']} đã bị skip vĩnh viễn trước đó, bỏ qua.")
-            return True, story["url"], idx  # Mark as done để batch không retry nữa
+            return True, story["url"], idx, False  # Mark as done để batch không retry nữa
         async with STORY_SEM:
+            story_url = story.get("url")
+            cooldowns = crawl_state.setdefault("story_cooldowns", {})
+            cooldown_hint = story.get("_cooldown_until")
+            cooldown_candidate = (
+                float(cooldown_hint)
+                if isinstance(cooldown_hint, (int, float))
+                else None
+            )
+            if story_url:
+                stored = cooldowns.get(story_url)
+                if isinstance(stored, (int, float)):
+                    cooldown_candidate = max(cooldown_candidate or 0, float(stored))
+            if cooldown_candidate and cooldown_candidate > time.time():
+                story["_cooldown_until"] = cooldown_candidate
+                human_ts = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(cooldown_candidate))
+                logger.info(
+                    f"[COOLDOWN][STORY] Bỏ qua '{story['title']}' trong batch cho đến {human_ts}."
+                )
+                return False, story.get("url"), idx, True
             slug = slugify_title(story["title"])
             folder = os.path.join(DATA_FOLDER, slug)
             await ensure_directory_exists(folder)
             if story["url"] in completed_global:
                 details = await adapter.get_story_details(story["url"], story["title"])
                 await save_story_metadata_file(story, genre_data, folder, details, None)
-                return True, story["url"], idx
+                return True, story["url"], idx, False
             local_state = crawl_state.copy()
             local_state["current_story_index_in_genre"] = idx
             result = await process_story_item(
                 session, story, genre_data, folder, local_state, adapter, site_key
             )
-            return result, story["url"], idx
+            cooldown_after = story.get("_cooldown_until")
+            is_cooldown = isinstance(cooldown_after, (int, float)) and cooldown_after > time.time()
+            if story_url and is_cooldown:
+                crawl_state.setdefault("story_cooldowns", {})[story_url] = cooldown_after
+            return result, story["url"], idx, is_cooldown
 
     for batch in batches:
+        story_lookup.clear()
+        story_lookup.update({idx: story for idx, story in batch})
         remaining = batch
         retry_counts = {idx: 0 for idx, _ in batch}
         skipped_in_batch = []
-        while remaining:
+        pending_cooldowns: Dict[int, tuple[Dict[str, Any], float]] = {}
+
+        while remaining or pending_cooldowns:
+            if not remaining:
+                now = time.time()
+                ready: List[tuple[int, Dict[str, Any]]] = []
+                for idx, (story_obj, ready_at) in list(pending_cooldowns.items()):
+                    if ready_at <= now:
+                        ready.append((idx, story_obj))
+                        pending_cooldowns.pop(idx, None)
+                if not ready:
+                    sleep_for = min(
+                        max(ready_at - now, 0.0)
+                        for _, ready_at in pending_cooldowns.values()
+                    ) if pending_cooldowns else 0.0
+                    if sleep_for > 0:
+                        await asyncio.sleep(min(sleep_for, 60.0))
+                    else:
+                        await smart_delay()
+                    continue
+                remaining = ready
+                continue
+
             tasks = [asyncio.create_task(handle_story(i, s)) for i, s in remaining]
             results = await asyncio.gather(*tasks)
             remaining = []
-            for done, url, idx in results:
+            for done, url, idx, cooldown in results:
+                story_obj = story_lookup[idx]
                 if done:
                     completed_global.add(url)
                 else:
+                    if cooldown:
+                        cooldown_until = story_obj.get("_cooldown_until")
+                        if isinstance(cooldown_until, (int, float)):
+                            pending_cooldowns[idx] = (story_obj, cooldown_until)
+                        else:
+                            pending_cooldowns[idx] = (story_obj, time.time() + 60)
+                        continue
                     retry_counts[idx] = retry_counts.get(idx, 0) + 1
                     if retry_counts[idx] >= app_config.RETRY_STORY_ROUND_LIMIT:
-                        story_title = next(st['title'] for j, st in batch if j == idx)
-                        story_obj = next(st for j, st in batch if j == idx)
+                        story_title = story_obj['title']
                         logger.error(
                             f"[FATAL] Vượt quá retry cho truyện {story_title}, bỏ qua."
                         )
                         mark_story_as_skipped(story_obj, "retry quá giới hạn")
                         skipped_in_batch.append(story_title)
                         continue
-                    remaining.append((idx, next(st for j, st in batch if j == idx)))
+                    remaining.append((idx, story_obj))
             if remaining:
                 logger.warning(
                     f"[BATCH] {len(remaining)} truyện chưa đủ chương, sẽ thử lại trong batch hiện tại"
