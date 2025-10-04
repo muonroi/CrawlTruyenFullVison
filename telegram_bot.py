@@ -7,6 +7,7 @@ import glob
 import time
 import signal
 from collections import Counter
+from html import escape
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
 from telegram.error import BadRequest
 from telegram.ext import (
@@ -35,7 +36,8 @@ async def send_in_chunks(update: Update, text: str, max_chars: int = 4000):
         return
     for i in range(0, len(text), max_chars):
         chunk = text[i:i+max_chars]
-        await message.reply_html(f"<pre>{chunk}</pre>")
+        safe_chunk = escape(chunk)
+        await message.reply_html(f"<pre>{safe_chunk}</pre>")
 
 
 # --- Menu Helpers ---
