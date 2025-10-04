@@ -27,6 +27,27 @@ def test_parse_genres_includes_tien_hiep():
     assert tien_hiep["url"].startswith("https://tangthuvien.net/the-loai/tien-hiep")
 
 
+def test_parse_genres_strips_icon_and_counts():
+    html = """
+    <div class="nav-list">
+        <a href="/the-loai/tien-hiep">
+            <span class="iconfont">&#xe004;</span>
+            Tiên Hiệp
+            <span class="count">2115</span>
+        </a>
+    </div>
+    """
+
+    genres = parse_genres(html, "https://tangthuvien.net")
+
+    assert genres == [
+        {
+            "name": "Tiên Hiệp",
+            "url": "https://tangthuvien.net/the-loai/tien-hiep",
+        }
+    ]
+
+
 def test_find_genre_listing_url_prefers_full_listing():
     html = _load("home.txt")
     listing_url = find_genre_listing_url(html, "https://tangthuvien.net")

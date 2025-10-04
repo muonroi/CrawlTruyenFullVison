@@ -22,6 +22,21 @@ def _extract_first_int(text: Optional[str]) -> Optional[int]:
     return int(normalized) if normalized else None
 
 
+_PRIVATE_USE_RE = re.compile(
+    "[\uE000-\uF8FF\U000F0000-\U000FFFFD\U00100000-\U0010FFFD]"
+)
+_TRAILING_COUNT_RE = re.compile(r"(?:[\s\(\[\u00A0]*\d+[\s\)\]\u00A0]*)+$")
+
+
+def _normalize_genre_name(value: Optional[str]) -> str:
+    if not value:
+        return ""
+    cleaned = _PRIVATE_USE_RE.sub("", value)
+    cleaned = _normalize_text(cleaned)
+    cleaned = _TRAILING_COUNT_RE.sub("", cleaned).strip()
+    return cleaned
+
+
 def parse_genres(html_content: str, base_url: str) -> List[Dict[str, str]]:
     soup = BeautifulSoup(html_content, _DEFAULT_PARSER)
     results: List[Dict[str, str]] = []
@@ -36,7 +51,8 @@ def parse_genres(html_content: str, base_url: str) -> List[Dict[str, str]]:
 
     for selector in selectors:
         for anchor in soup.select(selector):
-            name = _normalize_text(html.unescape(anchor.get_text(" ", strip=True)))
+            raw_text = html.unescape(anchor.get_text(" ", strip=True))
+            name = _normalize_genre_name(raw_text)
             href = anchor.get("href")
             if not name or not href:
                 continue
