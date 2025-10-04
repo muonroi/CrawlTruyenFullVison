@@ -12,7 +12,7 @@ from analyze.tangthuvien_parse import (
     parse_story_info,
     parse_story_list,
 )
-from config.config import BASE_URLS
+from config.config import BASE_URLS, get_random_headers
 from scraper import make_request
 from utils.chapter_utils import get_chapter_sort_key
 from utils.logger import logger
@@ -49,11 +49,6 @@ def _with_page_parameter(url: str, page: int) -> str:
 
 class TangThuVienAdapter(BaseSiteAdapter):
     _CHAPTER_PAGE_SIZE = 75
-    _DESKTOP_USER_AGENT = (
-        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-        "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
-    )
-
     def __init__(self) -> None:
         self.site_key = "tangthuvien"
         configured_base_url = BASE_URLS.get(self.site_key)
@@ -62,7 +57,6 @@ class TangThuVienAdapter(BaseSiteAdapter):
         self._configured_base_url = configured_base_url
         self.base_url = desktop_candidate or configured_base_url
         self._desktop_base_url = desktop_candidate
-        self._request_headers = {"User-Agent": self._DESKTOP_USER_AGENT}
 
         if desktop_candidate and desktop_candidate != configured_base_url:
             logger.debug(
@@ -187,23 +181,24 @@ class TangThuVienAdapter(BaseSiteAdapter):
             self._genre_listing_cache[normalized] = resolved
         return resolved
 
-    def _build_request_headers(self, url: str) -> Dict[str, str]:
+    async def _build_request_headers(self, url: str) -> Dict[str, str]:
         parsed = urlparse(url)
         if parsed.scheme and parsed.netloc:
             referer = f"{parsed.scheme}://{parsed.netloc}/"
         else:
             referer = self.base_url.rstrip("/") + "/"
 
-        headers = dict(self._request_headers)
+        headers = await get_random_headers(self.site_key)
         headers["Referer"] = referer
         return headers
 
     async def _fetch_text(self, url: str, wait_for_selector: Optional[str] = None) -> Optional[str]:
+        headers = await self._build_request_headers(url)
         response = await make_request(
             url,
             self.site_key,
             wait_for_selector=wait_for_selector,
-            extra_headers=self._build_request_headers(url),
+            extra_headers=headers,
         )
         if isinstance(response, str):
             return response
@@ -287,10 +282,11 @@ class TangThuVienAdapter(BaseSiteAdapter):
                 break
 
             query_url = f"{api_base}?page={page_index}&limit={self._CHAPTER_PAGE_SIZE}&web=1"
+            headers = await self._build_request_headers(query_url)
             response = await make_request(
                 query_url,
                 self.site_key,
-                extra_headers=self._build_request_headers(query_url),
+                extra_headers=headers,
             )
             if isinstance(response, str):
                 text_payload = response
