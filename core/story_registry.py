@@ -20,6 +20,8 @@ class StoryCrawlStatus(str, Enum):
     FAILED = "failed"
     SKIPPED = "skipped"
     COOLDOWN = "cooldown"
+    NEEDS_RETRY = "needs_retry"
+    PERMANENT_FAIL = "permanent_fail"
 
 
 @dataclass(frozen=True)

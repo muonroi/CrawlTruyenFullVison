@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import os
 import time
+from collections import defaultdict
 from dataclasses import dataclass, field
 from threading import Lock
 from typing import Any, Dict, List, Optional
@@ -200,12 +201,18 @@ class CrawlMetricsTracker:
         self._genres_completed: Dict[str, GenreProgress] = {}
         self._genres_failed: Dict[str, GenreProgress] = {}
         self._site_genre_overview: Dict[str, Dict[str, Any]] = {}
+        self._story_events: Dict[str, List[Dict[str, Any]]] = {}
+        self._story_event_summary: Dict[str, int] = defaultdict(int)
 
         self._load_existing()
 
     @staticmethod
     def _genre_key(site_key: str, genre_url: str) -> str:
         return f"{site_key}:{genre_url}"
+
+    @staticmethod
+    def _event_key(category_id: str, story_id: str) -> str:
+        return f"{category_id}:{story_id}"
 
     # ------------------------------------------------------------------
     # Story tracking helpers
@@ -301,12 +308,12 @@ class CrawlMetricsTracker:
 
         _emit_story_event("completed", payload)
 
-    def story_failed(self, story_id: str, reason: str) -> None:
+    def story_failed(self, story_id: str, reason: str, *, final_status: str = "failed") -> None:
         payload: Optional[Dict[str, Any]] = None
         with self._lock:
             story = self._stories_in_progress.get(story_id)
             if story:
-                story.status = "failed"
+                story.status = final_status or "failed"
                 story.last_error = reason
                 story.updated_at = time.time()
                 payload = _story_event_payload(story)
@@ -335,6 +342,40 @@ class CrawlMetricsTracker:
             payload = _story_event_payload(story)
 
         _emit_story_event("skipped", payload)
+
+    def record_story_event(
+        self,
+        category_id: str,
+        story_id: str,
+        event: str,
+        *,
+        metadata: Optional[Dict[str, Any]] = None,
+    ) -> None:
+        if not category_id or not story_id or not event:
+            return
+
+        normalized_meta = {
+            key: value
+            for key, value in (metadata or {}).items()
+            if value is not None
+        }
+        entry = {
+            "category_id": str(category_id),
+            "story_id": str(story_id),
+            "event": str(event),
+            "metadata": normalized_meta or None,
+            "timestamp": time.time(),
+        }
+        event_key = self._event_key(str(category_id), str(story_id))
+
+        with self._lock:
+            events = self._story_events.setdefault(event_key, [])
+            events.append(entry)
+            if len(events) > 50:
+                events[:] = events[-50:]
+            self._story_events[event_key] = events
+            self._story_event_summary[str(event)] += 1
+            self._persist_locked()
 
     # ------------------------------------------------------------------
     # Genre tracking helpers
@@ -727,6 +768,44 @@ class CrawlMetricsTracker:
                 "updated_at": _from_iso(site_entry.get("updated_at")) or time.time(),
             }
 
+        events_payload = payload.get("story_events", {})
+        if isinstance(events_payload, dict):
+            for item in events_payload.get("entries", []):
+                if not isinstance(item, dict):
+                    continue
+                category_id = item.get("category_id")
+                story_id = item.get("story_id")
+                if not category_id or not story_id:
+                    continue
+                key = self._event_key(str(category_id), str(story_id))
+                events: List[Dict[str, Any]] = []
+                for raw_event in item.get("events", []):
+                    if not isinstance(raw_event, dict):
+                        continue
+                    timestamp = _from_iso(raw_event.get("timestamp")) or raw_event.get("timestamp")
+                    try:
+                        ts_value = float(timestamp)
+                    except Exception:
+                        ts_value = time.time()
+                    events.append(
+                        {
+                            "category_id": str(category_id),
+                            "story_id": str(story_id),
+                            "event": str(raw_event.get("event", "")),
+                            "metadata": raw_event.get("metadata"),
+                            "timestamp": ts_value,
+                        }
+                    )
+                if events:
+                    self._story_events[key] = events[-50:]
+            summary = events_payload.get("summary", {})
+            if isinstance(summary, dict):
+                for event_name, count in summary.items():
+                    try:
+                        self._story_event_summary[str(event_name)] = int(count)
+                    except Exception:  # pragma: no cover - defensive guard
+                        continue
+
     def _persist_locked(self) -> None:
         snapshot = self._build_snapshot_locked()
         try:
@@ -771,6 +850,32 @@ class CrawlMetricsTracker:
         site_genres.sort(key=lambda item: item.get("site_key", ""))
         total_genres_known = sum(entry.get("total_genres", 0) for entry in site_genres)
         total_genres_completed = sum(entry.get("completed_genres", 0) for entry in site_genres)
+        event_entries: List[Dict[str, Any]] = []
+        for events in self._story_events.values():
+            if not events:
+                continue
+            latest = events[-1]
+            event_entries.append(
+                {
+                    "category_id": latest.get("category_id"),
+                    "story_id": latest.get("story_id"),
+                    "last_event": latest.get("event"),
+                    "last_event_at": _to_iso(latest.get("timestamp")),
+                    "events": [
+                        {
+                            "event": item.get("event"),
+                            "timestamp": _to_iso(item.get("timestamp")),
+                            "metadata": item.get("metadata"),
+                        }
+                        for item in events
+                    ],
+                }
+            )
+        event_entries.sort(key=lambda item: (item.get("category_id", ""), item.get("story_id", "")))
+        event_summary = {key: int(value) for key, value in self._story_event_summary.items()}
+        for key in ("start", "success", "failure", "retry"):
+            event_summary.setdefault(key, 0)
+
         return {
             "updated_at": _to_iso(updated_at),
             "stories": {
@@ -798,6 +903,10 @@ class CrawlMetricsTracker:
                 "failed": genres_failed,
             },
             "site_genres": site_genres,
+            "story_events": {
+                "entries": event_entries,
+                "summary": event_summary,
+            },
         }
 
 

@@ -117,6 +117,8 @@ class StoryCrawlRequest:
     num_batches: int = 10
     state_file: Optional[str] = None
     adapter: Optional[BaseSiteAdapter] = None
+    category_id: Optional[str] = None
+    story_registry_id: Optional[int] = None
 
 
 def _sort_sources(sources: Iterable[Dict[str, Any]]) -> List[StorySource]:
@@ -167,6 +169,63 @@ class MultiSourceStoryCrawler:
             getattr(app_config, "COOLDOWN_BACKOFF_MULTIPLIER", DEFAULT_COOLDOWN_BACKOFF)
         )
 
+    def _resolve_event_identity(
+        self, request: StoryCrawlRequest
+    ) -> Optional[tuple[str, str]]:
+        story = request.story_data_item
+        category_candidates = [
+            request.category_id,
+            request.current_discovery_genre_data.get("category_id"),
+            request.current_discovery_genre_data.get("id"),
+            request.current_discovery_genre_data.get("slug"),
+            request.current_discovery_genre_data.get("slug_id"),
+            request.current_discovery_genre_data.get("code"),
+            request.current_discovery_genre_data.get("url"),
+            request.current_discovery_genre_data.get("name"),
+        ]
+        category_id: Optional[str] = None
+        for candidate in category_candidates:
+            if isinstance(candidate, (str, int)) and str(candidate).strip():
+                category_id = str(candidate).strip()
+                break
+        if not category_id:
+            category_id = request.site_key
+
+        story_candidates = [
+            request.story_registry_id,
+            story.get("registry_story_id"),
+            story.get("story_id"),
+            story.get("id"),
+            story.get("slug"),
+            story.get("url"),
+        ]
+        story_id: Optional[str] = None
+        for candidate in story_candidates:
+            if isinstance(candidate, (str, int)) and str(candidate).strip():
+                story_id = str(candidate).strip()
+                break
+        if not story_id:
+            return None
+
+        return category_id, story_id
+
+    def _record_event(
+        self,
+        request: StoryCrawlRequest,
+        event: str,
+        **metadata: Any,
+    ) -> None:
+        identity = self._resolve_event_identity(request)
+        if not identity:
+            return
+        category_id, story_id = identity
+        metrics_tracker.record_story_event(
+            category_id,
+            story_id,
+            event,
+            metadata={k: v for k, v in metadata.items() if v is not None},
+        )
+
     async def crawl_story_until_complete(
         self, request: StoryCrawlRequest
     ) -> Optional[int]:
@@ -182,7 +241,17 @@ class MultiSourceStoryCrawler:
         total_chapters = story.get("total_chapters_on_site") or story.get("total_chapters")
         if not total_chapters:
             logger.error(f"Không xác định được tổng số chương cho '{story['title']}'")
-            metrics_tracker.story_failed(story_slug, "missing_total_chapters")
+            metrics_tracker.story_failed(
+                story_slug,
+                "missing_total_chapters",
+                final_status="permanent_fail",
+            )
+            self._record_event(
+                request,
+                "failure",
+                reason="missing_total_chapters",
+                permanent=True,
+            )
             return None
 
         story_url = story.get("url")
@@ -220,7 +289,17 @@ class MultiSourceStoryCrawler:
                 logger.error(
                     f"Không xác định được URL cho '{story['title']}', không thể auto-fix sources."
                 )
-                metrics_tracker.story_failed(story_slug, "missing_sources")
+                metrics_tracker.story_failed(
+                    story_slug,
+                    "missing_sources",
+                    final_status="permanent_fail",
+                )
+                self._record_event(
+                    request,
+                    "failure",
+                    reason="missing_sources",
+                    permanent=True,
+                )
                 return None
 
         metrics_tracker.story_started(
@@ -232,6 +311,12 @@ class MultiSourceStoryCrawler:
             genre_url=request.current_discovery_genre_data.get("url"),
             genre_site_key=request.current_discovery_genre_data.get("site_key")
             or request.site_key,
+        )
+        self._record_event(
+            request,
+            "start",
+            title=story.get("title"),
+            total_chapters=total_chapters,
         )
         progress_logger.info(
             f"[START] Bắt đầu crawl '{story['title']}' với {total_chapters} chương (site chính: {request.site_key})."
@@ -245,10 +330,22 @@ class MultiSourceStoryCrawler:
         applied_chapter_limit: Optional[int] = None
 
         while True:
+            if retry_round > 0:
+                self._record_event(
+                    request,
+                    "retry",
+                    round=retry_round,
+                )
             current_ts = time.time()
             if is_story_skipped(story):
                 logger.warning(
                     f"[SKIP][LOOP] Truyện '{story['title']}' đã bị đánh dấu skip, bỏ qua vòng lặp sources."
+                )
+                self._record_event(
+                    request,
+                    "failure",
+                    reason="already_skipped",
+                    permanent=True,
                 )
                 break
 
@@ -382,6 +479,12 @@ class MultiSourceStoryCrawler:
                         f"Đã crawl đủ chương {files_after}/{total_chapters} cho '{story['title']}' (từ nguồn {source.site_key})"
                     )
                     metrics_tracker.story_completed(story_slug)
+                    self._record_event(
+                        request,
+                        "success",
+                        source=source.site_key,
+                        crawled=files_after,
+                    )
                     progress_logger.info(
                         f"[DONE] Hoàn thành '{story['title']}' với {files_after} chương."
                     )
@@ -406,6 +509,12 @@ class MultiSourceStoryCrawler:
                         last_error="temporary_failures",
                         cooldown_until=cooldown_until,
                     )
+                    self._record_event(
+                        request,
+                        "failure",
+                        reason="temporary_failures",
+                        cooldown_until=cooldown_until,
+                    )
                     progress_logger.warning(
                         f"[COOLDOWN] '{story['title']}' tạm nghỉ đến {human_ts} vì lỗi tạm thời."
                     )
@@ -414,7 +523,17 @@ class MultiSourceStoryCrawler:
                 logger.warning(
                     f"[ALERT] Đã thử hết nguồn nhưng không crawl thêm được chương nào cho '{story['title']}'. Đánh dấu skip và next truyện."
                 )
-                metrics_tracker.story_failed(story_slug, "exhausted_sources")
+                metrics_tracker.story_failed(
+                    story_slug,
+                    "exhausted_sources",
+                    final_status="permanent_fail",
+                )
+                self._record_event(
+                    request,
+                    "failure",
+                    reason="exhausted_sources",
+                    permanent=True,
+                )
                 mark_story_as_skipped(story, reason="sources_fail_or_all_chapter_skipped")
                 break
 
@@ -423,7 +542,18 @@ class MultiSourceStoryCrawler:
                 logger.error(
                     f"[FATAL] Vượt quá retry cho truyện {story['title']}, sẽ bỏ qua."
                 )
-                metrics_tracker.story_failed(story_slug, "retry_limit_exceeded")
+                metrics_tracker.story_failed(
+                    story_slug,
+                    "retry_limit_exceeded",
+                    final_status="permanent_fail",
+                )
+                self._record_event(
+                    request,
+                    "failure",
+                    reason="retry_limit_exceeded",
+                    permanent=True,
+                    round=retry_round,
+                )
                 break
 
             if retry_round % 20 == 0:
