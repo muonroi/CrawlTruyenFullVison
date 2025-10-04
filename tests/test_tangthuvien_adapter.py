@@ -75,3 +75,28 @@ async def test_get_story_details_normalizes_alias_to_doc_truyen(monkeypatch):
     assert details is not None
     assert details["url"] == normalized
     assert details["sources"][0]["url"] == normalized
+
+
+@pytest.mark.asyncio
+async def test_get_genres_falls_back_to_desktop_domain(monkeypatch):
+    adapter = TangThuVienAdapter()
+    adapter.base_url = "https://m.tangthuvien.net"
+
+    mobile_home = (FIXTURE_DIR / "home.debug.txt").read_text(encoding="utf-8")
+    desktop_home = (FIXTURE_DIR / "home.txt").read_text(encoding="utf-8")
+    requested_urls: List[str] = []
+
+    async def fake_fetch(self, url, wait_for_selector=None):
+        requested_urls.append(url)
+        if "m.tangthuvien.net" in url:
+            return mobile_home
+        return desktop_home
+
+    monkeypatch.setattr(TangThuVienAdapter, "_fetch_text", fake_fetch)
+
+    genres = await adapter.get_genres()
+
+    assert genres, "Expected fallback fetch to yield genres"
+    assert len(requested_urls) >= 2
+    assert any("tangthuvien.net" in url and "m.tangthuvien.net" not in url for url in requested_urls)
+    assert any("/the-loai/" in genre["url"] for genre in genres)
