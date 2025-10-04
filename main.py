@@ -1072,7 +1072,7 @@ async def run_crawler(
     settings: WorkerSettings,
     crawl_state: Optional[Dict[str, Any]] = None,
 ):
-    state_file = get_state_file(site_key)
+    state_file = app_config.get_state_file(site_key)
     crawl_state = crawl_state or await load_crawl_state(state_file, site_key)
     total_genres = len(genres)
     genres_done = 0

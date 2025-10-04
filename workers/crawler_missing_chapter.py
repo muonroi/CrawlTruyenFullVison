@@ -4,6 +4,7 @@ import json
 import datetime
 import re
 import traceback
+import shutil
 from typing import cast
 from adapters.factory import get_adapter
 from config import config as app_config
