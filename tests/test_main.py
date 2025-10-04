@@ -2,7 +2,7 @@ import json
 import os
 import time
 from types import SimpleNamespace
-from typing import Any, Dict
+from typing import Any, Dict, List
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
@@ -142,6 +142,9 @@ async def test_run_crawler_batches_all_genres(monkeypatch, tmp_path):
         retry_sleep_seconds=0,
     )
 
+    send_job_mock = AsyncMock()
+    monkeypatch.setattr(main, "send_job", send_job_mock)
+
     genres = [
         {"name": "genre1", "url": "http://g1"},
         {"name": "genre2", "url": "http://g2"},
@@ -184,9 +187,125 @@ async def test_run_crawler_batches_all_genres(monkeypatch, tmp_path):
     assert first_state["loaded"] is True
     assert "category_story_plan" in first_state
     assert first_state["category_story_plan"]["genre1"][0]["title"] == "genre1 Story"
+    assert "category_change_detector" in first_state
+    assert "demo" in first_state["category_change_detector"]
     assert "category_snapshots" in first_state
     assert first_state["category_snapshots"]["demo"]["version"] == "v-test"
     assert dummy_store.calls and dummy_store.calls[0][0] == "demo"
+    send_job_mock.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_run_crawler_schedules_refresh_on_large_change(monkeypatch, tmp_path):
+    monkeypatch.setattr(main.app_config, "get_state_file", lambda site_key: os.path.join(tmp_path, f"{site_key}.json"), raising=False)
+    monkeypatch.setattr(main.app_config, "NUM_CHAPTER_BATCHES", 2, raising=False)
+    monkeypatch.setattr(main.app_config, "CATEGORY_CHANGE_REFRESH_RATIO", 0.1, raising=False)
+    monkeypatch.setattr(main.app_config, "CATEGORY_CHANGE_REFRESH_ABSOLUTE", 1, raising=False)
+    monkeypatch.setattr(main.app_config, "CATEGORY_CHANGE_MIN_STORIES", 1, raising=False)
+    monkeypatch.setattr(main.app_config, "CATEGORY_REFRESH_BATCH_SIZE", 2, raising=False)
+
+    baseline_stories = [
+        {"title": "Story A", "url": "http://g1/story-a"},
+        {"title": "Story B", "url": "http://g1/story-b"},
+    ]
+
+    from core.category_change_detector import CategoryChangeDetector
+
+    detector = CategoryChangeDetector(ratio_threshold=0.1, absolute_threshold=1, min_story_count=1)
+    baseline_result = detector.evaluate(baseline_stories, None)
+
+    previous_state = {
+        "loaded": True,
+        "category_change_detector": {
+            "demo": {
+                "cat-1": {
+                    "url_checksum": baseline_result.signature.url_checksum,
+                    "content_signature": baseline_result.signature.content_signature,
+                    "urls": baseline_result.urls,
+                    "story_count": baseline_result.signature.story_count,
+                }
+            }
+        },
+        "category_story_plan": {"Genre": baseline_stories},
+    }
+
+    load_crawl_state_mock = AsyncMock(return_value=previous_state)
+    monkeypatch.setattr(main, "load_crawl_state", load_crawl_state_mock)
+
+    process_calls: List[tuple[str, Dict[str, Any], str]] = []
+
+    async def fake_process_genre_with_limit(session, category, crawl_state, adapter, site_key, **kwargs):
+        process_calls.append((category.name, crawl_state.copy(), site_key))
+        return True
+
+    monkeypatch.setattr(main, "process_genre_with_limit", fake_process_genre_with_limit)
+
+    async def fake_smart_delay():
+        pass
+
+    monkeypatch.setattr(main, "smart_delay", fake_smart_delay)
+
+    class DummyClientSession:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, tb):
+            return False
+
+    monkeypatch.setattr(main, "aiohttp", SimpleNamespace(ClientSession=DummyClientSession))
+
+    settings = main.WorkerSettings(
+        genre_batch_size=2,
+        genre_async_limit=3,
+        proxies_file="proxies.txt",
+        failed_genres_file="failed.json",
+        retry_genre_round_limit=1,
+        retry_sleep_seconds=0,
+    )
+
+    changed_stories = [
+        {"title": "Story C", "url": "http://g1/story-c"},
+        {"title": "Story D", "url": "http://g1/story-d"},
+        {"title": "Story E", "url": "http://g1/story-e"},
+    ]
+
+    crawl_plan = CrawlPlan(site_key="demo")
+    crawl_plan.add_category(
+        CategoryCrawlPlan(
+            name="Genre",
+            url="http://g1",
+            stories=list(changed_stories),
+            raw_genre={"name": "Genre", "url": "http://g1"},
+            metadata={"category_id": "cat-1"},
+        )
+    )
+
+    async def fake_build_crawl_plan(adapter, *, genres=None, max_pages=None):
+        return crawl_plan
+
+    monkeypatch.setattr(main, "build_crawl_plan", fake_build_crawl_plan)
+
+    class DummyStore:
+        def persist_snapshot(self, site_key, plan, *, version=None):
+            return SnapshotInfo(id=2, site_key=site_key, version="v-test", created_at="2024-02-01 00:00:00")
+
+    monkeypatch.setattr(main, "category_store", DummyStore())
+
+    send_job_mock = AsyncMock()
+    monkeypatch.setattr(main, "send_job", send_job_mock)
+
+    save_crawl_state_mock = AsyncMock()
+    monkeypatch.setattr(main, "save_crawl_state", save_crawl_state_mock)
+
+    await main.run_crawler(adapter="dummy", site_key="demo", genres=[{"name": "Genre", "url": "http://g1"}], settings=settings)
+
+    assert send_job_mock.await_count == 2
+    for call in send_job_mock.await_args_list:
+        payload = call.args[0]
+        assert payload["type"] == "category_batch_refresh"
+        assert payload["category_id"] == "cat-1"
+    save_crawl_state_mock.assert_awaited()
+    assert process_calls
 
 
 @pytest.mark.asyncio

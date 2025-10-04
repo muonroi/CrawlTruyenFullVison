@@ -152,6 +152,19 @@ def _load_settings() -> Dict[str, Any]:
     story_async_limit = get_int("STORY_ASYNC_LIMIT", required=True)
     story_batch_size = get_int("STORY_BATCH_SIZE", required=True)
 
+    category_change_refresh_ratio = (
+        get_float("CATEGORY_CHANGE_REFRESH_RATIO") or 0.35
+    )
+    category_change_refresh_absolute = (
+        get_int("CATEGORY_CHANGE_REFRESH_ABSOLUTE") or 50
+    )
+    category_refresh_batch_size = (
+        get_int("CATEGORY_REFRESH_BATCH_SIZE") or story_batch_size
+    )
+    category_change_min_stories = (
+        get_int("CATEGORY_CHANGE_MIN_STORIES") or 40
+    )
+
     failed_genres_file = get_str("FAILED_GENRES_FILE", required=True)
     pattern_file = get_str("PATTERN_FILE", required=True)
     anti_bot_pattern_file = get_str("ANTI_BOT_PATTERN_FILE", required=True)
@@ -226,6 +239,10 @@ def _load_settings() -> Dict[str, Any]:
         "GENRE_BATCH_SIZE": genre_batch_size,
         "STORY_ASYNC_LIMIT": story_async_limit,
         "STORY_BATCH_SIZE": story_batch_size,
+        "CATEGORY_CHANGE_REFRESH_RATIO": category_change_refresh_ratio,
+        "CATEGORY_CHANGE_REFRESH_ABSOLUTE": category_change_refresh_absolute,
+        "CATEGORY_REFRESH_BATCH_SIZE": category_refresh_batch_size,
+        "CATEGORY_CHANGE_MIN_STORIES": category_change_min_stories,
         "FAILED_GENRES_FILE": failed_genres_file,
         "PATTERN_FILE": pattern_file,
         "ANTI_BOT_PATTERN_FILE": anti_bot_pattern_file,
