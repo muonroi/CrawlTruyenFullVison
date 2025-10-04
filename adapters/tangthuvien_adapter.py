@@ -1,6 +1,6 @@
 import asyncio
 import re
-from typing import Any, Dict, List, Optional, Set, Tuple
+from typing import Any, Awaitable, Callable, Dict, List, Optional, Set, Tuple
 from urllib.parse import parse_qs, urlencode, urljoin, urlparse, urlunparse
 
 from adapters.base_site_adapter import BaseSiteAdapter
@@ -361,9 +361,8 @@ class TangThuVienAdapter(BaseSiteAdapter):
                     f"[{self.site_key}] Stop paging {genre_name}: no new stories on page {page_number}"
                 )
                 saw_new_items = False
-                page_number += 1
-                await asyncio.sleep(0.5)
-                continue
+                observed_max_page = max(observed_max_page, page_number)
+                break
 
             if collect:
                 all_stories.extend(new_batch)
