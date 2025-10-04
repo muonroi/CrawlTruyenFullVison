@@ -81,6 +81,7 @@ from workers.multi_source_story_crawler import (
     StoryCrawlRequest,
     multi_source_story_crawler,
 )
+from utils.metrics_tracker import metrics_tracker
 
 from kafka.kafka_producer import send_job, close_producer
 from workers.missing_background_loop import (
@@ -151,9 +152,26 @@ async def crawl_single_story_by_title(title, site_key, genre_name=None):
     await process_story_item(None, story_data_item, {}, folder, crawl_state, adapter, site_key)  # type: ignore
 
 
-async def process_genre_with_limit(session, genre, crawl_state, adapter, site_key):
+async def process_genre_with_limit(
+    session,
+    genre,
+    crawl_state,
+    adapter,
+    site_key,
+    *,
+    position: Optional[int] = None,
+    total_genres: Optional[int] = None,
+):
     async with GENRE_SEM:
-        await process_genre_item(session, genre, crawl_state, adapter, site_key)
+        await process_genre_item(
+            session,
+            genre,
+            crawl_state,
+            adapter,
+            site_key,
+            position=position,
+            total_genres=total_genres,
+        )
 
 
 async def process_story_with_limit(
@@ -723,8 +741,18 @@ async def process_genre_item(
     crawl_state: Dict[str, Any],
     adapter: BaseSiteAdapter,
     site_key: str,
+    *,
+    position: Optional[int] = None,
+    total_genres: Optional[int] = None,
 ) -> None:
     logger.info(f"\n--- Xử lý thể loại: {genre_data['name']} ---")
+    metrics_tracker.genre_started(
+        site_key,
+        genre_data["name"],
+        genre_data["url"],
+        position=position,
+        total_genres=total_genres,
+    )
     crawl_state["current_genre_url"] = genre_data["url"]
     if crawl_state.get("previous_genre_url_in_state_for_stories") != genre_data["url"]:
         crawl_state["current_story_index_in_genre"] = 0
@@ -752,6 +780,12 @@ async def process_genre_item(
                     f"Danh sách truyện rỗng cho genre {genre_data['name']} ({genre_data['url']})"
                 )
 
+            metrics_tracker.set_genre_story_total(
+                site_key,
+                genre_data["url"],
+                len(stories),
+            )
+
             if (
                 total_pages
                 and (crawled_pages is not None)
@@ -766,6 +800,12 @@ async def process_genre_item(
                         f"Thể loại {genre_data['name']} không crawl đủ số trang sau {max_retry} lần."
                     )
                     log_failed_genre(genre_data)
+                    metrics_tracker.genre_failed(
+                        site_key,
+                        genre_data["url"],
+                        reason=f"incomplete_pages_{crawled_pages}_{total_pages}",
+                        genre_name=genre_data["name"],
+                    )
                     return
                 await asyncio.sleep(5)
                 continue  # Retry tiếp
@@ -775,6 +815,12 @@ async def process_genre_item(
                 f"Lỗi khi crawl genre {genre_data['name']} ({genre_data['url']}): {ex}"
             )
             log_failed_genre(genre_data)
+            metrics_tracker.genre_failed(
+                site_key,
+                genre_data["url"],
+                reason=str(ex),
+                genre_name=genre_data["name"],
+            )
             return
 
     completed_global = set(crawl_state.get("globally_completed_story_urls", []))
@@ -788,7 +834,14 @@ async def process_genre_item(
             break
         stories_to_process.append((idx, story))
 
+    metrics_tracker.set_genre_story_total(
+        site_key,
+        genre_data["url"],
+        len(stories_to_process),
+    )
+
     if not stories_to_process:
+        metrics_tracker.genre_completed(site_key, genre_data["url"], stories_processed=0)
         return
 
     num_batches = max(
@@ -798,14 +851,17 @@ async def process_genre_item(
     batches = split_batches(stories_to_process, num_batches)
 
     story_lookup: Dict[int, Dict[str, Any]] = {}
+    processed_count = 0
 
     async def handle_story(idx, story):
         load_skipped_stories()
+        title = story.get("title", f"Story #{idx + 1}")
+        story_url = story.get("url")
         if is_story_skipped(story):
-            logger.warning(f"[SKIP] Truyện {story['title']} đã bị skip vĩnh viễn trước đó, bỏ qua.")
-            return True, story["url"], idx, False  # Mark as done để batch không retry nữa
+            logger.warning(f"[SKIP] Truyện {title} đã bị skip vĩnh viễn trước đó, bỏ qua.")
+            return True, story_url, idx, False, False
+
         async with STORY_SEM:
-            story_url = story.get("url")
             cooldowns = crawl_state.setdefault("story_cooldowns", {})
             cooldown_hint = story.get("_cooldown_until")
             cooldown_candidate = (
@@ -817,30 +873,54 @@ async def process_genre_item(
                 stored = cooldowns.get(story_url)
                 if isinstance(stored, (int, float)):
                     cooldown_candidate = max(cooldown_candidate or 0, float(stored))
-            if cooldown_candidate and cooldown_candidate > time.time():
-                story["_cooldown_until"] = cooldown_candidate
-                human_ts = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(cooldown_candidate))
-                logger.info(
-                    f"[COOLDOWN][STORY] Bỏ qua '{story['title']}' trong batch cho đến {human_ts}."
+
+            metrics_tracker.genre_story_started(site_key, genre_data["url"], title)
+
+            skip_due_to_cooldown = False
+            processed_successfully = False
+            is_cooldown = False
+            done = False
+            try:
+                if cooldown_candidate and cooldown_candidate > time.time():
+                    story["_cooldown_until"] = cooldown_candidate
+                    human_ts = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(cooldown_candidate))
+                    logger.info(
+                        f"[COOLDOWN][STORY] Bỏ qua '{title}' trong batch cho đến {human_ts}."
+                    )
+                    skip_due_to_cooldown = True
+                else:
+                    slug = slugify_title(title)
+                    folder = os.path.join(DATA_FOLDER, slug)
+                    await ensure_directory_exists(folder)
+                    if story_url and story_url in completed_global:
+                        details = await adapter.get_story_details(story_url, title)
+                        await save_story_metadata_file(story, genre_data, folder, details, None)
+                        done = True
+                        processed_successfully = True
+                    else:
+                        local_state = crawl_state.copy()
+                        local_state["current_story_index_in_genre"] = idx
+                        result = await process_story_item(
+                            session, story, genre_data, folder, local_state, adapter, site_key
+                        )
+                        done = bool(result)
+                        processed_successfully = bool(result)
+                        cooldown_after = story.get("_cooldown_until")
+                        is_cooldown = isinstance(cooldown_after, (int, float)) and cooldown_after > time.time()
+                        if story_url and is_cooldown:
+                            crawl_state.setdefault("story_cooldowns", {})[story_url] = cooldown_after
+            finally:
+                metrics_tracker.genre_story_finished(
+                    site_key,
+                    genre_data["url"],
+                    title,
+                    processed=processed_successfully,
                 )
-                return False, story.get("url"), idx, True
-            slug = slugify_title(story["title"])
-            folder = os.path.join(DATA_FOLDER, slug)
-            await ensure_directory_exists(folder)
-            if story["url"] in completed_global:
-                details = await adapter.get_story_details(story["url"], story["title"])
-                await save_story_metadata_file(story, genre_data, folder, details, None)
-                return True, story["url"], idx, False
-            local_state = crawl_state.copy()
-            local_state["current_story_index_in_genre"] = idx
-            result = await process_story_item(
-                session, story, genre_data, folder, local_state, adapter, site_key
-            )
-            cooldown_after = story.get("_cooldown_until")
-            is_cooldown = isinstance(cooldown_after, (int, float)) and cooldown_after > time.time()
-            if story_url and is_cooldown:
-                crawl_state.setdefault("story_cooldowns", {})[story_url] = cooldown_after
-            return result, story["url"], idx, is_cooldown
+
+            if skip_due_to_cooldown:
+                return False, story_url, idx, True, False
+
+            return done, story_url, idx, is_cooldown, processed_successfully
 
     for batch in batches:
         story_lookup.clear()
@@ -874,8 +954,10 @@ async def process_genre_item(
             tasks = [asyncio.create_task(handle_story(i, s)) for i, s in remaining]
             results = await asyncio.gather(*tasks)
             remaining = []
-            for done, url, idx, cooldown in results:
+            for done, url, idx, cooldown, processed_successfully in results:
                 story_obj = story_lookup[idx]
+                if processed_successfully:
+                    processed_count += 1
                 if done:
                     completed_global.add(url)
                 else:
@@ -912,6 +994,12 @@ async def process_genre_item(
                 s.get("title") for s in get_all_skipped_stories().values()
             )
             logger.info("[SKIP LIST] " + all_titles)
+
+    metrics_tracker.genre_completed(
+        site_key,
+        genre_data["url"],
+        stories_processed=processed_count,
+    )
 
     await clear_specific_state_keys(
         crawl_state,
@@ -1051,20 +1139,29 @@ async def run_crawler(
 ):
     state_file = app_config.get_state_file(site_key)
     crawl_state = crawl_state or await load_crawl_state(state_file, site_key)
-    total_genres = len(genres)
+    indexed_genres = list(enumerate(genres, start=1))
+    total_genres = len(indexed_genres)
     genres_done = 0
+
+    metrics_tracker.site_genres_initialized(site_key, total_genres)
 
     async with aiohttp.ClientSession() as session:
         batch_size = settings.genre_batch_size
         batches = split_batches(
-            genres, max(1, (len(genres) + batch_size - 1) // batch_size)
+            indexed_genres, max(1, (len(indexed_genres) + batch_size - 1) // batch_size)
         )
         for batch_idx, genre_batch in enumerate(batches):
             tasks = []
-            for genre in genre_batch:
+            for position, genre in genre_batch:
                 tasks.append(
                     process_genre_with_limit(
-                        session, genre, crawl_state, adapter, site_key
+                        session,
+                        genre,
+                        crawl_state,
+                        adapter,
+                        site_key,
+                        position=position,
+                        total_genres=total_genres,
                     )
                 )
             logger.info(

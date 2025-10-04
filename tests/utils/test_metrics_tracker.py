@@ -53,3 +53,30 @@ def test_metrics_tracker_story_skipped(monkeypatch, tmp_path):
 
     tracker.story_failed("story-2", "retry_limit")
     assert tracker.get_snapshot()["stories"]["skipped"][0]["last_error"] == "anti_bot"
+
+
+def test_metrics_tracker_genre_tracking(monkeypatch, tmp_path):
+    dashboard = tmp_path / "dashboard_genres.json"
+    monkeypatch.setenv("STORYFLOW_DASHBOARD_FILE", str(dashboard))
+
+    tracker = CrawlMetricsTracker()
+    tracker.site_genres_initialized("site-a", 3)
+    tracker.genre_started("site-a", "Tiên Hiệp", "https://example.com/genre/tien-hiep", position=1, total_genres=3)
+    tracker.update_genre_pages("site-a", "https://example.com/genre/tien-hiep", crawled_pages=1, total_pages=5, current_page=1)
+    tracker.set_genre_story_total("site-a", "https://example.com/genre/tien-hiep", 2)
+    tracker.genre_story_started("site-a", "https://example.com/genre/tien-hiep", "Truyện A")
+    tracker.genre_story_finished("site-a", "https://example.com/genre/tien-hiep", "Truyện A", processed=True)
+    tracker.genre_completed("site-a", "https://example.com/genre/tien-hiep")
+
+    snapshot = tracker.get_snapshot()
+    aggregates = snapshot["aggregates"]
+    assert aggregates["genres_in_progress"] == 0
+    assert aggregates["genres_completed"] == 1
+    assert aggregates["genres_total_configured"] >= 3
+    assert aggregates["genres_total_completed"] == 1
+
+    site_genres = snapshot["site_genres"]
+    assert site_genres[0]["site_key"] == "site-a"
+    assert site_genres[0]["total_genres"] >= 3
+    assert site_genres[0]["completed_genres"] == 1
+    assert site_genres[0]["genres"][0]["stories"] == 1

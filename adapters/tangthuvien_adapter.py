@@ -16,6 +16,7 @@ from config.config import BASE_URLS, get_random_headers
 from scraper import make_request
 from utils.chapter_utils import get_chapter_sort_key
 from utils.logger import logger
+from utils.metrics_tracker import metrics_tracker
 from utils.site_config import load_site_config
 
 
@@ -266,6 +267,14 @@ class TangThuVienAdapter(BaseSiteAdapter):
             logger.warning(f"[{self.site_key}] No stories detected on first page of {genre_name}")
             return [], 0, 0
 
+        metrics_tracker.update_genre_pages(
+            site_key,
+            genre_url,
+            crawled_pages=1,
+            total_pages=total_pages,
+            current_page=1,
+        )
+
         all_stories = list(first_page_stories)
         seen_urls: Set[str] = set()
         for story in all_stories:
@@ -307,6 +316,13 @@ class TangThuVienAdapter(BaseSiteAdapter):
 
             stories, _ = await self.get_stories_in_genre(genre_url, page_number)
             crawled_pages += 1
+            metrics_tracker.update_genre_pages(
+                site_key,
+                genre_url,
+                crawled_pages=crawled_pages,
+                total_pages=total_pages,
+                current_page=page_number,
+            )
             if not stories:
                 logger.info(
                     f"[{self.site_key}] Stop paging {genre_name}: empty page {page_number}"
