@@ -49,6 +49,10 @@ def _with_page_parameter(url: str, page: int) -> str:
 
 class TangThuVienAdapter(BaseSiteAdapter):
     _CHAPTER_PAGE_SIZE = 75
+    _DESKTOP_USER_AGENT = (
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+        "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
+    )
 
     def __init__(self) -> None:
         self.site_key = "tangthuvien"
@@ -58,6 +62,7 @@ class TangThuVienAdapter(BaseSiteAdapter):
         self._configured_base_url = configured_base_url
         self.base_url = desktop_candidate or configured_base_url
         self._desktop_base_url = desktop_candidate
+        self._request_headers = {"User-Agent": self._DESKTOP_USER_AGENT}
 
         if desktop_candidate and desktop_candidate != configured_base_url:
             logger.debug(
@@ -175,8 +180,24 @@ class TangThuVienAdapter(BaseSiteAdapter):
             self._genre_listing_cache[normalized] = resolved
         return resolved
 
+    def _build_request_headers(self, url: str) -> Dict[str, str]:
+        parsed = urlparse(url)
+        if parsed.scheme and parsed.netloc:
+            referer = f"{parsed.scheme}://{parsed.netloc}/"
+        else:
+            referer = self.base_url.rstrip("/") + "/"
+
+        headers = dict(self._request_headers)
+        headers["Referer"] = referer
+        return headers
+
     async def _fetch_text(self, url: str, wait_for_selector: Optional[str] = None) -> Optional[str]:
-        response = await make_request(url, self.site_key, wait_for_selector=wait_for_selector)
+        response = await make_request(
+            url,
+            self.site_key,
+            wait_for_selector=wait_for_selector,
+            extra_headers=self._build_request_headers(url),
+        )
         if isinstance(response, str):
             return response
         if response and getattr(response, "text", None):
@@ -259,7 +280,11 @@ class TangThuVienAdapter(BaseSiteAdapter):
                 break
 
             query_url = f"{api_base}?page={page_index}&limit={self._CHAPTER_PAGE_SIZE}&web=1"
-            response = await make_request(query_url, self.site_key)
+            response = await make_request(
+                query_url,
+                self.site_key,
+                extra_headers=self._build_request_headers(query_url),
+            )
             if isinstance(response, str):
                 text_payload = response
             elif response and getattr(response, "text", None):
