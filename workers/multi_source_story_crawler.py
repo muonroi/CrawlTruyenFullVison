@@ -27,9 +27,17 @@ from utils.chapter_utils import (
     count_dead_chapters,
     crawl_missing_chapters_for_story,
     get_saved_chapters_files,
+    slugify_title,
 )
 from utils.domain_utils import get_site_key_from_url
-from utils.logger import logger
+from utils.health_monitor import site_health_monitor
+from utils.logger import (
+    anti_bot_logger,
+    chapter_error_logger,
+    logger,
+    progress_logger,
+)
+from utils.metrics_tracker import metrics_tracker
 from utils.skip_manager import (
     is_story_skipped,
     load_skipped_stories,
@@ -170,9 +178,11 @@ class MultiSourceStoryCrawler:
         """
 
         story = request.story_data_item
+        story_slug = slugify_title(story["title"])
         total_chapters = story.get("total_chapters_on_site") or story.get("total_chapters")
         if not total_chapters:
             logger.error(f"Không xác định được tổng số chương cho '{story['title']}'")
+            metrics_tracker.story_failed(story_slug, "missing_total_chapters")
             return None
 
         story_url = story.get("url")
@@ -188,6 +198,7 @@ class MultiSourceStoryCrawler:
                 logger.info(
                     f"[COOLDOWN][STORY] '{story['title']}' đang trong thời gian chờ đến {human_ts}, bỏ qua lượt này."
                 )
+                metrics_tracker.story_on_cooldown(story_slug, cooldown_until)
                 story["_cooldown_until"] = cooldown_until
                 return None
             story_cooldowns.pop(story_url, None)
@@ -209,7 +220,18 @@ class MultiSourceStoryCrawler:
                 logger.error(
                     f"Không xác định được URL cho '{story['title']}', không thể auto-fix sources."
                 )
+                metrics_tracker.story_failed(story_slug, "missing_sources")
                 return None
+
+        metrics_tracker.story_started(
+            story_slug,
+            story["title"],
+            total_chapters,
+            primary_site=request.site_key,
+        )
+        progress_logger.info(
+            f"[START] Bắt đầu crawl '{story['title']}' với {total_chapters} chương (site chính: {request.site_key})."
+        )
 
         if request.adapter and request.site_key not in self._adapter_cache:
             self._adapter_cache[request.site_key] = request.adapter
@@ -228,6 +250,7 @@ class MultiSourceStoryCrawler:
 
             files_before = len(get_saved_chapters_files(request.story_folder_path))
             files_after = files_before
+            prev_files_after = files_before
             crawled_any = False
 
             for source in sources:
@@ -264,6 +287,12 @@ class MultiSourceStoryCrawler:
                         self._cooldown_backoff,
                         max_retry,
                     )
+                    site_health_monitor.record_failure(source.site_key, error_type)
+                    metrics_tracker.update_story_progress(
+                        story_slug,
+                        last_source=source.site_key,
+                        last_error=error_type.value,
+                    )
                     if error_type in {CrawlError.ANTI_BOT, CrawlError.RATE_LIMIT}:
                         self._apply_site_cooldown(source.site_key)
                     continue
@@ -286,11 +315,18 @@ class MultiSourceStoryCrawler:
                         max_retry,
                     )
                     self._log_source_error(source, error_type, ex)
+                    site_health_monitor.record_failure(source.site_key, error_type)
+                    metrics_tracker.update_story_progress(
+                        story_slug,
+                        last_source=source.site_key,
+                        last_error=error_type.value,
+                    )
                     if error_type in {CrawlError.ANTI_BOT, CrawlError.RATE_LIMIT}:
                         self._apply_site_cooldown(source.site_key)
                     continue
 
                 state.register_success()
+                site_health_monitor.record_success(source.site_key)
                 limit_from_missing = await crawl_missing_chapters_for_story(
                     source.site_key,
                     request.session,
@@ -320,11 +356,30 @@ class MultiSourceStoryCrawler:
 
                 files_after = len(get_saved_chapters_files(request.story_folder_path))
                 crawled_any = True
+                new_files = max(files_after - prev_files_after, 0)
+                prev_files_after = files_after
 
+                dead_chapters = count_dead_chapters(request.story_folder_path)
                 expected_total = len(chapters) if chapters else (total_chapters or 0)
-                if (files_after + count_dead_chapters(request.story_folder_path)) >= expected_total:
+                missing = max(expected_total - (files_after + dead_chapters), 0)
+                metrics_tracker.update_story_progress(
+                    story_slug,
+                    crawled_chapters=files_after,
+                    missing_chapters=missing,
+                    last_source=source.site_key,
+                )
+                if new_files > 0:
+                    progress_logger.info(
+                        f"[PROGRESS] '{story['title']}' đã crawl thêm {new_files} chương (còn thiếu {missing})."
+                    )
+
+                if (files_after + dead_chapters) >= expected_total:
                     logger.info(
                         f"Đã crawl đủ chương {files_after}/{total_chapters} cho '{story['title']}' (từ nguồn {source.site_key})"
+                    )
+                    metrics_tracker.story_completed(story_slug)
+                    progress_logger.info(
+                        f"[DONE] Hoàn thành '{story['title']}' với {files_after} chương."
                     )
                     if applied_chapter_limit is not None:
                         story["_chapter_limit"] = applied_chapter_limit
@@ -340,11 +395,22 @@ class MultiSourceStoryCrawler:
                     logger.warning(
                         f"[COOLDOWN][STORY] Đặt truyện '{story['title']}' vào hàng chờ đến {human_ts} do lỗi tạm thời từ các nguồn."
                     )
+                    metrics_tracker.story_on_cooldown(story_slug, cooldown_until)
+                    metrics_tracker.update_story_progress(
+                        story_slug,
+                        status="cooldown",
+                        last_error="temporary_failures",
+                        cooldown_until=cooldown_until,
+                    )
+                    progress_logger.warning(
+                        f"[COOLDOWN] '{story['title']}' tạm nghỉ đến {human_ts} vì lỗi tạm thời."
+                    )
                     break
 
                 logger.warning(
                     f"[ALERT] Đã thử hết nguồn nhưng không crawl thêm được chương nào cho '{story['title']}'. Đánh dấu skip và next truyện."
                 )
+                metrics_tracker.story_failed(story_slug, "exhausted_sources")
                 mark_story_as_skipped(story, reason="sources_fail_or_all_chapter_skipped")
                 break
 
@@ -353,13 +419,16 @@ class MultiSourceStoryCrawler:
                 logger.error(
                     f"[FATAL] Vượt quá retry cho truyện {story['title']}, sẽ bỏ qua."
                 )
+                metrics_tracker.story_failed(story_slug, "retry_limit_exceeded")
                 break
 
             if retry_round % 20 == 0:
                 missing = max(total_chapters - files_after, 0)
-                logger.error(
+                message = (
                     f"[ALERT] Truyện '{story['title']}' còn thiếu {missing} chương sau {retry_round} vòng thử tất cả nguồn."
                 )
+                logger.error(message)
+                chapter_error_logger.error(message)
 
             await smart_delay()
 
@@ -386,24 +455,30 @@ class MultiSourceStoryCrawler:
     @staticmethod
     def _log_source_error(source: StorySource, error_type: CrawlError, exc: Exception) -> None:
         prefix = "[SOURCE]"
+        target_logger = logger
+        if error_type in {CrawlError.ANTI_BOT, CrawlError.RATE_LIMIT}:
+            target_logger = anti_bot_logger
+        elif error_type in {CrawlError.NOT_FOUND, CrawlError.DEAD_LINK}:
+            target_logger = chapter_error_logger
+
         if error_type == CrawlError.NOT_FOUND:
-            logger.warning(
+            message = (
                 f"{prefix} Nguồn {source.url} trả về 404/không tồn tại. Sẽ không retry nhiều lần."
             )
         elif error_type == CrawlError.ANTI_BOT:
-            logger.warning(
+            message = (
                 f"{prefix} Bị chặn anti-bot khi crawl {source.url}. Sẽ tạm dừng trước khi retry."
             )
         elif error_type == CrawlError.RATE_LIMIT:
-            logger.warning(
+            message = (
                 f"{prefix} Gặp giới hạn truy cập khi crawl {source.url}. Sẽ chuyển sang nguồn khác tạm thời."
             )
-        elif error_type == CrawlError.TIMEOUT:
-            logger.warning(f"{prefix} Timeout khi crawl {source.url}. Sẽ thử lại sau.")
-        elif error_type == CrawlError.CONNECTION:
-            logger.warning(f"{prefix} Lỗi kết nối khi crawl {source.url}: {exc}")
         else:
-            logger.warning(f"{prefix} Lỗi crawl chapters từ {source.url}: {exc}")
+            message = f"{prefix} Lỗi '{error_type.value}' khi crawl {source.url}: {exc}"
+
+        target_logger.warning(message)
+        if target_logger is not logger:
+            logger.warning(message)
 
     def _has_viable_sources(self, sources: List[StorySource], max_retry: int) -> bool:
         now_ts = time.time()

@@ -6,6 +6,7 @@ from typing import Dict, Any
 
 from config.config import SKIPPED_STORIES_FILE
 from utils.logger import logger
+from utils.metrics_tracker import metrics_tracker
 from utils.notifier import send_telegram_notify
 from utils.chapter_utils import slugify_title
 
@@ -26,6 +27,7 @@ def load_skipped_stories() -> Dict[str, Dict[str, Any]]:
             SKIPPED_STORIES = {}
     else:
         SKIPPED_STORIES = {}
+    metrics_tracker.update_skipped_queue_size(len(SKIPPED_STORIES))
     return SKIPPED_STORIES
 
 
@@ -57,6 +59,8 @@ def mark_story_as_skipped(story: Dict[str, Any], reason: str = "") -> None:
         "reason": reason,
     }
     save_skipped_stories()
+    metrics_tracker.story_skipped(slug, story.get("title", slug), reason)
+    metrics_tracker.update_skipped_queue_size(len(SKIPPED_STORIES))
     now = time.strftime("%Y-%m-%d %H:%M:%S")
     msg = f"[SKIP] {story.get('title')} - {reason} ({now})".strip()
     logger.warning(msg)
