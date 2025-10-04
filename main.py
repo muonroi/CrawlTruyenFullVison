@@ -1241,12 +1241,17 @@ if __name__ == "__main__":
     crawl_mode = app_config.DEFAULT_CRAWL_MODE or (sys.argv[2] if len(sys.argv) > 2 else None)
 
     try:
+        # If mode is 'full', treat it as 'all_sites' for backward compatibility and default runs
+        if mode == 'full':
+            mode = 'all_sites'
+
         if mode == "all_sites":
             asyncio.run(run_all_sites(crawl_mode=crawl_mode))
-        elif mode:  # mode là site_key
+        elif mode and mode in app_config.BASE_URLS.keys():
             asyncio.run(run_single_site(site_key=mode, crawl_mode=crawl_mode))
         else:
-            print("❌ Cần truyền site_key hoặc 'all_sites' làm đối số.")
+            valid_keys = ', '.join(app_config.BASE_URLS.keys())
+            print(f"❌ Chế độ '{mode}' không hợp lệ. Hãy truyền một site_key hợp lệ ({valid_keys}) hoặc 'all_sites'.")
             sys.exit(1)
     finally:
         asyncio.run(close_producer())
