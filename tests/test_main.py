@@ -344,13 +344,13 @@ async def test_process_genre_item_retries_and_skips(monkeypatch, tmp_path, caplo
     save_state_mock = AsyncMock()
     monkeypatch.setattr(main, "save_crawl_state", save_state_mock)
 
-    sleep_mock = AsyncMock()
-    monkeypatch.setattr(main.asyncio, "sleep", sleep_mock)
+    smart_delay_mock = AsyncMock(return_value=None)
+    monkeypatch.setattr(main, "smart_delay", smart_delay_mock)
 
     ensure_dir_mock = AsyncMock()
     monkeypatch.setattr(main, "ensure_directory_exists", ensure_dir_mock)
 
-    process_story_mock = AsyncMock(return_value=True)
+    process_story_mock = AsyncMock(side_effect=[False, True])
     monkeypatch.setattr(main, "process_story_item", process_story_mock)
 
     monkeypatch.setattr(main, "load_skipped_stories", MagicMock())
@@ -370,10 +370,13 @@ async def test_process_genre_item_retries_and_skips(monkeypatch, tmp_path, caplo
         {"title": "Process me", "url": "https://example.com/process"},
     ]
 
+    async def fake_get_all(*args, page_callback=None, collect=True, **kwargs):
+        if page_callback:
+            await page_callback(list(stories), 1, 1)
+        return (list(stories) if collect else [], 1, 1)
+
     adapter = SimpleNamespace(
-        get_all_stories_from_genre_with_page_check=AsyncMock(
-            side_effect=[(stories, 5, 3), (stories, 5, 5)]
-        ),
+        get_all_stories_from_genre_with_page_check=AsyncMock(side_effect=fake_get_all),
         get_story_details=AsyncMock(return_value={}),
     )
 
@@ -382,16 +385,13 @@ async def test_process_genre_item_retries_and_skips(monkeypatch, tmp_path, caplo
 
     await main.process_genre_item(None, genre_data, crawl_state, adapter, "demo")
 
-    assert adapter.get_all_stories_from_genre_with_page_check.await_count == 2
-    assert sleep_mock.await_count >= 1
-
-    retry_messages = [rec.message for rec in caplog.records if "retry" in rec.message.lower()]
-    assert retry_messages, "Expected retry warning to be logged"
+    assert adapter.get_all_stories_from_genre_with_page_check.await_count == 1
+    assert smart_delay_mock.await_count >= 1
 
     assert any("[SKIP]" in rec.message for rec in caplog.records)
 
-    process_story_mock.assert_awaited_once()
-    ensure_dir_mock.assert_awaited_once()
+    assert process_story_mock.await_count == 2
+    assert ensure_dir_mock.await_count >= 2
 
     assert sorted(crawl_state.get("globally_completed_story_urls", [])) == sorted(
         ["https://example.com/process", "https://example.com/skip"]

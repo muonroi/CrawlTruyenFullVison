@@ -260,6 +260,11 @@ class TangThuVienAdapter(BaseSiteAdapter):
         genre_url: str,
         site_key: str,
         max_pages: Optional[int] = None,
+        *,
+        page_callback: Optional[
+            Callable[[List[Dict[str, Any]], int, Optional[int]], Awaitable[None]]
+        ] = None,
+        collect: bool = True,
     ) -> Tuple[List[Dict[str, str]], int, int]:
         logger.info(f"[{self.site_key}] Crawling stories for genre '{genre_name}'")
         first_page_stories, total_pages = await self.get_stories_in_genre(genre_url, page=1)
@@ -275,17 +280,25 @@ class TangThuVienAdapter(BaseSiteAdapter):
             current_page=1,
         )
 
-        all_stories = list(first_page_stories)
-        for story in all_stories:
+        all_stories: List[Dict[str, Any]] = list(first_page_stories) if collect else []
+        for story in first_page_stories:
             story.setdefault('_source_page', 1)
+
         seen_urls: Set[str] = set()
-        for story in all_stories:
+        for story in first_page_stories:
             url_key = story.get("url")
             if url_key:
                 seen_urls.add(url_key)
 
-        if all_stories:
-            metrics_tracker.set_genre_story_total(site_key, genre_url, len(all_stories))
+        if first_page_stories:
+            metrics_tracker.set_genre_story_total(
+                site_key,
+                genre_url,
+                len(first_page_stories),
+            )
+
+        if page_callback:
+            await page_callback(list(first_page_stories), 1, total_pages)
 
         limit_hint = max_pages or total_pages or self._genre_paging_fallback_step
         limit_hint = max(limit_hint, 1)
@@ -347,19 +360,36 @@ class TangThuVienAdapter(BaseSiteAdapter):
                 logger.info(
                     f"[{self.site_key}] Stop paging {genre_name}: no new stories on page {page_number}"
                 )
-                break
+                saw_new_items = False
+                page_number += 1
+                await asyncio.sleep(0.5)
+                continue
 
-            all_stories.extend(new_batch)
-            metrics_tracker.set_genre_story_total(site_key, genre_url, len(all_stories))
+            if collect:
+                all_stories.extend(new_batch)
+            metrics_tracker.set_genre_story_total(
+                site_key,
+                genre_url,
+                len(all_stories) if collect else len(seen_urls),
+            )
+            if page_callback:
+                await page_callback(list(new_batch), page_number, total_pages)
+
             observed_max_page = max(observed_max_page, page_number)
             saw_new_items = True
             page_number += 1
             await asyncio.sleep(0.5)
 
         total_pages = max(total_pages or 0, observed_max_page)
-        if all_stories:
+        if collect and all_stories:
             metrics_tracker.set_genre_story_total(site_key, genre_url, len(all_stories))
-        logger.info(f"[{self.site_key}] Total stories for {genre_name}: {len(all_stories)}")
+        metrics_tracker.update_genre_pages(
+            site_key,
+            genre_url,
+            crawled_pages=crawled_pages,
+            total_pages=total_pages,
+            current_page=observed_max_page,
+        )
         return all_stories, total_pages, crawled_pages
 
     async def get_all_stories_from_genre(

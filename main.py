@@ -1,5 +1,6 @@
 from __future__ import annotations
 import asyncio
+import itertools
 import glob
 import json
 import random
@@ -17,6 +18,7 @@ if _AIOHTTP_SPEC:
 else:  # pragma: no cover - optional dependency missing
     aiohttp = None  # type: ignore
 import os
+from dataclasses import dataclass
 from typing import Any, Dict, List, Optional, Tuple, Union
 try:
     _AIOGRAM_SPEC = importlib.util.find_spec("aiogram")
@@ -837,53 +839,110 @@ async def process_genre_item(
     else:
         stories = list(stories)
 
-    metrics_tracker.set_genre_story_total(site_key, genre_url, len(stories))
+    metrics_tracker.set_genre_story_total(site_key, genre_url, 0)
 
     completed_global = set(crawl_state.get("globally_completed_story_urls", []))
     start_idx = crawl_state.get("current_story_index_in_genre", 0)
+    max_total = app_config.MAX_STORIES_TOTAL_PER_GENRE or 0
+    limit_total = max_total if max_total > 0 else None
 
-    planned_total = len(stories)
-    if app_config.MAX_STORIES_TOTAL_PER_GENRE:
-        planned_total = min(planned_total, app_config.MAX_STORIES_TOTAL_PER_GENRE)
-    processed_before = min(start_idx, planned_total)
-    _update_category_progress(
-        crawl_state,
-        genre_name,
-        planned_total,
-        processed_before,
-        completed=processed_before >= planned_total,
-    )
-
-    stories_to_process: list[tuple[int, Dict[str, Any]]] = []
-    for idx, story in enumerate(stories):
-        if idx < start_idx:
-            continue
-        if app_config.MAX_STORIES_TOTAL_PER_GENRE and idx >= app_config.MAX_STORIES_TOTAL_PER_GENRE:
-            break
-        stories_to_process.append((idx, story))
-
-    metrics_tracker.set_genre_story_total(
-        site_key,
-        genre_data["url"],
-        len(stories_to_process),
-    )
-
-    if not stories_to_process:
-        metrics_tracker.genre_completed(site_key, genre_data["url"], stories_processed=0)
-        await save_crawl_state(crawl_state, state_file, site_key=site_key)
-        return
-
-    num_batches = max(
-        1,
-        (len(stories_to_process) + STORY_BATCH_SIZE - 1) // STORY_BATCH_SIZE,
-    )
-    batches = split_batches(stories_to_process, num_batches)
-
-    story_lookup: Dict[int, Dict[str, Any]] = {}
+    planned_total = max(start_idx, 0)
     processed_count = 0
+    last_processed_index = start_idx
+    skipped_titles: List[str] = []
 
-    async def handle_story(idx, story):
+    def update_progress(completed: bool = False) -> None:
+        processed_so_far = min(start_idx + processed_count, planned_total)
+        _update_category_progress(
+            crawl_state,
+            genre_name,
+            planned_total,
+            processed_so_far,
+            completed=completed or (planned_total > 0 and processed_so_far >= planned_total),
+        )
+
+    update_progress()
+
+    @dataclass(slots=True)
+    class StoryJob:
+        index: int
+        story: Dict[str, Any]
+        base_priority: int
+        retry_count: int = 0
+
+    queue: asyncio.PriorityQueue[tuple[int, int, StoryJob]] = asyncio.PriorityQueue()
+    job_counter = itertools.count()
+    pending_requeues: set[asyncio.Task] = set()
+    SENTINEL = object()
+
+    discovered_total = start_idx
+
+    def _set_story_total() -> None:
+        effective_total = max(planned_total - min(start_idx, planned_total), 0)
+        metrics_tracker.set_genre_story_total(site_key, genre_url, effective_total)
+
+    async def enqueue_story(story: Dict[str, Any], page_number: Optional[int] = None) -> None:
+        nonlocal discovered_total, planned_total
+        source_page = story.get("_source_page")
+        if isinstance(page_number, int):
+            source_page = page_number
+        if not isinstance(source_page, int) or source_page <= 0:
+            source_page = 1
+        story["_source_page"] = source_page
+
+        discovered_total += 1
+        overall_idx = discovered_total - 1
+        if limit_total is not None and overall_idx >= limit_total:
+            return
+        if overall_idx < start_idx:
+            return
+
+        raw_priority = story.get("priority")
+        if isinstance(raw_priority, int):
+            base_priority = raw_priority
+        else:
+            base_priority = source_page * 1000 + overall_idx
+
+        job = StoryJob(index=overall_idx, story=story, base_priority=base_priority)
+        await queue.put((job.base_priority, next(job_counter), job))
+
+        planned_total = max(planned_total, min(discovered_total, limit_total or discovered_total))
+        _set_story_total()
+        update_progress()
+
+    async def stream_existing(story_list: List[Dict[str, Any]]) -> None:
+        for idx, story in enumerate(story_list):
+            if limit_total is not None and (start_idx + idx) >= limit_total:
+                break
+            await enqueue_story(story, story.get("_source_page"))
+
+    async def discovery() -> None:
+        try:
+            if stories:
+                await stream_existing(stories)
+                return
+
+            async def on_page(page_stories: List[Dict[str, Any]], page_number: int, _total_pages: Optional[int]) -> None:
+                for item in page_stories:
+                    await enqueue_story(item, page_number)
+
+            await adapter.get_all_stories_from_genre_with_page_check(
+                genre_name,
+                genre_url,
+                site_key,
+                max_pages=app_config.MAX_STORIES_PER_GENRE_PAGE,
+                page_callback=on_page,
+                collect=False,
+            )
+        finally:
+            if not stories:
+                plan_mapping = crawl_state.setdefault("category_story_plan", {})
+                plan_mapping.setdefault(genre_name, [])
+
+    async def handle_story(job: StoryJob) -> tuple[bool, Optional[str], int, bool, bool, StoryCrawlStatus]:
         load_skipped_stories()
+        story = job.story
+        idx = job.index
         title = story.get("title", f"Story #{idx + 1}")
         story_url = story.get("url")
         registry_entry = story_registry.ensure_entry(site_key, story, genre_name)
@@ -928,7 +987,7 @@ async def process_genre_item(
 
             metrics_tracker.genre_story_started(
                 site_key,
-                genre_data["url"],
+                genre_url,
                 title,
                 story_page=story.get("_source_page"),
                 story_position=idx + 1,
@@ -1005,7 +1064,7 @@ async def process_genre_item(
             finally:
                 metrics_tracker.genre_story_finished(
                     site_key,
-                    genre_data["url"],
+                    genre_url,
                     title,
                     processed=processed_successfully,
                 )
@@ -1028,118 +1087,117 @@ async def process_genre_item(
                 registry_status,
             )
 
-    for batch in batches:
-        story_lookup.clear()
-        story_lookup.update({idx: story for idx, story in batch})
-        remaining = batch
-        retry_counts = {idx: 0 for idx, _ in batch}
-        skipped_in_batch = []
-        pending_cooldowns: Dict[int, tuple[Dict[str, Any], float]] = {}
+    def schedule_cooldown(job: StoryJob, ready_at: float) -> None:
+        delay = max(ready_at - time.time(), 0.0)
 
-        while remaining or pending_cooldowns:
-            if not remaining:
-                now = time.time()
-                ready: List[tuple[int, Dict[str, Any]]] = []
-                for idx, (story_obj, ready_at) in list(pending_cooldowns.items()):
-                    if ready_at <= now:
-                        ready.append((idx, story_obj))
-                        pending_cooldowns.pop(idx, None)
-                if not ready:
-                    sleep_for = min(
-                        max(ready_at - now, 0.0)
-                        for _, ready_at in pending_cooldowns.values()
-                    ) if pending_cooldowns else 0.0
-                    if sleep_for > 0:
-                        await asyncio.sleep(min(sleep_for, 60.0))
-                    else:
-                        await smart_delay()
-                    continue
-                remaining = ready
+        async def _requeue() -> None:
+            await asyncio.sleep(delay)
+            await queue.put((job.base_priority + job.retry_count, next(job_counter), job))
+
+        task = asyncio.create_task(_requeue())
+        pending_requeues.add(task)
+
+        def _done_callback(task: asyncio.Task) -> None:
+            pending_requeues.discard(task)
+            if task.exception():  # pragma: no cover - defensive logging
+                logger.warning(
+                    f"[COOLDOWN] Requeue task for '{job.story.get('title', job.index)}' failed: {task.exception()}"
+                )
+
+        task.add_done_callback(_done_callback)
+
+    async def worker() -> None:
+        nonlocal processed_count, last_processed_index, planned_total
+        retry_limit = app_config.RETRY_STORY_ROUND_LIMIT
+        while True:
+            priority, _seq, item = await queue.get()
+            if item is SENTINEL:
+                queue.task_done()
+                break
+            job = item
+            try:
+                done, url, idx, cooldown, processed_successfully, registry_status = await handle_story(job)
+            except Exception:
+                queue.task_done()
+                raise
+
+            requeue_requested = False
+            if registry_status == StoryCrawlStatus.IN_PROGRESS and not done and not processed_successfully and not cooldown:
+                queue.task_done()
                 continue
 
-            tasks = [asyncio.create_task(handle_story(i, s)) for i, s in remaining]
-            results = await asyncio.gather(*tasks)
-            remaining = []
-            for (
-                done,
-                url,
-                idx,
-                cooldown,
-                processed_successfully,
-                registry_status,
-            ) in results:
-                story_obj = story_lookup[idx]
-                if (
-                    registry_status == StoryCrawlStatus.IN_PROGRESS
-                    and not done
-                    and not processed_successfully
-                    and not cooldown
-                ):
-                    logger.debug(
-                        "[REGISTRY] Bỏ qua retry cho '%s' vì đang được xử lý ở worker khác.",
-                        story_obj.get("title", f"Story #{idx + 1}"),
+            if cooldown:
+                ready_at = job.story.get("_cooldown_until")
+                if isinstance(ready_at, (int, float)):
+                    schedule_cooldown(job, float(ready_at))
+                else:
+                    schedule_cooldown(job, time.time() + 60)
+                requeue_requested = True
+            elif not done and not processed_successfully:
+                job.retry_count += 1
+                if job.retry_count >= retry_limit:
+                    title = job.story.get("title", f"Story #{idx + 1}")
+                    logger.error(
+                        f"[FATAL] Vượt quá retry cho truyện {title}, bỏ qua."
                     )
-                    continue
+                    mark_story_as_skipped(job.story, "retry quá giới hạn")
+                    skipped_titles.append(title)
+                else:
+                    await smart_delay()
+                    await queue.put((job.base_priority + job.retry_count, next(job_counter), job))
+                    requeue_requested = True
+
+            if not requeue_requested:
                 if processed_successfully:
                     processed_count += 1
-                if done:
+                if done and url:
                     completed_global.add(url)
-                else:
-                    if cooldown:
-                        cooldown_until = story_obj.get("_cooldown_until")
-                        if isinstance(cooldown_until, (int, float)):
-                            pending_cooldowns[idx] = (story_obj, cooldown_until)
-                        else:
-                            pending_cooldowns[idx] = (story_obj, time.time() + 60)
-                        continue
-                    retry_counts[idx] = retry_counts.get(idx, 0) + 1
-                    if retry_counts[idx] >= app_config.RETRY_STORY_ROUND_LIMIT:
-                        story_title = story_obj['title']
-                        logger.error(
-                            f"[FATAL] Vượt quá retry cho truyện {story_title}, bỏ qua."
-                        )
-                        mark_story_as_skipped(story_obj, "retry quá giới hạn")
-                        skipped_in_batch.append(story_title)
-                        continue
-                    remaining.append((idx, story_obj))
-            if remaining:
-                logger.warning(
-                    f"[BATCH] {len(remaining)} truyện chưa đủ chương, sẽ thử lại trong batch hiện tại"
-                )
-                await smart_delay()
-        crawl_state["globally_completed_story_urls"] = sorted(completed_global)
-        crawl_state["current_story_index_in_genre"] = batch[-1][0] + 1
-        total_processed = min(start_idx + processed_count, planned_total)
-        _update_category_progress(
-            crawl_state,
-            genre_name,
-            planned_total,
-            total_processed,
-            completed=total_processed >= planned_total,
+                last_processed_index = max(last_processed_index, idx + 1)
+                planned_total = max(planned_total, last_processed_index)
+                update_progress()
+
+            queue.task_done()
+
+    worker_count = max(1, app_config.STORY_ASYNC_LIMIT)
+    workers = [asyncio.create_task(worker()) for _ in range(worker_count)]
+    discovery_task = asyncio.create_task(discovery())
+
+    try:
+        await discovery_task
+        while True:
+            await queue.join()
+            if not pending_requeues:
+                break
+            await asyncio.sleep(0)
+        for _ in range(worker_count):
+            await queue.put((float("inf"), next(job_counter), SENTINEL))
+        await asyncio.gather(*workers)
+    finally:
+        for task in workers:
+            if not task.done():
+                task.cancel()
+        if not discovery_task.done():
+            discovery_task.cancel()
+
+    crawl_state["globally_completed_story_urls"] = sorted(completed_global)
+    crawl_state["current_story_index_in_genre"] = max(
+        crawl_state.get("current_story_index_in_genre", 0),
+        last_processed_index,
+    )
+    update_progress(completed=True)
+    await save_crawl_state(crawl_state, state_file, site_key=site_key)
+
+    if skipped_titles:
+        logger.warning("[STREAM] Các truyện bị skip: " + ", ".join(skipped_titles))
+        all_titles = ", ".join(
+            s.get("title") for s in get_all_skipped_stories().values()
         )
-        await save_crawl_state(crawl_state, state_file, site_key=site_key)
-        if skipped_in_batch:
-            logger.warning(
-                "[BATCH] Các truyện bị skip trong batch này: " + ", ".join(skipped_in_batch)
-            )
-            all_titles = ", ".join(
-                s.get("title") for s in get_all_skipped_stories().values()
-            )
-            logger.info("[SKIP LIST] " + all_titles)
+        logger.info("[SKIP LIST] " + all_titles)
 
     metrics_tracker.genre_completed(
         site_key,
-        genre_data["url"],
+        genre_url,
         stories_processed=processed_count,
-    )
-
-    total_processed = min(start_idx + processed_count, planned_total)
-    _update_category_progress(
-        crawl_state,
-        genre_name,
-        planned_total,
-        total_processed,
-        completed=total_processed >= planned_total,
     )
 
     await clear_specific_state_keys(
@@ -1151,7 +1209,6 @@ async def process_genre_item(
         ],
         state_file,
     )
-
 
 async def retry_failed_genres(
     adapter, site_key, settings: WorkerSettings, shuffle_func

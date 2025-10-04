@@ -61,6 +61,9 @@ class _StubAdapter(BaseSiteAdapter):
         genre_url: str,
         site_key: str,
         max_pages: Optional[int] = None,
+        *,
+        page_callback=None,
+        collect: bool = True,
     ):
         self._captured_calls.append(
             {
@@ -71,7 +74,9 @@ class _StubAdapter(BaseSiteAdapter):
             }
         )
         stories = [{"title": f"{genre_name} Story", "url": genre_url + "/story"}]
-        return stories, 3, 3
+        if page_callback:
+            await page_callback(list(stories), 1, 3)
+        return (stories if collect else [], 3, 3)
 
 
 @pytest.mark.asyncio
