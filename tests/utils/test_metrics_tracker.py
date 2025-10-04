@@ -182,6 +182,28 @@ def test_metrics_tracker_emits_story_events(monkeypatch, tmp_path):
     assert completed_event["story"]["percent"] == 100
 
 
+def test_record_story_event_tracks_history(monkeypatch, tmp_path):
+    dashboard = tmp_path / "dashboard_story_events.json"
+    monkeypatch.setenv("STORYFLOW_DASHBOARD_FILE", str(dashboard))
+
+    tracker = CrawlMetricsTracker()
+    tracker.record_story_event("cat-1", "story-42", "start", metadata={"title": "Story"})
+    tracker.record_story_event("cat-1", "story-42", "failure", metadata={"reason": "timeout"})
+    tracker.record_story_event("cat-1", "story-42", "retry", metadata={"round": 1})
+    tracker.record_story_event("cat-1", "story-42", "success", metadata={"source": "demo"})
+
+    snapshot = tracker.get_snapshot()
+    events_payload = snapshot["story_events"]
+    assert events_payload["summary"]["start"] >= 1
+    assert events_payload["summary"]["success"] >= 1
+    entries = events_payload["entries"]
+    assert entries
+    first_entry = entries[0]
+    assert first_entry["category_id"] == "cat-1"
+    assert first_entry["story_id"] == "story-42"
+    assert first_entry["last_event"] == "success"
+    assert len(first_entry["events"]) == 4
+
 def test_metrics_tracker_percent_from_missing(monkeypatch, tmp_path):
     dashboard = tmp_path / "dashboard_missing.json"
     monkeypatch.setenv("STORYFLOW_DASHBOARD_FILE", str(dashboard))

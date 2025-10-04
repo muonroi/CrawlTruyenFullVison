@@ -365,7 +365,7 @@ async def test_process_genre_item_batches(tmp_path, monkeypatch):
     monkeypatch.setattr("main.clear_specific_state_keys", AsyncMock())
 
     called = []
-    async def fake_process_story(session, story, g, folder, state, ad, sk):
+    async def fake_process_story(session, story, g, folder, state, ad, sk, **kwargs):
         called.append(story["title"])
         return True
     monkeypatch.setattr("main.process_story_item", fake_process_story)

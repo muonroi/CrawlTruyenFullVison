@@ -309,6 +309,37 @@ def _normalize_story_sources(
     return metadata_changed or previous_story_sources != normalized_sorted
 
 
+def _extract_category_identifier(payload: Optional[Dict[str, Any]]) -> Optional[str]:
+    if not isinstance(payload, dict):
+        return None
+    for key in ("category_id", "id", "slug", "slug_id", "code"):
+        value = payload.get(key)
+        if isinstance(value, (str, int)):
+            text = str(value).strip()
+            if text:
+                return text
+    return None
+
+
+def _derive_category_identifier(
+    category_plan: Optional[CategoryCrawlPlan],
+    genre_data: Dict[str, Any],
+    site_key: str,
+) -> str:
+    candidates: List[Optional[str]] = []
+    if category_plan is not None:
+        candidates.append(_extract_category_identifier(category_plan.metadata))
+        candidates.append(_extract_category_identifier(category_plan.raw_genre))
+    candidates.append(_extract_category_identifier(genre_data))
+    for candidate in candidates:
+        if candidate:
+            return str(candidate)
+    fallback = genre_data.get("url") or genre_data.get("name")
+    if isinstance(fallback, str) and fallback.strip():
+        return fallback.strip()
+    return f"{site_key}:unknown"
+
+
 async def crawl_all_sources_until_full(
     site_key,
     session,
@@ -319,6 +350,9 @@ async def crawl_all_sources_until_full(
     num_batches=10,
     state_file=None,
     adapter: BaseSiteAdapter = None,  # type: ignore
+    *,
+    category_id: Optional[str] = None,
+    story_registry_id: Optional[int] = None,
 ):
     request = StoryCrawlRequest(
         site_key=site_key,
@@ -330,6 +364,8 @@ async def crawl_all_sources_until_full(
         num_batches=num_batches,
         state_file=state_file,
         adapter=adapter,
+        category_id=category_id,
+        story_registry_id=story_registry_id,
     )
     return await multi_source_story_crawler.crawl_story_until_complete(request)
 
@@ -398,9 +434,17 @@ async def process_story_item(
     crawl_state: Dict[str, Any],
     adapter: BaseSiteAdapter,
     site_key: str,
+    *,
+    category_id: Optional[str] = None,
+    story_registry_id: Optional[int] = None,
 ) -> bool:
     await ensure_directory_exists(story_global_folder_path)
     logger.info(f"\n  --- Xử lý truyện: {story_data_item['title']} ---")
+
+    if category_id and isinstance(category_id, str) and category_id.strip():
+        current_discovery_genre_data.setdefault("category_id", category_id)
+    if story_registry_id is not None:
+        story_data_item["registry_story_id"] = story_registry_id
 
     story_url = story_data_item.get("url")
     story_cooldowns = crawl_state.setdefault("story_cooldowns", {})
@@ -532,6 +576,8 @@ async def process_story_item(
         num_batches=app_config.NUM_CHAPTER_BATCHES,
         state_file=state_file,
         adapter=adapter,
+        category_id=category_id,
+        story_registry_id=story_registry_id,
     )
     if isinstance(chapter_limit_hint, int) and chapter_limit_hint >= 0:
         story_data_item["_chapter_limit"] = chapter_limit_hint
@@ -839,6 +885,9 @@ async def process_genre_item(
     else:
         stories = list(stories)
 
+    category_identifier = _derive_category_identifier(category_plan, genre_data, site_key)
+    genre_data.setdefault("category_id", category_identifier)
+
     metrics_tracker.set_genre_story_total(site_key, genre_url, 0)
 
     completed_global = set(crawl_state.get("globally_completed_story_urls", []))
@@ -869,6 +918,7 @@ async def process_genre_item(
         story: Dict[str, Any]
         base_priority: int
         retry_count: int = 0
+        category_id: str = category_identifier
 
     queue: asyncio.PriorityQueue[tuple[int, int, StoryJob]] = asyncio.PriorityQueue()
     job_counter = itertools.count()
@@ -903,7 +953,12 @@ async def process_genre_item(
         else:
             base_priority = source_page * 1000 + overall_idx
 
-        job = StoryJob(index=overall_idx, story=story, base_priority=base_priority)
+        job = StoryJob(
+            index=overall_idx,
+            story=story,
+            base_priority=base_priority,
+            category_id=category_identifier,
+        )
         await queue.put((job.base_priority, next(job_counter), job))
 
         planned_total = max(planned_total, min(discovered_total, limit_total or discovered_total))
@@ -1033,6 +1088,8 @@ async def process_genre_item(
                             local_state,
                             adapter,
                             site_key,
+                            category_id=job.category_id,
+                            story_registry_id=registry_story_id,
                         )
                         done = bool(result)
                         processed_successfully = bool(result)
@@ -1052,16 +1109,22 @@ async def process_genre_item(
                             registry_status = StoryCrawlStatus.COMPLETED
                             registry_result = "completed"
                         elif processed_successfully:
-                            registry_status = StoryCrawlStatus.FAILED
+                            registry_status = StoryCrawlStatus.NEEDS_RETRY
                             registry_result = "partial_success"
                         else:
-                            registry_status = StoryCrawlStatus.FAILED
+                            registry_status = StoryCrawlStatus.NEEDS_RETRY
                             registry_result = "no_progress"
             except Exception as exc:
-                registry_status = StoryCrawlStatus.FAILED
+                registry_status = StoryCrawlStatus.NEEDS_RETRY
                 registry_result = f"exception:{exc}"
                 raise
             finally:
+                if is_story_skipped(story):
+                    registry_status = StoryCrawlStatus.PERMANENT_FAIL
+                    if not registry_result:
+                        registry_result = "permanent_skip"
+                elif registry_status == StoryCrawlStatus.FAILED:
+                    registry_status = StoryCrawlStatus.NEEDS_RETRY
                 metrics_tracker.genre_story_finished(
                     site_key,
                     genre_url,
@@ -1133,7 +1196,12 @@ async def process_genre_item(
                 else:
                     schedule_cooldown(job, time.time() + 60)
                 requeue_requested = True
-            elif not done and not processed_successfully:
+            elif (
+                not done
+                and not processed_successfully
+                and registry_status
+                not in {StoryCrawlStatus.PERMANENT_FAIL, StoryCrawlStatus.SKIPPED}
+            ):
                 job.retry_count += 1
                 if job.retry_count >= retry_limit:
                     title = job.story.get("title", f"Story #{idx + 1}")
