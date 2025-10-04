@@ -175,8 +175,31 @@ def test_metrics_tracker_emits_story_events(monkeypatch, tmp_path):
     assert progress_event["action"] in {"progress", "cooldown"}
     story_payload = progress_event["story"]
     assert story_payload["crawled_chapters"] == 10
-    assert story_payload["percent"] >= 0
+    assert story_payload["percent"] == 50
 
     completed_event = captured[-1][1]
     assert completed_event["action"] == "completed"
     assert completed_event["story"]["percent"] == 100
+
+
+def test_metrics_tracker_percent_from_missing(monkeypatch, tmp_path):
+    dashboard = tmp_path / "dashboard_missing.json"
+    monkeypatch.setenv("STORYFLOW_DASHBOARD_FILE", str(dashboard))
+
+    tracker = CrawlMetricsTracker()
+    captured = []
+
+    def _capture(category, payload):
+        captured.append(payload)
+
+    monkeypatch.setattr("utils.metrics_tracker.emit_progress_event", _capture)
+
+    tracker.story_started("story-dynamic", "Truyện D", 0)
+    tracker.update_story_progress(
+        "story-dynamic", crawled_chapters=12, missing_chapters=48
+    )
+
+    assert captured
+    progress = captured[-1]["story"]
+    assert progress["total_chapters"] == 0
+    assert progress["percent"] == 20
