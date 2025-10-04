@@ -58,6 +58,32 @@ class TangThuVienAdapter(BaseSiteAdapter):
         self._genre_listing_cache: Dict[str, str] = {}
         self._genre_listing_lock = asyncio.Lock()
 
+    def _compute_desktop_base_url(self) -> Optional[str]:
+        """Return a best-effort desktop version of ``self.base_url``.
+
+        TangThuVien serves a distinct mobile experience from ``m.tangthuvien``
+        which omits the category links we rely on when discovering genres.
+        When the crawler is configured with the mobile hostname we fall back to
+        the desktop domain so that genre discovery keeps working.
+        """
+
+        parsed = urlparse(self.base_url)
+        hostname = parsed.hostname or ""
+
+        replacement_host = None
+        for prefix in ("m.", "mobile."):
+            if hostname.startswith(prefix):
+                replacement_host = hostname[len(prefix) :]
+                break
+
+        if not replacement_host or replacement_host == hostname:
+            return None
+
+        port = f":{parsed.port}" if parsed.port else ""
+        new_netloc = f"{replacement_host}{port}"
+        candidate = urlunparse(parsed._replace(netloc=new_netloc))
+        return candidate
+
     def _normalize_category_url(self, category_url: str) -> str:
         if not category_url:
             return self.base_url
@@ -84,9 +110,24 @@ class TangThuVienAdapter(BaseSiteAdapter):
 
     async def get_genres(self) -> List[Dict[str, str]]:
         html = await self._fetch_text(self.base_url, wait_for_selector="div.update-wrap")
-        if not html:
-            return []
-        genres = parse_genres(html, self.base_url)
+        genres: List[Dict[str, str]] = []
+
+        if html:
+            genres = parse_genres(html, self.base_url)
+
+        if not genres:
+            desktop_base = self._compute_desktop_base_url()
+            if desktop_base and desktop_base != self.base_url:
+                fallback_html = await self._fetch_text(
+                    desktop_base, wait_for_selector="div.update-wrap"
+                )
+                if fallback_html:
+                    genres = parse_genres(fallback_html, desktop_base)
+                    if genres:
+                        logger.debug(
+                            f"[{self.site_key}] Fallback to desktop domain {desktop_base} for genres"
+                        )
+
         logger.info(f"[{self.site_key}] Found {len(genres)} genres")
         return genres
 
