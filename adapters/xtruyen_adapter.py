@@ -1,6 +1,6 @@
 import asyncio
 import re
-from typing import Any, Dict, List, Optional, Set, Tuple
+from typing import Any, Awaitable, Callable, Dict, List, Optional, Set, Tuple
 from urllib.parse import parse_qs, urlencode, urljoin, urlparse, urlunparse
 
 from adapters.base_site_adapter import BaseSiteAdapter
@@ -247,6 +247,11 @@ class XTruyenAdapter(BaseSiteAdapter):
         genre_url: str,
         site_key: str,
         max_pages: Optional[int] = None,
+        *,
+        page_callback: Optional[
+            Callable[[List[Dict[str, Any]], int, Optional[int]], Awaitable[None]]
+        ] = None,
+        collect: bool = True,
     ) -> Tuple[List[Dict[str, str]], int, int]:
         logger.info(f"[{self.site_key}] Crawling stories for genre '{genre_name}'")
         first_page_stories, total_pages = await self.get_stories_in_genre(genre_url, page=1)
@@ -262,11 +267,21 @@ class XTruyenAdapter(BaseSiteAdapter):
             current_page=1,
         )
 
-        all_stories = list(first_page_stories)
-        limit = max_pages or total_pages or 1
-        crawled_pages = 1
+        all_stories: List[Dict[str, Any]] = list(first_page_stories) if collect else []
+        for story in first_page_stories:
+            story.setdefault('_source_page', 1)
 
-        for page in range(2, limit + 1):
+        discovered_total = len(all_stories)
+        if discovered_total:
+            metrics_tracker.set_genre_story_total(site_key, genre_url, discovered_total)
+
+        if page_callback:
+            await page_callback(list(first_page_stories), 1, total_pages)
+
+        crawled_pages = 1
+        limit = max_pages or total_pages or 1
+        page = 2
+        while page <= limit:
             stories, _ = await self.get_stories_in_genre(genre_url, page)
             crawled_pages += 1
             metrics_tracker.update_genre_pages(
@@ -279,9 +294,24 @@ class XTruyenAdapter(BaseSiteAdapter):
             if not stories:
                 logger.info(f"[{self.site_key}] Stop paging {genre_name}: empty page {page}")
                 break
-            all_stories.extend(stories)
+
+            for story in stories:
+                story.setdefault('_source_page', page)
+
+            if collect:
+                all_stories.extend(stories)
+                discovered_total = len(all_stories)
+            else:
+                discovered_total += len(stories)
+            metrics_tracker.set_genre_story_total(site_key, genre_url, discovered_total)
+
+            if page_callback:
+                await page_callback(list(stories), page, total_pages)
+
+            page += 1
             await asyncio.sleep(0.5)
-        logger.info(f"[{self.site_key}] Total stories for {genre_name}: {len(all_stories)}")
+
+        logger.info(f"[{self.site_key}] Total stories for {genre_name}: {discovered_total}")
         return all_stories, total_pages, crawled_pages
 
     async def get_all_stories_from_genre(

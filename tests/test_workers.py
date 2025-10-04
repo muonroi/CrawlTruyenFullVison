@@ -346,12 +346,18 @@ async def test_process_genre_item_batches(tmp_path, monkeypatch):
     genre = {"name": "g", "url": "http://g"}
     stories = [{"title": f"s{i}", "url": f"u{i}"} for i in range(5)]
 
+    async def fake_get_all(*args, page_callback=None, collect=True, **kwargs):
+        if page_callback:
+            await page_callback(list(stories), 1, 1)
+        return (list(stories) if collect else [], 1, 1)
+
     adapter = SimpleNamespace(
-        get_all_stories_from_genre_with_page_check=AsyncMock(return_value=(stories, 1, 1)),
+        get_all_stories_from_genre_with_page_check=AsyncMock(side_effect=fake_get_all),
         get_story_details=AsyncMock(return_value={}),
     )
 
     monkeypatch.setattr("main.STORY_BATCH_SIZE", 2)
+    monkeypatch.setattr("main.STORY_SEM", asyncio.Semaphore(1))
     monkeypatch.setattr("main.DATA_FOLDER", str(tmp_path))
     monkeypatch.setattr("main.slugify_title", lambda t: t)
     monkeypatch.setattr("main.ensure_directory_exists", AsyncMock())

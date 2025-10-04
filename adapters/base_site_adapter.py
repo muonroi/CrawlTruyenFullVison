@@ -1,5 +1,5 @@
 from abc import ABC, abstractmethod
-from typing import ClassVar
+from typing import Any, Awaitable, Callable, ClassVar, Dict, List, Optional
 
 
 class BaseSiteAdapter(ABC):
@@ -44,7 +44,18 @@ class BaseSiteAdapter(ABC):
         pass
 
     @abstractmethod
-    async def get_all_stories_from_genre_with_page_check(self, genre_name, genre_url, site_key, max_pages=None):
+    async def get_all_stories_from_genre_with_page_check(
+        self,
+        genre_name,
+        genre_url,
+        site_key,
+        max_pages=None,
+        *,
+        page_callback: Optional[
+            Callable[[List[Dict[str, Any]], int, Optional[int]], Awaitable[None]]
+        ] = None,
+        collect: bool = True,
+    ):
         pass
 
     def get_chapters_per_page_hint(self) -> int:
