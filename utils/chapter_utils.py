@@ -15,6 +15,7 @@ import aiofiles
 from adapters.base_site_adapter import BaseSiteAdapter
 from config.config import (
     ASYNC_SEMAPHORE_LIMIT,
+    BATCH_SIZE_OVERRIDE,
     HEADER_RE,
     LOCK,
     get_state_file,
@@ -251,7 +252,8 @@ async def crawl_missing_chapters_for_story(
             f"Truyen '{story_data_item['title']}' con thieu {len(missing_chapters)} chuong (retry: {retry_count + 1})"
         )
 
-        batch_size = int(os.getenv("BATCH_SIZE") or get_optimal_batch_size(len(missing_chapters)))
+        effective_batch_size = BATCH_SIZE_OVERRIDE or get_optimal_batch_size(len(missing_chapters))
+        batch_size = int(effective_batch_size)
         num_batches_now = max(1, (len(missing_chapters) + batch_size - 1) // batch_size)
         batches = split_batches(missing_chapters, num_batches_now)
         logger.info(f"Crawl {len(missing_chapters)} chuong voi {num_batches_now} batch (batch size={batch_size})")
@@ -310,9 +312,8 @@ async def crawl_missing_chapters_for_story(
         logger.warning(
             f"[FINAL] Thu lai {len(final_missing)} chuong loi cuoi cung"
         )
-        batch_size = int(
-            os.getenv("BATCH_SIZE") or get_optimal_batch_size(len(final_missing))
-        )
+        effective_batch_size = BATCH_SIZE_OVERRIDE or get_optimal_batch_size(len(final_missing))
+        batch_size = int(effective_batch_size)
         num_batches_now = max(1, (len(final_missing) + batch_size - 1) // batch_size)
         batches = split_batches(final_missing, num_batches_now)
         for batch_idx, batch in enumerate(batches):

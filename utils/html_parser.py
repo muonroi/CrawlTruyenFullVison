@@ -1,6 +1,6 @@
 import os
 from bs4 import BeautifulSoup
-from config.config import HEADER_RE, PATTERN_FILE, SITE_SELECTORS, BASE_URLS
+from config.config import HEADER_RE, PATTERN_FILE, SITE_SELECTORS, BASE_URLS, AI_PROFILES_PATH
 import json
 from urllib.parse import urlparse
 from utils.chapter_utils import slugify_title
@@ -66,8 +66,8 @@ def extract_chapter_content(
         try:
             base = BASE_URLS.get(site_key)
             domain = urlparse(base).netloc if base else None
-            if domain:
-                profile_path = os.getenv("AI_PROFILES_PATH", "state/ai_profiles.json")
+            if domain and AI_PROFILES_PATH:
+                profile_path = AI_PROFILES_PATH
                 if os.path.exists(profile_path):
                     with open(profile_path, "r", encoding="utf-8") as f:
                         data = json.load(f)

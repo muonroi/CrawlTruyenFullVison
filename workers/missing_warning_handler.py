@@ -1,6 +1,5 @@
 import asyncio
 import json
-import os
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Optional
@@ -8,15 +7,9 @@ from typing import Optional
 from aiokafka import AIOKafkaConsumer
 from aiokafka.errors import KafkaConnectionError
 
-from config.config import DATA_FOLDER
+from config import config as app_config
 from utils.logger import logger
 from workers.crawler_single_missing_chapter import crawl_single_story_worker
-
-MISSING_WARNING_TOPIC = os.getenv("MISSING_WARNING_TOPIC", "missing_warnings")
-MISSING_WARNING_GROUP = os.getenv("MISSING_WARNING_GROUP", "missing-warning-group")
-KAFKA_BOOTSTRAP_SERVERS = os.getenv("KAFKA_BROKERS", "kafka:29092")
-KAFKA_BOOTSTRAP_MAX_RETRIES = int(os.getenv("KAFKA_BOOTSTRAP_MAX_RETRIES", "0"))
-KAFKA_BOOTSTRAP_RETRY_DELAY = float(os.getenv("KAFKA_BOOTSTRAP_RETRY_DELAY", "5"))
 
 
 @dataclass
@@ -43,7 +36,7 @@ async def find_story_folder(title: str) -> Optional[Path]:
         if not title:
             return None
         normalized = title.strip().casefold()
-        data_path = Path(DATA_FOLDER)
+        data_path = Path(app_config.DATA_FOLDER)
         if not data_path.exists():
             return None
         for child in data_path.iterdir():
@@ -72,7 +65,7 @@ async def process_job(job: MissingWarningJob) -> None:
         return
     story_folder = await find_story_folder(job.story_title)
     if not story_folder:
-        logger.error(f"[MissingWarning] Story '{job.story_title}' not found in {DATA_FOLDER}")
+        logger.error(f"[MissingWarning] Story '{job.story_title}' not found in {app_config.DATA_FOLDER}")
         return
 
     logger.info(
@@ -97,11 +90,11 @@ async def consume_missing_warnings() -> None:
     while True:
         attempt += 1
         consumer = AIOKafkaConsumer(
-            MISSING_WARNING_TOPIC,
-            bootstrap_servers=KAFKA_BOOTSTRAP_SERVERS,
+            app_config.MISSING_WARNING_TOPIC,
+            bootstrap_servers=app_config.KAFKA_BOOTSTRAP_SERVERS,
             value_deserializer=lambda m: json.loads(m.decode("utf-8")),
             auto_offset_reset="earliest",
-            group_id=MISSING_WARNING_GROUP,
+            group_id=app_config.MISSING_WARNING_GROUP,
             session_timeout_ms=30000,
             max_poll_interval_ms=600000,
         )
@@ -119,18 +112,18 @@ async def consume_missing_warnings() -> None:
                 exc,
             )
             await consumer.stop()
-            if KAFKA_BOOTSTRAP_MAX_RETRIES and attempt >= KAFKA_BOOTSTRAP_MAX_RETRIES:
+            if app_config.KAFKA_BOOTSTRAP_MAX_RETRIES and attempt >= app_config.KAFKA_BOOTSTRAP_MAX_RETRIES:
                 logger.error("[MissingWarning] Exceeded Kafka connection retries. Exit.")
                 raise
-            await asyncio.sleep(KAFKA_BOOTSTRAP_RETRY_DELAY)
+            await asyncio.sleep(app_config.KAFKA_BOOTSTRAP_RETRY_DELAY)
         except Exception:
             await consumer.stop()
             raise
 
     logger.info(
         "[MissingWarning] Listening on topic '%s' (bootstrap=%s)",
-        MISSING_WARNING_TOPIC,
-        KAFKA_BOOTSTRAP_SERVERS,
+        app_config.MISSING_WARNING_TOPIC,
+        app_config.KAFKA_BOOTSTRAP_SERVERS,
     )
     try:
         async for message in consumer:

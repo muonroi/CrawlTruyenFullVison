@@ -6,6 +6,7 @@ import re
 import traceback
 from typing import cast
 from adapters.factory import get_adapter
+from config import config as app_config
 from config.config import BASE_URLS, COMPLETED_FOLDER, DATA_FOLDER, LOADED_PROXIES, PROXIES_FILE, PROXIES_FOLDER
 from config.proxy_provider import load_proxies
 from scraper import initialize_scraper 
@@ -37,21 +38,16 @@ STORY_SEM = asyncio.Semaphore(MAX_CONCURRENT_STORIES)
 MISSING_SUMMARY_LOG = "missing_summary.log"
 MAX_SOURCE_TIMEOUT_RETRY = 3
 
-DEFAULT_MISSING_TIMEOUT = int(os.getenv("MISSING_CRAWL_TIMEOUT_SECONDS", "60"))
-MISSING_TIMEOUT_PER_CHAPTER = float(os.getenv("MISSING_CRAWL_TIMEOUT_PER_CHAPTER", "4"))
-MAX_MISSING_TIMEOUT = int(os.getenv("MISSING_CRAWL_TIMEOUT_MAX", "900"))
-
-
 def calculate_missing_crawl_timeout(num_chapters: int | None = None) -> float:
     """Return a dynamic timeout for crawling missing chapters."""
 
-    base_timeout = max(1, DEFAULT_MISSING_TIMEOUT)
+    base_timeout = max(1, app_config.MISSING_CRAWL_TIMEOUT_SECONDS)
     if not num_chapters or num_chapters <= 0:
         return base_timeout
 
-    dynamic_timeout = base_timeout + num_chapters * MISSING_TIMEOUT_PER_CHAPTER
+    dynamic_timeout = base_timeout + num_chapters * app_config.MISSING_CRAWL_TIMEOUT_PER_CHAPTER
     # Avoid unbounded waits but allow large stories more time to finish.
-    return max(base_timeout, min(MAX_MISSING_TIMEOUT, dynamic_timeout))
+    return max(base_timeout, min(app_config.MISSING_CRAWL_TIMEOUT_MAX, dynamic_timeout))
 
 def get_existing_real_chapter_numbers(story_folder):
     files = [f for f in os.listdir(story_folder) if f.endswith('.txt')]

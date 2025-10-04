@@ -1,6 +1,5 @@
 import asyncio
 import json
-import os
 from aiokafka import AIOKafkaConsumer
 from aiokafka.errors import KafkaConnectionError
 from adapters.factory import get_adapter
@@ -12,7 +11,7 @@ from workers.crawler_single_missing_chapter import crawl_single_story_worker
 from main import WorkerSettings, retry_failed_genres, run_single_site, run_all_sites
 from workers.retry_failed_chapters import retry_single_chapter
 
-from config.config import KAFKA_BOOTSTRAP_SERVERS, KAFKA_TOPIC, KAFKA_GROUP_ID
+from config import config as app_config
 
 # ==== Job Dispatcher Mapping ====
 from main import run_single_story
@@ -45,12 +44,12 @@ async def dispatch_job(job: dict):
             return
 
         settings = WorkerSettings(
-            genre_batch_size=int(os.getenv("GENRE_BATCH_SIZE", 3)),
-            genre_async_limit=int(os.getenv("GENRE_ASYNC_LIMIT", 3)),
-            proxies_file=os.getenv("PROXIES_FILE", "proxies/proxies.txt"),
-            failed_genres_file=os.getenv("FAILED_GENRES_FILE", "failed_genres.json"),
-            retry_genre_round_limit=int(os.getenv("RETRY_GENRE_ROUND_LIMIT", 3)),
-            retry_sleep_seconds=int(os.getenv("RETRY_SLEEP_SECONDS", 1800)),
+            genre_batch_size=app_config.GENRE_BATCH_SIZE,
+            genre_async_limit=app_config.GENRE_ASYNC_LIMIT,
+            proxies_file=app_config.PROXIES_FILE,
+            failed_genres_file=app_config.FAILED_GENRES_FILE,
+            retry_genre_round_limit=app_config.RETRY_GENRE_ROUND_LIMIT,
+            retry_sleep_seconds=app_config.RETRY_SLEEP_SECONDS,
         )
         await retry_failed_genres(get_adapter(site_key), site_key, settings, shuffle_proxies)
         return
@@ -83,20 +82,22 @@ async def dispatch_job(job: dict):
         logger.exception(f"[Kafka] ❌ Lỗi khi xử lý job `{job_type}`: {ex}")
 
 async def consume():
-    logger.info(f"[Kafka] 🔌 Kết nối đến Kafka tại {KAFKA_BOOTSTRAP_SERVERS} | topic={KAFKA_TOPIC}")
-    max_retries = int(os.getenv("KAFKA_BOOTSTRAP_MAX_RETRIES", "0"))
-    retry_delay = float(os.getenv("KAFKA_BOOTSTRAP_RETRY_DELAY", "5"))
+    logger.info(
+        f"[Kafka] 🔌 Kết nối đến Kafka tại {app_config.KAFKA_BOOTSTRAP_SERVERS} | topic={app_config.KAFKA_TOPIC}"
+    )
+    max_retries = app_config.KAFKA_BOOTSTRAP_MAX_RETRIES
+    retry_delay = app_config.KAFKA_BOOTSTRAP_RETRY_DELAY
     attempt = 0
     consumer = None
 
     while True:
         attempt += 1
         consumer = AIOKafkaConsumer(
-            KAFKA_TOPIC,
-            bootstrap_servers=KAFKA_BOOTSTRAP_SERVERS,
+            app_config.KAFKA_TOPIC,
+            bootstrap_servers=app_config.KAFKA_BOOTSTRAP_SERVERS,
             value_deserializer=lambda m: json.loads(m.decode("utf-8")),
             auto_offset_reset="earliest",
-            group_id=KAFKA_GROUP_ID,
+            group_id=app_config.KAFKA_GROUP_ID,
             session_timeout_ms=30000,
             max_poll_interval_ms=600000,  # 10 phút
         )
@@ -117,7 +118,7 @@ async def consume():
             raise
 
     try:
-        logger.info(f"[Kafka] Đang lắng nghe jobs trên topic `{KAFKA_TOPIC}`...")
+        logger.info(f"[Kafka] Đang lắng nghe jobs trên topic `{app_config.KAFKA_TOPIC}`...")
         async for msg in consumer:
             job = msg.value
             await dispatch_job(job)  # type: ignore
