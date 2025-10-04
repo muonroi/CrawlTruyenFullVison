@@ -52,13 +52,27 @@ class TangThuVienAdapter(BaseSiteAdapter):
 
     def __init__(self) -> None:
         self.site_key = "tangthuvien"
-        self.base_url = BASE_URLS.get(self.site_key, "https://tangthuvien.net")
+        configured_base_url = BASE_URLS.get(self.site_key, "https://tangthuvien.net")
+        desktop_candidate = self._compute_desktop_base_url(configured_base_url)
+
+        self._configured_base_url = configured_base_url
+        self.base_url = desktop_candidate or configured_base_url
+        self._desktop_base_url = desktop_candidate
+
+        if desktop_candidate and desktop_candidate != configured_base_url:
+            logger.debug(
+                "[tangthuvien] Using desktop domain %s instead of configured %s",
+                desktop_candidate,
+                configured_base_url,
+            )
+
         self._details_cache: Dict[str, Dict[str, Any]] = {}
         self._details_lock = asyncio.Lock()
         self._genre_listing_cache: Dict[str, str] = {}
         self._genre_listing_lock = asyncio.Lock()
 
-    def _compute_desktop_base_url(self) -> Optional[str]:
+    @staticmethod
+    def _compute_desktop_base_url(base_url: str) -> Optional[str]:
         """Return a best-effort desktop version of ``self.base_url``.
 
         TangThuVien serves a distinct mobile experience from ``m.tangthuvien``
@@ -67,7 +81,7 @@ class TangThuVienAdapter(BaseSiteAdapter):
         the desktop domain so that genre discovery keeps working.
         """
 
-        parsed = urlparse(self.base_url)
+        parsed = urlparse(base_url)
         hostname = parsed.hostname or ""
 
         replacement_host = None
@@ -116,16 +130,21 @@ class TangThuVienAdapter(BaseSiteAdapter):
             genres = parse_genres(html, self.base_url)
 
         if not genres:
-            desktop_base = self._compute_desktop_base_url()
-            if desktop_base and desktop_base != self.base_url:
+            fallback_base = None
+            if self.base_url != self._configured_base_url:
+                fallback_base = self._configured_base_url
+            elif self._desktop_base_url and self._desktop_base_url != self.base_url:
+                fallback_base = self._desktop_base_url
+
+            if fallback_base:
                 fallback_html = await self._fetch_text(
-                    desktop_base, wait_for_selector="div.update-wrap"
+                    fallback_base, wait_for_selector="div.update-wrap"
                 )
                 if fallback_html:
-                    genres = parse_genres(fallback_html, desktop_base)
+                    genres = parse_genres(fallback_html, fallback_base)
                     if genres:
                         logger.debug(
-                            f"[{self.site_key}] Fallback to desktop domain {desktop_base} for genres"
+                            f"[{self.site_key}] Fallback to alternate domain {fallback_base} for genres"
                         )
 
         logger.info(f"[{self.site_key}] Found {len(genres)} genres")
