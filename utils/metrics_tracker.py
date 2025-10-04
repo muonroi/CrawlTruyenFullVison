@@ -10,6 +10,7 @@ from threading import Lock
 from typing import Any, Dict, List, Optional
 
 from utils.logger import logger
+from utils.progress_emitter import emit_progress_event
 
 
 @dataclass
@@ -126,6 +127,45 @@ class GenreProgress:
         }
 
 
+def _story_completion_percent(progress: StoryProgress) -> int:
+    total = max(int(progress.total_chapters or 0), 0)
+    crawled = max(int(progress.crawled_chapters or 0), 0)
+
+    if progress.status == "completed":
+        return 100
+
+    if total > 0:
+        percent = round((crawled / total) * 100)
+    else:
+        percent = 0
+
+    return max(0, min(int(percent), 100))
+
+
+def _story_event_payload(progress: StoryProgress) -> Dict[str, Any]:
+    payload = progress.to_dict()
+    payload.update(
+        {
+            "percent": _story_completion_percent(progress),
+            "remaining_chapters": max(
+                int(progress.total_chapters or 0) - int(progress.crawled_chapters or 0),
+                0,
+            ),
+            "started_at_ts": progress.started_at,
+            "updated_at_ts": progress.updated_at,
+            "completed_at_ts": progress.completed_at,
+            "cooldown_until_ts": progress.cooldown_until,
+        }
+    )
+    return payload
+
+
+def _emit_story_event(action: str, story_payload: Optional[Dict[str, Any]]) -> None:
+    if not story_payload:
+        return
+    emit_progress_event("story", {"action": action, "story": story_payload})
+
+
 def _to_iso(value: Optional[float]) -> Optional[str]:
     if value is None:
         return None
@@ -190,11 +230,15 @@ class CrawlMetricsTracker:
             genre_url=genre_url,
             genre_site_key=genre_site_key,
         )
+        payload: Optional[Dict[str, Any]] = None
         with self._lock:
             self._stories_in_progress[story_id] = progress
             self._stories_completed.pop(story_id, None)
             self._stories_skipped.pop(story_id, None)
             self._persist_locked()
+            payload = _story_event_payload(progress)
+
+        _emit_story_event("started", payload)
 
     def update_story_progress(
         self,
@@ -206,7 +250,9 @@ class CrawlMetricsTracker:
         last_source: Optional[str] = None,
         last_error: Optional[str] = None,
         cooldown_until: Optional[float] = None,
+        event_action: str = "progress",
     ) -> None:
+        payload: Optional[Dict[str, Any]] = None
         with self._lock:
             story = self._stories_in_progress.get(story_id)
             if not story:
@@ -224,15 +270,20 @@ class CrawlMetricsTracker:
             story.cooldown_until = cooldown_until
             story.updated_at = time.time()
             self._persist_locked()
+            payload = _story_event_payload(story)
+
+        _emit_story_event(event_action, payload)
 
     def story_on_cooldown(self, story_id: str, cooldown_until: float) -> None:
         self.update_story_progress(
             story_id,
             status="cooldown",
             cooldown_until=cooldown_until,
+            event_action="cooldown",
         )
 
     def story_completed(self, story_id: str) -> None:
+        payload: Optional[Dict[str, Any]] = None
         with self._lock:
             story = self._stories_in_progress.pop(story_id, None)
             if not story:
@@ -244,17 +295,25 @@ class CrawlMetricsTracker:
             story.missing_chapters = 0
             self._stories_completed[story_id] = story
             self._persist_locked()
+            payload = _story_event_payload(story)
+
+        _emit_story_event("completed", payload)
 
     def story_failed(self, story_id: str, reason: str) -> None:
+        payload: Optional[Dict[str, Any]] = None
         with self._lock:
             story = self._stories_in_progress.get(story_id)
             if story:
                 story.status = "failed"
                 story.last_error = reason
                 story.updated_at = time.time()
+                payload = _story_event_payload(story)
             self._persist_locked()
 
+        _emit_story_event("failed", payload)
+
     def story_skipped(self, story_id: str, title: str, reason: str) -> None:
+        payload: Optional[Dict[str, Any]] = None
         with self._lock:
             story = self._stories_in_progress.pop(story_id, None)
             if story is None:
@@ -271,6 +330,9 @@ class CrawlMetricsTracker:
             story.cooldown_until = None
             self._stories_skipped[story_id] = story
             self._persist_locked()
+            payload = _story_event_payload(story)
+
+        _emit_story_event("skipped", payload)
 
     # ------------------------------------------------------------------
     # Genre tracking helpers

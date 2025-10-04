@@ -118,6 +118,8 @@ def _load_settings() -> Dict[str, Any]:
     kafka_group_id = get_str("KAFKA_GROUP_ID", required=True)
     kafka_bootstrap_max_retries = get_int("KAFKA_BOOTSTRAP_MAX_RETRIES", required=True)
     kafka_bootstrap_retry_delay = get_float("KAFKA_BOOTSTRAP_RETRY_DELAY", required=True)
+    progress_topic = get_str("PROGRESS_TOPIC") or f"{kafka_topic}.progress"
+    progress_group_id = get_str("PROGRESS_GROUP_ID") or f"{kafka_group_id}-progress"
 
     use_proxy = bool(get_bool("USE_PROXY", required=True))
     proxies_folder = get_str("PROXIES_FOLDER", required=True)
@@ -194,6 +196,8 @@ def _load_settings() -> Dict[str, Any]:
         "KAFKA_GROUP_ID": kafka_group_id,
         "KAFKA_BOOTSTRAP_MAX_RETRIES": kafka_bootstrap_max_retries,
         "KAFKA_BOOTSTRAP_RETRY_DELAY": kafka_bootstrap_retry_delay,
+        "PROGRESS_TOPIC": progress_topic,
+        "PROGRESS_GROUP_ID": progress_group_id,
         "USE_PROXY": use_proxy,
         "PROXIES_FOLDER": proxies_folder,
         "PROXIES_FILE": proxies_file,
