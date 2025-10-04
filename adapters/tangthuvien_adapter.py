@@ -56,7 +56,7 @@ class TangThuVienAdapter(BaseSiteAdapter):
 
     def __init__(self) -> None:
         self.site_key = "tangthuvien"
-        configured_base_url = BASE_URLS.get(self.site_key, "https://tangthuvien.net")
+        configured_base_url = BASE_URLS.get(self.site_key)
         desktop_candidate = self._compute_desktop_base_url(configured_base_url)
 
         self._configured_base_url = configured_base_url
