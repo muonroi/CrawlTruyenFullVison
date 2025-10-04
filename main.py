@@ -17,7 +17,7 @@ if _AIOHTTP_SPEC:
 else:  # pragma: no cover - optional dependency missing
     aiohttp = None  # type: ignore
 import os
-from typing import Dict, Any, Optional, Tuple, List
+from typing import Any, Dict, List, Optional, Tuple, Union
 try:
     _AIOGRAM_SPEC = importlib.util.find_spec("aiogram")
 except ModuleNotFoundError:  # pragma: no cover - optional dependency missing
@@ -43,6 +43,11 @@ from adapters.base_site_adapter import BaseSiteAdapter
 from adapters.factory import get_adapter
 from config.proxy_provider import load_proxies
 from core.config_loader import apply_env_overrides
+from core.crawl_planner import (
+    CategoryCrawlPlan,
+    build_category_plan,
+    build_crawl_plan,
+)
 from utils.batch_utils import get_optimal_batch_size, smart_delay, split_batches
 from utils.chapter_utils import (
     crawl_missing_chapters_for_story,
@@ -133,6 +138,26 @@ class WorkerSettings:
         self.retry_sleep_seconds = retry_sleep_seconds
 
 
+def _update_category_progress(
+    crawl_state: Dict[str, Any],
+    genre_name: str,
+    total: int,
+    processed: int,
+    *,
+    completed: bool = False,
+) -> None:
+    """Persist per-category progress to ``crawl_state`` for observability."""
+
+    safe_total = max(int(total), 0)
+    safe_processed = max(0, min(int(processed), safe_total if safe_total else int(processed)))
+    progress = crawl_state.setdefault("category_progress", {})
+    progress[genre_name] = {
+        "total": safe_total,
+        "processed": safe_processed,
+        "completed": bool(completed or (safe_total and safe_processed >= safe_total)),
+    }
+
+
 
 
 async def crawl_single_story_by_title(title, site_key, genre_name=None):
@@ -155,7 +180,7 @@ async def crawl_single_story_by_title(title, site_key, genre_name=None):
 
 async def process_genre_with_limit(
     session,
-    genre,
+    category_plan,
     crawl_state,
     adapter,
     site_key,
@@ -166,7 +191,7 @@ async def process_genre_with_limit(
     async with GENRE_SEM:
         await process_genre_item(
             session,
-            genre,
+            category_plan,
             crawl_state,
             adapter,
             site_key,
@@ -738,7 +763,7 @@ async def process_story_item(
 
 async def process_genre_item(
     session: aiohttp.ClientSession,
-    genre_data: Dict[str, Any],
+    category_or_genre: Union[CategoryCrawlPlan, Dict[str, Any]],
     crawl_state: Dict[str, Any],
     adapter: BaseSiteAdapter,
     site_key: str,
@@ -746,86 +771,82 @@ async def process_genre_item(
     position: Optional[int] = None,
     total_genres: Optional[int] = None,
 ) -> None:
-    logger.info(f"\n--- Xử lý thể loại: {genre_data['name']} ---")
+    category_plan: Optional[CategoryCrawlPlan]
+    if isinstance(category_or_genre, CategoryCrawlPlan):
+        category_plan = category_or_genre
+        genre_data: Dict[str, Any] = dict(category_or_genre.raw_genre) if category_or_genre.raw_genre else {}
+        genre_data.setdefault("name", category_or_genre.name)
+        genre_data.setdefault("url", category_or_genre.url)
+        stories: List[Dict[str, Any]] = list(category_or_genre.stories)
+        if position is None and category_or_genre.metadata.get("position") is not None:
+            position = category_or_genre.metadata.get("position")
+        if total_genres is None and category_or_genre.metadata.get("total_genres") is not None:
+            total_genres = category_or_genre.metadata.get("total_genres")
+    else:
+        category_plan = None
+        genre_data = dict(category_or_genre)
+        stories = []
+
+    genre_name = genre_data.get("name")
+    genre_url = genre_data.get("url")
+    if not genre_name or not genre_url:
+        logger.warning("[GENRE] Bỏ qua genre thiếu thông tin: %s", genre_data)
+        return
+
+    logger.info(f"\n--- Xử lý thể loại: {genre_name} ---")
     metrics_tracker.genre_started(
         site_key,
-        genre_data["name"],
-        genre_data["url"],
+        genre_name,
+        genre_url,
         position=position,
         total_genres=total_genres,
     )
-    crawl_state["current_genre_url"] = genre_data["url"]
-    if crawl_state.get("previous_genre_url_in_state_for_stories") != genre_data["url"]:
+    crawl_state["current_genre_url"] = genre_url
+    if crawl_state.get("previous_genre_url_in_state_for_stories") != genre_url:
         crawl_state["current_story_index_in_genre"] = 0
-    crawl_state["previous_genre_url_in_state_for_stories"] = genre_data["url"]
+    crawl_state["previous_genre_url_in_state_for_stories"] = genre_url
     state_file = app_config.get_state_file(site_key)
     await save_crawl_state(crawl_state, state_file, site_key=site_key)
 
-    retry_time = 0
-    max_retry = 5
-
-    while True:
-        try:
-            (
-                stories,
-                total_pages,
-                crawled_pages,
-            ) = await adapter.get_all_stories_from_genre_with_page_check(
-                genre_data["name"],
-                genre_data["url"],
-                site_key,
-                app_config.MAX_STORIES_PER_GENRE_PAGE,
-            )  # type: ignore
-            if not stories or len(stories) == 0:
-                raise Exception(
-                    f"Danh sách truyện rỗng cho genre {genre_data['name']} ({genre_data['url']})"
-                )
-
-            metrics_tracker.set_genre_story_total(
-                site_key,
-                genre_data["url"],
-                len(stories),
-            )
-
-            if (
-                total_pages
-                and (crawled_pages is not None)
-                and crawled_pages < total_pages
-            ):
-                logger.warning(
-                    f"Thể loại {genre_data['name']} chỉ crawl được {crawled_pages}/{total_pages} trang, sẽ retry lần {retry_time+1}..."
-                )
-                retry_time += 1
-                if retry_time >= max_retry:
-                    logger.error(
-                        f"Thể loại {genre_data['name']} không crawl đủ số trang sau {max_retry} lần."
-                    )
-                    log_failed_genre(genre_data)
-                    metrics_tracker.genre_failed(
-                        site_key,
-                        genre_data["url"],
-                        reason=f"incomplete_pages_{crawled_pages}_{total_pages}",
-                        genre_name=genre_data["name"],
-                    )
-                    return
-                await asyncio.sleep(5)
-                continue  # Retry tiếp
-            break
-        except Exception as ex:
-            logger.error(
-                f"Lỗi khi crawl genre {genre_data['name']} ({genre_data['url']}): {ex}"
-            )
-            log_failed_genre(genre_data)
-            metrics_tracker.genre_failed(
-                site_key,
-                genre_data["url"],
-                reason=str(ex),
-                genre_name=genre_data["name"],
-            )
+    if category_plan is None:
+        built_plan = await build_category_plan(
+            adapter,
+            genre_data,
+            site_key,
+            position=position,
+            total_genres=total_genres,
+            max_pages=app_config.MAX_STORIES_PER_GENRE_PAGE,
+        )
+        if not built_plan:
             return
+        category_plan = built_plan
+        genre_data = dict(built_plan.raw_genre) if built_plan.raw_genre else {}
+        genre_data.setdefault("name", built_plan.name)
+        genre_data.setdefault("url", built_plan.url)
+        genre_name = genre_data["name"]
+        genre_url = genre_data["url"]
+        stories = list(built_plan.stories)
+        plan_mapping = crawl_state.setdefault("category_story_plan", {})
+        plan_mapping[genre_name] = list(built_plan.stories)
+    else:
+        stories = list(stories)
+
+    metrics_tracker.set_genre_story_total(site_key, genre_url, len(stories))
 
     completed_global = set(crawl_state.get("globally_completed_story_urls", []))
     start_idx = crawl_state.get("current_story_index_in_genre", 0)
+
+    planned_total = len(stories)
+    if app_config.MAX_STORIES_TOTAL_PER_GENRE:
+        planned_total = min(planned_total, app_config.MAX_STORIES_TOTAL_PER_GENRE)
+    processed_before = min(start_idx, planned_total)
+    _update_category_progress(
+        crawl_state,
+        genre_name,
+        planned_total,
+        processed_before,
+        completed=processed_before >= planned_total,
+    )
 
     stories_to_process: list[tuple[int, Dict[str, Any]]] = []
     for idx, story in enumerate(stories):
@@ -843,6 +864,7 @@ async def process_genre_item(
 
     if not stories_to_process:
         metrics_tracker.genre_completed(site_key, genre_data["url"], stories_processed=0)
+        await save_crawl_state(crawl_state, state_file, site_key=site_key)
         return
 
     num_batches = max(
@@ -992,6 +1014,14 @@ async def process_genre_item(
                 await smart_delay()
         crawl_state["globally_completed_story_urls"] = sorted(completed_global)
         crawl_state["current_story_index_in_genre"] = batch[-1][0] + 1
+        total_processed = min(start_idx + processed_count, planned_total)
+        _update_category_progress(
+            crawl_state,
+            genre_name,
+            planned_total,
+            total_processed,
+            completed=total_processed >= planned_total,
+        )
         await save_crawl_state(crawl_state, state_file, site_key=site_key)
         if skipped_in_batch:
             logger.warning(
@@ -1006,6 +1036,15 @@ async def process_genre_item(
         site_key,
         genre_data["url"],
         stories_processed=processed_count,
+    )
+
+    total_processed = min(start_idx + processed_count, planned_total)
+    _update_category_progress(
+        crawl_state,
+        genre_name,
+        planned_total,
+        total_processed,
+        completed=total_processed >= planned_total,
     )
 
     await clear_specific_state_keys(
@@ -1146,8 +1185,32 @@ async def run_crawler(
 ):
     state_file = app_config.get_state_file(site_key)
     crawl_state = crawl_state or await load_crawl_state(state_file, site_key)
-    indexed_genres = list(enumerate(genres, start=1))
-    total_genres = len(indexed_genres)
+    logger.info("[PLAN] Đang lập kế hoạch crawl cho %s...", site_key)
+    crawl_plan = await build_crawl_plan(
+        adapter,
+        genres=genres,
+        max_pages=app_config.MAX_STORIES_PER_GENRE_PAGE,
+    )
+
+    if not crawl_plan.categories:
+        logger.warning("[PLAN] Không tìm thấy thể loại hợp lệ để crawl cho %s.", site_key)
+        crawl_state.setdefault("category_story_plan", {})
+        await save_crawl_state(crawl_state, state_file, site_key=site_key)
+        return
+
+    max_stories_per_genre = app_config.MAX_STORIES_TOTAL_PER_GENRE
+    if max_stories_per_genre:
+        for category in crawl_plan.categories:
+            if len(category.stories) > max_stories_per_genre:
+                category.stories = category.stories[:max_stories_per_genre]
+
+    crawl_state["category_story_plan"] = crawl_plan.as_mapping()
+    for category in crawl_plan.categories:
+        _update_category_progress(crawl_state, category.name, len(category.stories), 0)
+    await save_crawl_state(crawl_state, state_file, site_key=site_key)
+
+    indexed_categories = list(enumerate(crawl_plan.categories, start=1))
+    total_genres = len(indexed_categories)
     genres_done = 0
 
     metrics_tracker.site_genres_initialized(site_key, total_genres)
@@ -1155,7 +1218,8 @@ async def run_crawler(
     async with aiohttp.ClientSession() as session:
         batch_size = settings.genre_batch_size
         batches = split_batches(
-            indexed_genres, max(1, (len(indexed_genres) + batch_size - 1) // batch_size)
+            indexed_categories,
+            max(1, (len(indexed_categories) + batch_size - 1) // batch_size),
         )
         try:
             process_params = inspect.signature(process_genre_with_limit).parameters
@@ -1165,7 +1229,7 @@ async def run_crawler(
         supports_total_genres = "total_genres" in process_params
         for batch_idx, genre_batch in enumerate(batches):
             tasks = []
-            for position, genre in genre_batch:
+            for position, category in genre_batch:
                 call_kwargs = {}
                 if supports_position:
                     call_kwargs["position"] = position
@@ -1174,7 +1238,7 @@ async def run_crawler(
                 tasks.append(
                     process_genre_with_limit(
                         session,
-                        genre,
+                        category,
                         crawl_state,
                         adapter,
                         site_key,
@@ -1186,7 +1250,7 @@ async def run_crawler(
             )
             results = await asyncio.gather(*tasks)
             genres_done += len(genre_batch)
-            percent = int(genres_done * 100 / total_genres)
+            percent = int(genres_done * 100 / total_genres) if total_genres else 100
             msg = f"⏳ Tiến độ: {genres_done}/{total_genres} thể loại ({percent}%) đã crawl xong cho {site_key}."
             logger.info(msg)
             await smart_delay()
