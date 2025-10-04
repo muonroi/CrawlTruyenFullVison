@@ -119,7 +119,14 @@ class TangThuVienAdapter(BaseSiteAdapter):
 
         if not normalized_path.lower().startswith("/doc-truyen/"):
             alias = normalized_path.strip("/")
-            normalized_path = f"/doc-truyen/{alias}" if alias else "/doc-truyen"
+            parts = [segment for segment in alias.split("/") if segment]
+            if parts and parts[0].lower() == "tong-hop":
+                parts = parts[1:]
+            alias = "/".join(parts)
+            if alias:
+                normalized_path = f"/doc-truyen/{alias}"
+            else:
+                normalized_path = "/doc-truyen"
 
         normalized = parsed._replace(path=normalized_path)
         return urlunparse(normalized)
