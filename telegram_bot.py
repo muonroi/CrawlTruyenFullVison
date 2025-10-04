@@ -1,4 +1,6 @@
 
+import json
+from scripts.show_crawl_dashboard import load_dashboard
 import asyncio
 import os
 import glob
@@ -40,6 +42,7 @@ async def send_in_chunks(update: Update, text: str, max_chars: int = 4000):
 def build_main_menu() -> InlineKeyboardMarkup:
     """Creates the main inline keyboard menu."""
     keyboard = [
+        [InlineKeyboardButton("📊 Crawl Dashboard", callback_data="action_dashboard")],
         [InlineKeyboardButton("ℹ️ Trạng thái hệ thống", callback_data="action_status")],
         [InlineKeyboardButton("🚀 Build & Push Image", callback_data="action_build")],
         [InlineKeyboardButton("🕷️ Crawl dữ liệu", callback_data="submenu_crawl")],
@@ -136,54 +139,58 @@ async def menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
         await show_main_menu(update, edit=True)
         return
 
+    if data == "action_dashboard":
+        await dashboard_command(update, context)
+        await show_main_menu(update)
+        return
     if data == "action_status":
         await status_command(update, context)
-        await show_main_menu(update, edit=True)
+        await show_main_menu(update)
         return
     if data == "action_build":
         await build_command(update, context)
-        await show_main_menu(update, edit=True)
+        await show_main_menu(update)
         return
     if data == "action_check_missing":
         await check_missing_command(update, context)
-        await show_main_menu(update, edit=True)
+        await show_main_menu(update)
         return
 
     if data == "action_crawl_all":
         await crawl_command(update, context, crawl_mode_override="all_sites")
-        await show_main_menu(update, edit=True)
+        await show_main_menu(update)
         return
     if data == "action_crawl_missing":
         await crawl_command(update, context, crawl_mode_override="missing_only")
-        await show_main_menu(update, edit=True)
+        await show_main_menu(update)
         return
     if data == "action_list_summary":
         await list_command(update, context, scope_override="summary")
-        await show_main_menu(update, edit=True)
+        await show_main_menu(update)
         return
     if data == "action_list_completed":
         await list_command(update, context, scope_override="completed")
-        await show_main_menu(update, edit=True)
+        await show_main_menu(update)
         return
     if data == "action_list_genres":
         await list_command(update, context, scope_override="genres")
-        await show_main_menu(update, edit=True)
+        await show_main_menu(update)
         return
     if data == "action_stats_health":
         await stats_command(update, context, scope_override="health")
-        await show_main_menu(update, edit=True)
+        await show_main_menu(update)
         return
     if data == "action_stats_disk":
         await stats_command(update, context, scope_override="disk_usage")
-        await show_main_menu(update, edit=True)
+        await show_main_menu(update)
         return
     if data == "action_stats_top_genres":
         await stats_command(update, context, scope_override="top_genres")
-        await show_main_menu(update, edit=True)
+        await show_main_menu(update)
         return
     if data == "action_stats_longest":
         await stats_command(update, context, scope_override="longest_stories")
-        await show_main_menu(update, edit=True)
+        await show_main_menu(update)
         return
 
     if data == "input_crawl_story":
@@ -261,6 +268,57 @@ async def cancel_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     await show_main_menu(update)
 
 # --- Command Handlers ---
+
+async def dashboard_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Displays the crawl dashboard."""
+    message = update.effective_message
+    if not message:
+        return
+
+    try:
+        dashboard_data = load_dashboard("logs/dashboard.json")
+        dashboard_text = format_dashboard_data(dashboard_data)
+        await send_in_chunks(update, dashboard_text)
+    except FileNotFoundError:
+        await message.reply_text("Không tìm thấy file dashboard.json. Crawler có thể chưa chạy.")
+    except json.JSONDecodeError:
+        await message.reply_text("File dashboard.json bị hỏng.")
+
+def format_dashboard_data(data: dict) -> str:
+    """Formats the dashboard data into a string."""
+    aggregates = data.get("aggregates", {})
+    sites = data.get("sites", [])
+    output = "=== StoryFlow Crawl Dashboard ===\n"
+    output += f"Cập nhật lúc: {data.get('updated_at', '-')}\n\n"
+    output += "Tổng quan:\n"
+    output += f"  - Truyện đang crawl : {aggregates.get('stories_in_progress', 0)}\n"
+    output += f"  - Truyện hoàn thành: {aggregates.get('stories_completed', 0)}\n"
+    output += f"  - Truyện bị skip   : {aggregates.get('stories_skipped', 0)}\n"
+    output += f"  - Tổng chương thiếu: {aggregates.get('total_missing_chapters', 0)}\n"
+    output += f"  - Hàng đợi skip    : {aggregates.get('skipped_queue_size', 0)}\n\n"
+
+    active = data.get("stories", {}).get("in_progress", [])
+    if active:
+        output += "Đang crawl:\n"
+        for story in active[:10]:  # show top 10
+            output += (
+                f"  * {story.get('title')} — {story.get('crawled_chapters', 0)}/"
+                f"{story.get('total_chapters', 0)} chương, còn thiếu {story.get('missing_chapters', 0)}\n"
+            )
+        if len(active) > 10:
+            output += f"  ... và {len(active) - 10} truyện khác\n"
+        output += "\n"
+
+    if sites:
+        output += "Sức khỏe site:\n"
+        for site in sorted(sites, key=lambda item: item.get("failure_rate", 0), reverse=True):
+            failure_rate = site.get("failure_rate", 0.0)
+            output += (
+                f"  - {site.get('site_key')}: {site.get('success', 0)} OK / {site.get('failure', 0)} lỗi"
+                f" (tỷ lệ lỗi {failure_rate * 100:.2f}%)\n"
+            )
+        output += "\n"
+    return output
 
 async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Sends a welcome message and displays the quick action menu."""
@@ -708,6 +766,7 @@ async def main_bot():
     application.add_handler(CommandHandler("help", start_command))
     application.add_handler(CommandHandler("menu", menu_command))
     application.add_handler(CommandHandler("cancel", cancel_command))
+    application.add_handler(CommandHandler("dashboard", dashboard_command))
     application.add_handler(CommandHandler("status", status_command))
     application.add_handler(CommandHandler("build", build_command))
     application.add_handler(CommandHandler("crawl", crawl_command))
