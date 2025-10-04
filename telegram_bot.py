@@ -22,6 +22,7 @@ from utils.logger import logger
 from utils.kafka_producer import send_kafka_job, stop_kafka_producer
 from config.config import TELEGRAM_BOT_TOKEN, LOG_FOLDER, BASE_URLS, DATA_FOLDER, COMPLETED_FOLDER
 from utils.story_analyzer import get_all_stories, get_health_stats, get_disk_usage
+from utils.metrics_tracker import metrics_tracker
 
 # --- Helper for sending long messages ---
 async def send_in_chunks(update: Update, text: str, max_chars: int = 4000):
@@ -43,6 +44,8 @@ def build_main_menu() -> InlineKeyboardMarkup:
     """Creates the main inline keyboard menu."""
     keyboard = [
         [InlineKeyboardButton("📊 Crawl Dashboard", callback_data="action_dashboard")],
+        [InlineKeyboardButton("🕵️ Chi tiết Crawl", callback_data="action_crawl_status")],
+        [InlineKeyboardButton("📈 Thống kê Site", callback_data="input_site_summary")],
         [InlineKeyboardButton("ℹ️ Trạng thái hệ thống", callback_data="action_status")],
         [InlineKeyboardButton("🚀 Build & Push Image", callback_data="action_build")],
         [InlineKeyboardButton("🕷️ Crawl dữ liệu", callback_data="submenu_crawl")],
@@ -139,6 +142,10 @@ async def menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
         await show_main_menu(update, edit=True)
         return
 
+    if data == "action_crawl_status":
+        await crawl_status_command(update, context)
+        await show_main_menu(update)
+        return
     if data == "action_dashboard":
         await dashboard_command(update, context)
         await show_main_menu(update)
@@ -193,6 +200,9 @@ async def menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
         await show_main_menu(update)
         return
 
+    if data == "input_site_summary":
+        await prompt_for_input(update, context, "site_summary", "📈 Nhập site key bạn muốn xem thống kê.")
+        return
     if data == "input_crawl_story":
         await prompt_for_input(update, context, "crawl_story", "🔗 Gửi URL của truyện bạn muốn crawl.")
         return
@@ -241,7 +251,10 @@ async def handle_user_input(update: Update, context: ContextTypes.DEFAULT_TYPE) 
 
     context.user_data.pop(PENDING_ACTION_KEY, None)
 
-    if pending_action == "crawl_story":
+    if pending_action == "site_summary":
+        site_key = text.split()[0].lower()
+        await site_summary_command(update, context, site_key_override=site_key)
+    elif pending_action == "crawl_story":
         await crawl_story_command(update, context, story_url_override=text)
     elif pending_action == "crawl_site":
         site_key = text.split()[0].lower()
@@ -369,6 +382,89 @@ def format_dashboard_data(data: dict) -> str:
             if len(genres) > 10:
                 output += f"      ... và {len(genres) - 10} thể loại khác\n"
         output += "\n"
+    return output
+
+async def crawl_status_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Displays the detailed crawling status."""
+    message = update.effective_message
+    if not message:
+        return
+
+    snapshot = metrics_tracker.get_snapshot()
+    status_text = format_crawl_status(snapshot)
+    await send_in_chunks(update, status_text)
+
+def format_crawl_status(snapshot: dict) -> str:
+    """Formats the crawl status snapshot into a string."""
+    output = "- 🕵️ **Trạng thái Crawl chi tiết** -\n\n"
+
+    genres_in_progress = snapshot.get("genres", {}).get("in_progress", [])
+    if not genres_in_progress:
+        output += "Không có thể loại nào đang được crawl.\n"
+    else:
+        output += f"**Đang crawl {len(genres_in_progress)} thể loại:**\n"
+        for genre in genres_in_progress:
+            output += f"- **{genre.get('name')}** ({genre.get('site_key')})\n"
+            output += f"  - Trang: {genre.get('crawled_pages', 0)}/{genre.get('total_pages', '?')}\n"
+            output += f"  - Truyện: {genre.get('processed_stories', 0)}/{genre.get('total_stories', '?')}\n"
+            active_stories = genre.get('active_stories', [])
+            if active_stories:
+                output += "  - Đang xử lý: " + ", ".join(active_stories) + "\n"
+
+    stories_in_progress = snapshot.get("stories", {}).get("in_progress", [])
+    if stories_in_progress:
+        output += "\n**Các truyện đang trong hàng đợi:**\n"
+        for story in stories_in_progress:
+            output += f"- **{story.get('title')}**\n"
+            output += f"  - Tiến trình: {story.get('crawled_chapters', 0)}/{story.get('total_chapters', '?')} chương\n"
+            if story.get('last_source'):
+                output += f"  - Nguồn: {story.get('last_source')}\n"
+
+    return output
+
+async def site_summary_command(update: Update, context: ContextTypes.DEFAULT_TYPE, site_key_override: str | None = None) -> None:
+    """Displays the genre and story summary for a given site."""
+    message = update.effective_message
+    if not message:
+        return
+
+    site_key = site_key_override
+    if site_key is None:
+        if not context.args:
+            await message.reply_text("Vui lòng cung cấp site key. Ví dụ: `/site_summary xtruyen`")
+            return
+        site_key = context.args[0]
+
+    snapshot = metrics_tracker.get_snapshot()
+    summary_text = format_site_summary(snapshot, site_key)
+    await send_in_chunks(update, summary_text)
+
+def format_site_summary(snapshot: dict, site_key: str) -> str:
+    """Formats the site summary into a string."""
+    output = f"- 📈 **Thống kê cho site: {site_key}** -\n\n"
+
+    site_genres = snapshot.get("site_genres", [])
+    site_summary = None
+    for summary in site_genres:
+        if summary.get("site_key") == site_key:
+            site_summary = summary
+            break
+
+    if not site_summary:
+        return f"Không tìm thấy dữ liệu cho site: {site_key}"
+
+    output += f"**Tổng quan:**\n"
+    output += f"- Tổng số thể loại: {site_summary.get('total_genres', '?')}\n"
+    output += f"- Đã hoàn thành: {site_summary.get('completed_genres', '?')}\n\n"
+
+    genres = site_summary.get("genres", [])
+    if not genres:
+        output += "Chưa có thể loại nào được crawl.\n"
+    else:
+        output += "**Chi tiết thể loại:**\n"
+        for genre in genres:
+            output += f"- **{genre.get('name')}**: {genre.get('stories', 0)} truyện\n"
+
     return output
 
 async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -817,6 +913,8 @@ async def main_bot():
     application.add_handler(CommandHandler("help", start_command))
     application.add_handler(CommandHandler("menu", menu_command))
     application.add_handler(CommandHandler("cancel", cancel_command))
+    application.add_handler(CommandHandler("site_summary", site_summary_command))
+    application.add_handler(CommandHandler("crawl_status", crawl_status_command))
     application.add_handler(CommandHandler("dashboard", dashboard_command))
     application.add_handler(CommandHandler("status", status_command))
     application.add_handler(CommandHandler("build", build_command))
