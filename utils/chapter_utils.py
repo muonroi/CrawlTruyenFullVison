@@ -379,6 +379,14 @@ async def async_save_chapter_with_hash_check(filename, content: str):
     Luu file chuong, kiem tra hash de tranh ghi lai neu noi dung khong doi.
     Tra ve: "new" (chua ton tai, da ghi), "unchanged" (ton tai, giong het), "updated" (ton tai, da cap nhat).
     """
+    if content is None:
+        raise ValueError("Chapter content must not be None")
+
+    if isinstance(content, bytes):
+        content = content.decode("utf-8")
+    elif not isinstance(content, str):
+        raise TypeError("Chapter content must be a string")
+
     hash_val = hashlib.sha256(content.encode('utf-8')).hexdigest()
     file_exists = os.path.exists(filename)
     if file_exists:
