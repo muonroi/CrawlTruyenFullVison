@@ -10,7 +10,7 @@ os.makedirs(LOG_FOLDER, exist_ok=True)
 LOG_FILE_PATH = os.path.join(LOG_FOLDER, "crawler.log")
 
 # === Khởi tạo logger
-logger = logging.getLogger("TruyenFullCrawler")
+logger = logging.getLogger("StoryFlowLogger")
 logger.setLevel(logging.DEBUG)
 
 # === Console handler
