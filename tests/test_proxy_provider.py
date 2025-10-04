@@ -1,4 +1,5 @@
 import asyncio
+from collections import defaultdict, deque
 import os
 import pytest
 import time
@@ -23,6 +24,8 @@ def mock_proxy_state(monkeypatch):
     monkeypatch.setattr(proxy_provider, 'PROXY_NOTIFIED', False)
     monkeypatch.setattr(proxy_provider, 'FAILED_PROXY_TIMES', [])
     monkeypatch.setattr(proxy_provider, 'MAX_FAIL_RATE', 10)
+    monkeypatch.setattr(proxy_provider, 'SITE_PROXY_BLACKLIST', {})
+    monkeypatch.setattr(proxy_provider, '_proxy_fail_history', defaultdict(deque))
 
     return loaded_proxies, cooldown_proxies, bad_proxy_counts
 
@@ -92,24 +95,56 @@ async def test_mark_bad_proxy_cooldown(mock_proxy_state, monkeypatch):
     loaded_proxies.extend(["p1", "p2"])
 
     monkeypatch.setattr(proxy_provider, 'PROXY_COOLDOWN_SECONDS', 60)
+    monkeypatch.setattr(proxy_provider, 'SITE_PROXY_BLACKLIST_TTL', 60)
 
-    # Mark p1 as bad
-    await proxy_provider.mark_bad_proxy("p1")
+    # Mark p1 as bad for this site only
+    await proxy_provider.mark_bad_proxy("p1", site_key="example")
 
-    assert "p1" in cooldown_proxies
-    assert proxy_provider._get_available_proxies() == ["p2"]
+    normalized = proxy_provider._normalize_proxy_key("p1")
+    assert normalized in proxy_provider.SITE_PROXY_BLACKLIST.get("example", {})
+    assert proxy_provider._get_available_proxies(site_key="example") == ["p2"]
+    # Other sites can still see p1
+    assert proxy_provider._get_available_proxies() == ["p1", "p2"]
 
     # Simulate time passing by advancing the clock
     current_time = time.time()
     monkeypatch.setattr(time, 'time', lambda: current_time + 61)
 
-    # Trigger the cleanup by calling get_available_proxies
-    available_proxies = proxy_provider._get_available_proxies()
+    # Trigger the cleanup by calling get_available_proxies for the same site
+    available_proxies = proxy_provider._get_available_proxies(site_key="example")
 
-    # Now the cooldown dict should be empty and p1 should be available
-    assert "p1" not in cooldown_proxies
+    assert normalized not in proxy_provider.SITE_PROXY_BLACKLIST.get("example", {})
     assert "p1" in available_proxies
     assert len(available_proxies) == 2
+
+
+@pytest.mark.asyncio
+async def test_site_specific_blacklist(mock_proxy_state, monkeypatch):
+    loaded_proxies, _, _ = mock_proxy_state
+    loaded_proxies.extend(["http://proxy1:8000", "http://proxy2:8000"])
+    monkeypatch.setattr(proxy_provider.random, 'choice', lambda seq: seq[0])
+
+    first_choice = proxy_provider.get_proxy_url(site_key="site_a")
+    await proxy_provider.mark_bad_proxy(first_choice, site_key="site_a")
+
+    next_choice_site_a = proxy_provider.get_proxy_url(site_key="site_a")
+    assert next_choice_site_a != first_choice
+
+    other_site_choice = proxy_provider.get_proxy_url(site_key="site_b")
+    assert other_site_choice == first_choice
+
+
+@pytest.mark.asyncio
+async def test_cleanup_weak_proxies_removes_repeated_failures(mock_proxy_state, monkeypatch):
+    loaded_proxies, _, _ = mock_proxy_state
+    loaded_proxies.extend(["http://proxy1:8000", "http://proxy2:8000"])
+    monkeypatch.setattr(proxy_provider, 'WEAK_PROXY_THRESHOLD', 2)
+    monkeypatch.setattr(proxy_provider, 'WEAK_PROXY_RETENTION_SECONDS', 60)
+
+    await proxy_provider.mark_bad_proxy("http://proxy1:8000", site_key="site_a")
+    await proxy_provider.mark_bad_proxy("http://proxy1:8000", site_key="site_a")
+
+    assert "http://proxy1:8000" not in loaded_proxies
 
 
 def test_remove_bad_proxy(mock_proxy_state):
@@ -210,7 +245,7 @@ def test_get_random_proxy_url_formats(monkeypatch, mock_proxy_state):
     def fake_choice(sequence):
         return next(iterator)
 
-    monkeypatch.setattr(proxy_provider, '_get_available_proxies', lambda: proxies)
+    monkeypatch.setattr(proxy_provider, '_get_available_proxies', lambda site_key=None: proxies)
     monkeypatch.setattr(proxy_provider.random, 'choice', fake_choice)
 
     assert proxy_provider.get_random_proxy_url() == "http://proxy1:8000"
@@ -248,7 +283,9 @@ async def test_mark_bad_proxy_auto_ban_and_telegram_alert(mock_proxy_state, monk
         for _ in range(3):
             await proxy_provider.mark_bad_proxy(proxy)
         assert proxy not in loaded_proxies
-        assert bad_counts[proxy] >= 3
+        parsed = proxy_provider.urlparse(proxy)
+        normalized = f"{parsed.hostname}:{parsed.port}" if parsed.port else parsed.hostname
+        assert normalized not in bad_counts
 
     # Allow any scheduled tasks to run
     await asyncio.sleep(0)

@@ -6,12 +6,14 @@ This document lists key areas to improve the performance and stability of the cr
 - Prefer standard HTTP requests for regular pages.
 - Detect anti-bot or dynamic pages and fall back to Playwright only when necessary.
 - Reuse browser instances and contexts instead of initializing them repeatedly.
+- Add guardrails that skip Playwright fallback for transient server errors or empty responses when the page is clearly static.
 
 ## 2. Proxy Management
 - Rotate proxy pool immediately on detection of blocks.
 - Maintain blacklist by domain and error codes (e.g. 403, Cloudflare, captcha).
 - Log detailed metrics for each proxy to measure success rate.
 - Support dynamic loading or reloading of proxies without restarting the crawler.
+- Track proxy health per site, maintain temporary per-site blacklists, and retire weak proxies that consistently fail health checks.
 
 ## 3. Anti-bot Content Filters
 - Identify chapters containing patterns like "Bạn đã bị chặn" or "Access Denied".
@@ -70,4 +72,9 @@ This document lists key areas to improve the performance and stability of the cr
 ## 15. Worker Management API
 - Provide endpoints to start/stop batches or query current progress.
 - Combine health check results across workers for a global view.
+
+## 16. Worker/Process Isolation for Scaling
+- Partition crawlers by site into isolated processes or containers to limit blast radius.
+- Use a message queue such as Kafka to hand off crawl jobs between coordinators and workers.
+- Scale the number of workers horizontally per site based on queue depth and observed blocking rates.
 
