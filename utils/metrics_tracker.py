@@ -308,11 +308,12 @@ class CrawlMetricsTracker:
             if not genre:
                 return
             if total_pages is not None:
-                genre.total_pages = int(total_pages) if total_pages else None
+                total = int(total_pages)
+                genre.total_pages = total if total > 0 else None
             if crawled_pages is not None:
-                genre.crawled_pages = max(int(crawled_pages), genre.crawled_pages)
+                genre.crawled_pages = max(int(crawled_pages), 0)
             if current_page is not None:
-                genre.current_page = max(int(current_page), genre.current_page or 0)
+                genre.current_page = max(int(current_page), 0)
             genre.status = "fetching_pages"
             genre.updated_at = time.time()
             self._persist_locked()
