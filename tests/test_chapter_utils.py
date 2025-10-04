@@ -17,6 +17,10 @@ def test_slugify_title_basic():
     assert slugify_title('Hello world!? 123') == 'hello-world-123'
 
 
+def test_slugify_title_handles_none():
+    assert slugify_title(None) == ""
+
+
 def test_extract_real_chapter_number_variants():
     assert extract_real_chapter_number('Chương 12') == 12
     assert extract_real_chapter_number('Chapter 5') == 5
