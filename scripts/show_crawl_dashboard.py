@@ -33,6 +33,12 @@ def print_dashboard(data: Dict[str, Any]) -> None:
     print(f"  - Truyện bị skip   : {aggregates.get('stories_skipped', 0)}")
     print(f"  - Tổng chương thiếu: {aggregates.get('total_missing_chapters', 0)}")
     print(f"  - Hàng đợi skip    : {aggregates.get('skipped_queue_size', 0)}")
+    genres_total = aggregates.get("genres_total_configured")
+    genres_done = aggregates.get("genres_total_completed", 0)
+    if genres_total:
+        print(f"  - Thể loại hoàn thành: {genres_done}/{genres_total}")
+    else:
+        print(f"  - Thể loại hoàn thành: {genres_done}")
     print()
 
     active = data.get("stories", {}).get("in_progress", [])
@@ -47,6 +53,30 @@ def print_dashboard(data: Dict[str, Any]) -> None:
             print(f"  ... và {len(active) - 10} truyện khác")
         print()
 
+    active_genres = data.get("genres", {}).get("in_progress", [])
+    if active_genres:
+        print("Thể loại đang xử lý:")
+        for genre in active_genres[:10]:
+            total_pages = genre.get("total_pages") or "?"
+            current_page = genre.get("current_page") or genre.get("crawled_pages") or 0
+            total_stories = genre.get("total_stories") or "?"
+            processed = genre.get("processed_stories", 0)
+            position = genre.get("position")
+            total_genres = genre.get("total_genres")
+            prefix = f"[{genre.get('site_key')}] "
+            if position and total_genres:
+                prefix += f"({position}/{total_genres}) "
+            print(
+                f"  - {prefix}{genre.get('name')} — Trang {current_page}/{total_pages}, Truyện {processed}/{total_stories}"
+            )
+            active_stories = genre.get("active_stories") or []
+            if active_stories:
+                joined = ", ".join(active_stories[:5])
+                print(f"      Đang crawl: {joined}")
+        if len(active_genres) > 10:
+            print(f"  ... và {len(active_genres) - 10} thể loại khác")
+        print()
+
     if sites:
         print("Sức khỏe site:")
         for site in sorted(sites, key=lambda item: item.get("failure_rate", 0), reverse=True):
@@ -55,6 +85,24 @@ def print_dashboard(data: Dict[str, Any]) -> None:
                 f"  - {site.get('site_key')}: {site.get('success', 0)} OK / {site.get('failure', 0)} lỗi"
                 f" (tỷ lệ lỗi {failure_rate * 100:.2f}%)"
             )
+        print()
+
+    site_genres = data.get("site_genres", [])
+    if site_genres:
+        print("Tổng kết thể loại theo site:")
+        for site in site_genres:
+            total = site.get("total_genres") or 0
+            completed = site.get("completed_genres") or 0
+            print(
+                f"  - {site.get('site_key')}: {completed}/{total} thể loại, cập nhật {site.get('updated_at', '-')}")
+            for genre in site.get("genres", [])[:10]:
+                status = genre.get("status", "completed")
+                extra = f" ({status})" if status != "completed" else ""
+                print(
+                    f"      * {genre.get('name')} — {genre.get('stories', 0)} truyện{extra}"
+                )
+            if len(site.get("genres", [])) > 10:
+                print(f"      ... và {len(site['genres']) - 10} thể loại khác")
         print()
 
 
