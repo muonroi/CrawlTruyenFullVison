@@ -8,6 +8,7 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 
 import main
+from core.crawl_planner import CategoryCrawlPlan, CrawlPlan
 
 
 @pytest.mark.asyncio
@@ -111,8 +112,8 @@ async def test_run_crawler_batches_all_genres(monkeypatch, tmp_path):
 
     process_calls = []
 
-    async def fake_process_genre_with_limit(session, genre, crawl_state, adapter, site_key):
-        process_calls.append((genre["name"], crawl_state.copy(), site_key))
+    async def fake_process_genre_with_limit(session, category, crawl_state, adapter, site_key, **kwargs):
+        process_calls.append((category.name, crawl_state.copy(), site_key))
         return True
 
     monkeypatch.setattr(main, "process_genre_with_limit", fake_process_genre_with_limit)
@@ -146,11 +147,31 @@ async def test_run_crawler_batches_all_genres(monkeypatch, tmp_path):
         {"name": "genre3", "url": "http://g3"},
     ]
 
+    crawl_plan = CrawlPlan(site_key="demo")
+    for genre in genres:
+        crawl_plan.add_category(
+            CategoryCrawlPlan(
+                name=genre["name"],
+                url=genre["url"],
+                stories=[{"title": f"{genre['name']} Story", "url": genre["url"] + "/story"}],
+                raw_genre=dict(genre),
+            )
+        )
+
+    async def fake_build_crawl_plan(adapter, *, genres=None, max_pages=None):
+        return crawl_plan
+
+    monkeypatch.setattr(main, "build_crawl_plan", fake_build_crawl_plan)
+
     await main.run_crawler(adapter="dummy", site_key="demo", genres=genres, settings=settings)
 
     assert len(process_calls) == len(genres)
     assert all(call[2] == "demo" for call in process_calls)
-    assert process_calls[0][1] == {"loaded": True}
+    assert process_calls[0][0] == "genre1"
+    first_state = process_calls[0][1]
+    assert first_state["loaded"] is True
+    assert "category_story_plan" in first_state
+    assert first_state["category_story_plan"]["genre1"][0]["title"] == "genre1 Story"
 
 
 @pytest.mark.asyncio
