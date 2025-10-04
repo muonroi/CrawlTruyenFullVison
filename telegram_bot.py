@@ -69,13 +69,24 @@ async def show_main_menu(update: Update, text: str | None = None, edit: bool = F
     if edit and callback_query:
         try:
             await callback_query.edit_message_text(menu_text, reply_markup=markup)
+            return
         except BadRequest as exc:
-            if "message is not modified" not in str(exc).lower():
-                raise
-    else:
-        message = update.effective_message
-        if message:
-            await message.reply_text(menu_text, reply_markup=markup)
+            error_text = str(exc).lower()
+            if "message is not modified" in error_text:
+                return
+            logger.warning(
+                "[Bot] Không thể chỉnh sửa menu hiện tại (%s). Sẽ gửi menu mới thay thế.",
+                exc,
+            )
+
+    message = update.effective_message
+    if message:
+        await message.reply_text(menu_text, reply_markup=markup)
+        return
+
+    chat = update.effective_chat
+    if chat:
+        await chat.send_message(menu_text, reply_markup=markup)
 
 
 def build_crawl_menu() -> InlineKeyboardMarkup:
