@@ -58,27 +58,7 @@ from utils.io_utils import (
     log_failed_genre,
 )
 from utils.logger import logger
-from config.config import (
-    GENRE_ASYNC_LIMIT,
-    STORY_ASYNC_LIMIT,
-    STORY_BATCH_SIZE,
-    LOADED_PROXIES,
-    get_state_file,
-    RETRY_STORY_ROUND_LIMIT,
-)
-from config.config import (
-    BASE_URLS,
-    DATA_FOLDER,
-    PROXIES_FILE,
-    PROXIES_FOLDER,
-    MAX_GENRES_TO_CRAWL,
-    MAX_STORIES_PER_GENRE_PAGE,
-    MAX_STORIES_TOTAL_PER_GENRE,
-    MAX_CHAPTERS_PER_STORY,
-    MAX_CHAPTER_PAGES_TO_CRAWL,
-    RETRY_FAILED_CHAPTERS_PASSES,
-    SKIPPED_STORIES_FILE
-)
+from config import config as app_config
 from scraper import initialize_scraper
 from utils.meta_utils import (
     add_missing_story,
@@ -112,8 +92,29 @@ from utils.skip_manager import (
 
 router = Router()
 is_crawling = False
-GENRE_SEM = asyncio.Semaphore(GENRE_ASYNC_LIMIT)
-STORY_SEM = asyncio.Semaphore(STORY_ASYNC_LIMIT)
+GENRE_SEM: asyncio.Semaphore
+STORY_SEM: asyncio.Semaphore
+STORY_BATCH_SIZE: int
+DATA_FOLDER: str
+PROXIES_FILE: str
+PROXIES_FOLDER: str
+FAILED_GENRES_FILE: str
+
+
+def refresh_runtime_settings() -> None:
+    global GENRE_SEM, STORY_SEM, STORY_BATCH_SIZE
+    global DATA_FOLDER, PROXIES_FILE, PROXIES_FOLDER, FAILED_GENRES_FILE
+
+    STORY_BATCH_SIZE = app_config.STORY_BATCH_SIZE
+    GENRE_SEM = asyncio.Semaphore(app_config.GENRE_ASYNC_LIMIT)
+    STORY_SEM = asyncio.Semaphore(app_config.STORY_ASYNC_LIMIT)
+    DATA_FOLDER = app_config.DATA_FOLDER
+    PROXIES_FILE = app_config.PROXIES_FILE
+    PROXIES_FOLDER = app_config.PROXIES_FOLDER
+    FAILED_GENRES_FILE = app_config.FAILED_GENRES_FILE
+
+
+refresh_runtime_settings()
 
 
 class WorkerSettings:
@@ -334,7 +335,7 @@ async def crawl_all_sources_until_full(
                     story_title=story_data_item["title"],
                     site_key=source_site_key,
                     total_chapters=total_chapters,
-                    max_pages=MAX_CHAPTER_PAGES_TO_CRAWL,
+                    max_pages=app_config.MAX_CHAPTER_PAGES_TO_CRAWL,
                 )
             except Exception as ex:
                 logger.warning(f"[SOURCE] Lỗi crawl chapters từ {url}: {ex}")
@@ -381,7 +382,7 @@ async def crawl_all_sources_until_full(
                 mark_story_as_skipped(story_data_item, reason="sources_fail_or_all_chapter_skipped")
                 break 
             retry_full += 1
-        if retry_full >= RETRY_STORY_ROUND_LIMIT:
+        if retry_full >= app_config.RETRY_STORY_ROUND_LIMIT:
             logger.error(
                 f"[FATAL] Vượt quá retry cho truyện {story_data_item['title']}, sẽ bỏ qua."
             )
@@ -403,32 +404,32 @@ async def initialize_and_log_setup_with_state(site_key) -> Tuple[str, Dict[str, 
     await load_proxies(PROXIES_FILE)
     await initialize_scraper(site_key)
     try:
-        import os as _os
-        if (_os.getenv("AI_PRINT_METRICS", "false").lower() == "true"):
+        if app_config.AI_PRINT_METRICS:
             from ai.selector_ai import print_ai_metrics_summary
+
             print_ai_metrics_summary()
     except Exception:
         pass
-    homepage_url = BASE_URLS[site_key].rstrip("/") + "/"
-    state_file = get_state_file(site_key)
+    homepage_url = app_config.BASE_URLS[site_key].rstrip("/") + "/"
+    state_file = app_config.get_state_file(site_key)
     crawl_state = await load_crawl_state(state_file, site_key)
 
     logger.info("=== BẮT ĐẦU QUÁ TRÌNH CRAWL ASYNC ===")
     logger.info(f"Thư mục lưu dữ liệu: {os.path.abspath(DATA_FOLDER)}")
-    logger.info(f"Sử dụng {len(LOADED_PROXIES)} proxy(s).")
+    logger.info(f"Sử dụng {len(app_config.LOADED_PROXIES)} proxy(s).")
     logger.info(
-        f"Giới hạn: {MAX_GENRES_TO_CRAWL or 'Không giới hạn'} thể loại, "
-        f"{MAX_STORIES_TOTAL_PER_GENRE or 'Không giới hạn'} truyện/thể loại."
+        f"Giới hạn: {app_config.MAX_GENRES_TO_CRAWL or 'Không giới hạn'} thể loại, "
+        f"{app_config.MAX_STORIES_TOTAL_PER_GENRE or 'Không giới hạn'} truyện/thể loại."
     )
     logger.info(
-        f"Giới hạn chương xử lý ban đầu/truyện: {MAX_CHAPTERS_PER_STORY or 'Không giới hạn'}."
+        f"Giới hạn chương xử lý ban đầu/truyện: {app_config.MAX_CHAPTERS_PER_STORY or 'Không giới hạn'}."
     )
-    logger.info(f"Số lượt thử lại cho các chương lỗi: {RETRY_FAILED_CHAPTERS_PASSES}.")
+    logger.info(f"Số lượt thử lại cho các chương lỗi: {app_config.RETRY_FAILED_CHAPTERS_PASSES}.")
     logger.info(
-        f"Giới hạn số trang truyện/thể loại: {MAX_STORIES_PER_GENRE_PAGE or 'Không giới hạn'}."
+        f"Giới hạn số trang truyện/thể loại: {app_config.MAX_STORIES_PER_GENRE_PAGE or 'Không giới hạn'}."
     )
     logger.info(
-        f"Giới hạn số trang danh sách chương: {MAX_CHAPTER_PAGES_TO_CRAWL or 'Không giới hạn'}."
+        f"Giới hạn số trang danh sách chương: {app_config.MAX_CHAPTER_PAGES_TO_CRAWL or 'Không giới hạn'}."
     )
     if crawl_state:
         loggable = {
@@ -556,7 +557,7 @@ async def process_story_item(
     ):
         crawl_state["processed_chapter_urls_for_current_story"] = []
     crawl_state["previous_story_url_in_state_for_chapters"] = story_data_item["url"]
-    state_file = get_state_file(site_key)
+    state_file = app_config.get_state_file(site_key)
     await save_crawl_state(crawl_state, state_file, site_key=site_key)
 
     # 2. Crawl tất cả nguồn cho đến khi đủ chương
@@ -693,7 +694,7 @@ async def process_story_item(
         completed.add(story_data_item["url"])
         crawl_state["globally_completed_story_urls"] = sorted(completed)
     backup_crawl_state(state_file)
-    state_file = get_state_file(site_key)
+    state_file = app_config.get_state_file(site_key)
     await save_crawl_state(crawl_state, state_file, site_key=site_key)
     await clear_specific_state_keys(
         crawl_state, ["processed_chapter_urls_for_current_story"], state_file
@@ -806,7 +807,7 @@ async def process_genre_item(
     if crawl_state.get("previous_genre_url_in_state_for_stories") != genre_data["url"]:
         crawl_state["current_story_index_in_genre"] = 0
     crawl_state["previous_genre_url_in_state_for_stories"] = genre_data["url"]
-    state_file = get_state_file(site_key)
+    state_file = app_config.get_state_file(site_key)
     await save_crawl_state(crawl_state, state_file, site_key=site_key)
 
     retry_time = 0
@@ -822,7 +823,7 @@ async def process_genre_item(
                 genre_data["name"],
                 genre_data["url"],
                 site_key,
-                MAX_STORIES_PER_GENRE_PAGE,
+                app_config.MAX_STORIES_PER_GENRE_PAGE,
             )  # type: ignore
             if not stories or len(stories) == 0:
                 raise Exception(
@@ -861,7 +862,7 @@ async def process_genre_item(
     for idx, story in enumerate(stories):
         if idx < start_idx:
             continue
-        if MAX_STORIES_TOTAL_PER_GENRE and idx >= MAX_STORIES_TOTAL_PER_GENRE:
+        if app_config.MAX_STORIES_TOTAL_PER_GENRE and idx >= app_config.MAX_STORIES_TOTAL_PER_GENRE:
             break
         stories_to_process.append((idx, story))
 
@@ -907,7 +908,7 @@ async def process_genre_item(
                     completed_global.add(url)
                 else:
                     retry_counts[idx] = retry_counts.get(idx, 0) + 1
-                    if retry_counts[idx] >= RETRY_STORY_ROUND_LIMIT:
+                    if retry_counts[idx] >= app_config.RETRY_STORY_ROUND_LIMIT:
                         story_title = next(st['title'] for j, st in batch if j == idx)
                         story_obj = next(st for j, st in batch if j == idx)
                         logger.error(
@@ -1017,18 +1018,18 @@ async def run_genres(
     await initialize_scraper(site_key)
     adapter = get_adapter(site_key)
     genres = await adapter.get_genres()
-    if MAX_GENRES_TO_CRAWL:
-        limited_genres = genres[:MAX_GENRES_TO_CRAWL]
+    if app_config.MAX_GENRES_TO_CRAWL:
+        limited_genres = genres[: app_config.MAX_GENRES_TO_CRAWL]
         if len(limited_genres) != len(genres):
             logger.info(
-                f"[GENRE] Áp dụng giới hạn {MAX_GENRES_TO_CRAWL} thể loại đầu tiên (từ tổng {len(genres)})."
+                f"[GENRE] Áp dụng giới hạn {app_config.MAX_GENRES_TO_CRAWL} thể loại đầu tiên (từ tổng {len(genres)})."
             )
         genres = limited_genres
     await run_crawler(adapter, site_key, genres, settings, crawl_state)
 
 
 async def run_missing(site_key: str, homepage_url: Optional[str] = None):
-    homepage_url = homepage_url or BASE_URLS[site_key].rstrip("/") + "/"
+    homepage_url = homepage_url or app_config.BASE_URLS[site_key].rstrip("/") + "/"
     logger.info("[MISSING] Bắt đầu crawl chương thiếu...")
     await initialize_scraper(site_key)
     adapter = get_adapter(site_key)
@@ -1076,7 +1077,7 @@ async def run_crawler(
     genres_done = 0
 
     async with aiohttp.ClientSession() as session:
-        batch_size = int(os.getenv("BATCH_SIZE") or get_optimal_batch_size(len(genres)))
+        batch_size = int(app_config.BATCH_SIZE_OVERRIDE or get_optimal_batch_size(len(genres)))
         batches = split_batches(
             genres, max(1, (len(genres) + batch_size - 1) // batch_size)
         )
@@ -1105,7 +1106,7 @@ async def run_all_sites(crawl_mode: Optional[str] = None):
     """Run crawler for all configured sites in parallel."""
     tasks = []
 
-    for site_key in BASE_URLS.keys():
+    for site_key in app_config.BASE_URLS.keys():
         async def run_site(key=site_key):
             try:
                 await run_single_site(key, crawl_mode=crawl_mode)
@@ -1140,12 +1141,12 @@ async def run_single_site(
         logger.error(f"[MISSING][BACKGROUND] Không thể khởi động background loop: {ex}")
 
     settings = WorkerSettings(
-        genre_batch_size=int(os.getenv("GENRE_BATCH_SIZE", 3)),
-        genre_async_limit=int(os.getenv("GENRE_ASYNC_LIMIT", 3)),
-        proxies_file=os.getenv("PROXIES_FILE", "proxies/proxies.txt"),
-        failed_genres_file=os.getenv("FAILED_GENRES_FILE", "failed_genres.json"),
-        retry_genre_round_limit=int(os.getenv("RETRY_GENRE_ROUND_LIMIT", 3)),
-        retry_sleep_seconds=int(os.getenv("RETRY_SLEEP_SECONDS", 1800)),
+        genre_batch_size=app_config.GENRE_BATCH_SIZE,
+        genre_async_limit=app_config.GENRE_ASYNC_LIMIT,
+        proxies_file=PROXIES_FILE,
+        failed_genres_file=FAILED_GENRES_FILE,
+        retry_genre_round_limit=app_config.RETRY_GENRE_ROUND_LIMIT,
+        retry_sleep_seconds=app_config.RETRY_SLEEP_SECONDS,
     )
 
     try:
@@ -1177,8 +1178,8 @@ async def run_single_site(
 
 
 if __name__ == "__main__":
-    mode = os.getenv("MODE") or (sys.argv[1] if len(sys.argv) > 1 else None)
-    crawl_mode = os.getenv("CRAWL_MODE") or (sys.argv[2] if len(sys.argv) > 2 else None)
+    mode = app_config.DEFAULT_MODE or (sys.argv[1] if len(sys.argv) > 1 else None)
+    crawl_mode = app_config.DEFAULT_CRAWL_MODE or (sys.argv[2] if len(sys.argv) > 2 else None)
 
     try:
         if mode == "all_sites":

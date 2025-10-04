@@ -3,16 +3,18 @@ import random
 import sys
 import time
 import aiofiles
-import os
 import httpx
 from typing import List, Optional
-from config.config import USE_PROXY
-from utils.logger import logger
-from config.config import LOADED_PROXIES
-from utils.notifier import send_telegram_notify
+import os
 
-# Đặt biến này nếu muốn load từ API, để rỗng "" nếu chỉ dùng file txt
-PROXY_API_URL = os.getenv("PROXY_API_URL", "")
+from config.config import (
+    LOADED_PROXIES,
+    PROXY_API_URL,
+    PROXIES_FILE,
+    USE_PROXY,
+)
+from utils.logger import logger
+from utils.notifier import send_telegram_notify
 
 proxy_mode = "random"
 current_proxy_index: int = 0
@@ -41,7 +43,7 @@ def should_blacklist_proxy(proxy_url, loaded_proxies):
         return False
     return True
 
-async def load_proxies(filename: str = None) -> List[str]:
+async def load_proxies(filename: Optional[str] = None) -> List[str]:
     """Load proxies từ file txt hoặc từ API nếu PROXY_API_URL có giá trị"""
     global LOADED_PROXIES
 
@@ -71,6 +73,7 @@ async def load_proxies(filename: str = None) -> List[str]:
         except Exception as e:
             print(f"Proxy API load error: {e}")
     else:
+        filename = filename or PROXIES_FILE
         try:
             async with aiofiles.open(filename, "r") as f:
                 lines = await f.readlines()
@@ -84,7 +87,7 @@ async def load_proxies(filename: str = None) -> List[str]:
     return LOADED_PROXIES
 
 
-async def reload_proxies_if_changed(filename: str = None) -> None:
+async def reload_proxies_if_changed(filename: Optional[str] = None) -> None:
     """Reload proxies nếu file đổi (hoặc luôn reload nếu dùng API)"""
     global _last_proxy_mtime
 
@@ -96,6 +99,7 @@ async def reload_proxies_if_changed(filename: str = None) -> None:
         logger.info("[Proxy] Reloaded proxy list from API")
         return
     # Trường hợp file txt như cũ
+    filename = filename or PROXIES_FILE
     try:
         mtime = os.path.getmtime(filename)
     except FileNotFoundError:

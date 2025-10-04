@@ -17,3 +17,10 @@ def apply_env_overrides(config: dict, prefix: str = "[ENV]") -> None:
             continue
         os.environ[key] = str(val)
         logger.info(f"{prefix} Gán ENV {key} = {val}")
+
+    if overrides:
+        from config import config as app_config
+        import main
+
+        app_config.reload_from_env()
+        main.refresh_runtime_settings()

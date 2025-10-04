@@ -14,6 +14,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Optional
 
+from config import config as app_config
+
 DEFAULT_LOG_PATH = Path("logs") / "crawler.log"
 DEFAULT_PATTERN = re.compile(r"\[WARNING\].*Sau crawl", re.IGNORECASE)
 WARNING_PARSE_RE = re.compile(
@@ -56,7 +58,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--kafka-topic",
         type=str,
-        default=os.getenv("MISSING_WARNING_TOPIC", "missing_warnings"),
+        default=app_config.MISSING_WARNING_TOPIC,
         help="Kafka topic for emitted jobs (default: missing_warnings or env MISSING_WARNING_TOPIC).",
     )
     parser.add_argument(

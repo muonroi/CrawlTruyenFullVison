@@ -1,4 +1,5 @@
 import json
+import json
 import os
 import time
 from dataclasses import dataclass, asdict
@@ -9,16 +10,16 @@ from typing import Any, Dict, List, Optional, Tuple
 import httpx
 from bs4 import BeautifulSoup
 
+from config.config import (
+    AI_METRICS_PATH,
+    AI_MODEL,
+    AI_PROFILES_PATH,
+    AI_PROFILE_TTL_HOURS,
+    AI_TRIM_MAX_BYTES,
+    OPENAI_API_KEY,
+    OPENAI_BASE,
+)
 from utils.logger import logger
-
-
-AI_PROFILES_PATH = os.getenv("AI_PROFILES_PATH", "state/ai_profiles.json")
-AI_METRICS_PATH = os.getenv("AI_METRICS_PATH", "state/ai_metrics.json")
-AI_MODEL = os.getenv("AI_MODEL", "gpt-4o-mini")
-AI_PROFILE_TTL_HOURS = int(os.getenv("AI_PROFILE_TTL_HOURS", "720"))  # 30 days
-OPENAI_BASE = os.getenv("OPENAI_BASE", "https://api.openai.com/v1")
-OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
-AI_TRIM_MAX_BYTES = int(os.getenv("AI_TRIM_MAX_BYTES", "40000"))
 
 
 def _now_ts() -> int:

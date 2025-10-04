@@ -2,7 +2,7 @@
 import json
 import asyncio
 import importlib.util
-import os
+from config import config as app_config
 from utils.logger import logger
 
 try:
@@ -14,10 +14,6 @@ if _AIOKAFKA_SPEC:
     from aiokafka import AIOKafkaProducer  # type: ignore
 else:
     AIOKafkaProducer = None  # type: ignore
-
-# Sử dụng chung cấu hình với consumer
-KAFKA_TOPIC = os.getenv("KAFKA_TOPIC", "crawl_truyen")
-KAFKA_BOOTSTRAP_SERVERS = os.getenv("KAFKA_BROKERS", "kafka:29092")
 
 _producer = None
 _producer_lock = asyncio.Lock()
@@ -47,9 +43,9 @@ async def get_producer():
                 logger.warning("aiokafka not installed; using in-memory dummy producer")
                 _producer = _DummyProducer()
             else:
-                logger.info(f"[Kafka Producer] Đang khởi tạo producer tới {KAFKA_BOOTSTRAP_SERVERS}...")
+                logger.info(f"[Kafka Producer] Đang khởi tạo producer tới {app_config.KAFKA_BOOTSTRAP_SERVERS}...")
                 _producer = AIOKafkaProducer(
-                    bootstrap_servers=KAFKA_BOOTSTRAP_SERVERS,
+                    bootstrap_servers=app_config.KAFKA_BOOTSTRAP_SERVERS,
                     value_serializer=lambda v: json.dumps(v).encode('utf-8'),
                     acks='all'
                 )
@@ -65,7 +61,7 @@ async def send_job(job_data: dict, topic: str = None):
         job_data: Dữ liệu của job dưới dạng dictionary.
         topic: Tên topic để gửi. Nếu là None, sẽ dùng topic mặc định.
     """
-    target_topic = topic or KAFKA_TOPIC
+    target_topic = topic or app_config.KAFKA_TOPIC
     try:
         producer = await get_producer()
         await producer.send_and_wait(target_topic, job_data)

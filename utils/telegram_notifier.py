@@ -37,9 +37,12 @@ async def send_telegram_message(message: str):
     payload = {
         "chat_id": TELEGRAM_CHAT_ID,
         "text": message,
-        "parse_mode": TELEGRAM_PARSE_MODE,
-        "disable_web_page_preview": TELEGRAM_DISABLE_WEB_PAGE_PREVIEW,
     }
+
+    if TELEGRAM_PARSE_MODE:
+        payload["parse_mode"] = TELEGRAM_PARSE_MODE
+    if TELEGRAM_DISABLE_WEB_PAGE_PREVIEW is not None:
+        payload["disable_web_page_preview"] = TELEGRAM_DISABLE_WEB_PAGE_PREVIEW
 
     if TELEGRAM_THREAD_ID:
         payload["message_thread_id"] = TELEGRAM_THREAD_ID
