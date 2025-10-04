@@ -188,7 +188,7 @@ class TangThuVienAdapter(BaseSiteAdapter):
         else:
             referer = self.base_url.rstrip("/") + "/"
 
-        headers = await get_random_headers(self.site_key)
+        headers = await get_random_headers(self.site_key, desktop_only=True)
         headers["Referer"] = referer
         return headers
 

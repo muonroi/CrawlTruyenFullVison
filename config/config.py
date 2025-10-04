@@ -262,21 +262,60 @@ LOADED_PROXIES: List[str] = []
 LOCK = asyncio.Lock()
 
 
-async def get_random_user_agent():
+_MOBILE_USER_AGENT_KEYWORDS = (
+    "android",
+    "iphone",
+    "ipad",
+    "ipod",
+    "iemobile",
+    "mobile",
+    "opera mini",
+    "blackberry",
+    "windows phone",
+)
+
+
+def _is_desktop_user_agent(user_agent: str) -> bool:
+    lowered = user_agent.lower()
+    return not any(keyword in lowered for keyword in _MOBILE_USER_AGENT_KEYWORDS)
+
+
+async def _get_fake_user_agent() -> Optional[str]:
     global _UA_OBJ, _DISABLE_FAKE_UA
     if _DISABLE_FAKE_UA:
-        return random.choice(STATIC_USER_AGENTS)
+        return None
+
+    loop = asyncio.get_event_loop()
     if _UA_OBJ is None:
-        loop = asyncio.get_event_loop()
         _UA_OBJ = await loop.run_in_executor(None, _init_user_agent)
         if _UA_OBJ is None:
             _DISABLE_FAKE_UA = True
-            return random.choice(STATIC_USER_AGENTS)
+            return None
+
     try:
-        return await asyncio.get_event_loop().run_in_executor(None, lambda: _UA_OBJ.random)  # type: ignore
+        return await loop.run_in_executor(None, lambda: _UA_OBJ.random)  # type: ignore
     except Exception:
         _DISABLE_FAKE_UA = True
-        return random.choice(STATIC_USER_AGENTS)
+        return None
+
+
+async def get_random_user_agent(desktop_only: bool = False) -> str:
+    global _UA_OBJ, _DISABLE_FAKE_UA
+
+    attempts = 5 if desktop_only else 1
+    for _ in range(attempts):
+        candidate = await _get_fake_user_agent()
+        if candidate is None:
+            candidate = random.choice(STATIC_USER_AGENTS)
+
+        if not desktop_only or _is_desktop_user_agent(candidate):
+            return candidate
+
+    for ua in STATIC_USER_AGENTS:
+        if not desktop_only or _is_desktop_user_agent(ua):
+            return ua
+
+    return random.choice(STATIC_USER_AGENTS)
 
 
 _UA_OBJ = None
@@ -293,8 +332,8 @@ def _init_user_agent():
         return None
 
 
-async def get_random_headers(site_key):
-    ua_string = await get_random_user_agent()
+async def get_random_headers(site_key, desktop_only: bool = False):
+    ua_string = await get_random_user_agent(desktop_only=desktop_only)
     headers = {
         "User-Agent": ua_string,
         "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8",
