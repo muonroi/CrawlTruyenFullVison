@@ -61,6 +61,21 @@ services:
       - ./logs:/app/logs
       - ./state:/app/state
 
+  progress-bar:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: muonroii/storyflow-core:latest
+    container_name: progress-bar
+    depends_on:
+      - kafka
+    command: python -m workers.progress_bar_consumer
+    env_file:
+      - ./.env
+    volumes:
+      - ./logs:/app/logs
+    restart: unless-stopped
+
   missing-warning-watcher:
     build:
       context: .

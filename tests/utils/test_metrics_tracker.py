@@ -149,3 +149,34 @@ def test_metrics_tracker_genre_progress_reset(monkeypatch, tmp_path):
     refreshed_genre = refreshed_snapshot["genres"]["in_progress"][0]
     assert refreshed_genre["crawled_pages"] == 1
     assert refreshed_genre["current_page"] == 1
+
+
+def test_metrics_tracker_emits_story_events(monkeypatch, tmp_path):
+    dashboard = tmp_path / "dashboard_events.json"
+    monkeypatch.setenv("STORYFLOW_DASHBOARD_FILE", str(dashboard))
+
+    tracker = CrawlMetricsTracker()
+    captured = []
+
+    def _capture(category, payload):
+        captured.append((category, payload))
+
+    monkeypatch.setattr("utils.metrics_tracker.emit_progress_event", _capture)
+
+    tracker.story_started("story-evt", "Truyện C", 20, primary_site="site-c")
+    tracker.update_story_progress("story-evt", crawled_chapters=10)
+    tracker.story_completed("story-evt")
+
+    assert captured
+    assert captured[0][0] == "story"
+    assert captured[0][1]["action"] == "started"
+
+    progress_event = captured[1][1]
+    assert progress_event["action"] in {"progress", "cooldown"}
+    story_payload = progress_event["story"]
+    assert story_payload["crawled_chapters"] == 10
+    assert story_payload["percent"] >= 0
+
+    completed_event = captured[-1][1]
+    assert completed_event["action"] == "completed"
+    assert completed_event["story"]["percent"] == 100

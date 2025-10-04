@@ -13,6 +13,7 @@ Một project crawl truyện nâng cao, hỗ trợ async, đa nguồn, đa thể
 -   **Lưu metadata chuẩn:** Metadata đầy đủ cho từng truyện, backup & validate tự động.
 -   **Phục hồi chương/thể loại bị miss:** Tự động detect và crawl bù chương/truyện/thể loại thiếu hoặc lỗi.
 -   **Dashboard & cảnh báo realtime:** Theo dõi tiến độ crawl, sức khỏe từng site và cảnh báo lỗi đột biến qua Telegram.
+-   **Progress bar realtime:** Container `progress-bar` nhận Kafka message và hiển thị tiến độ 0-100% cùng chi tiết truyện.
 
 ## 🗂️ Cấu trúc thư mục chính
 ```json
@@ -99,6 +100,12 @@ python main.py metruyenfull
     Sử dụng crontab (Linux) hoặc Task Scheduler (Windows) để tự động chạy định kỳ, hoặc chạy trong screen/tmux để tránh mất trạng thái khi mất kết nối SSH.
     Thường xuyên theo dõi file log và thư mục backup.
 Tùy chỉnh các thông số như batch_size, buffer_size, request_delay cho phù hợp với tài  nguyên của server và chính sách của các website nguồn.*
+
+## 📊 Progress dashboard container
+
+-   Cấu hình các biến môi trường `PROGRESS_TOPIC` và `PROGRESS_GROUP_ID` (đã có sẵn trong `.env.example`).
+-   Khởi chạy container chuyên dụng bằng `docker compose up progress-bar` để lắng nghe Kafka và hiển thị tiến độ crawl.
+-   Log của container sẽ render progress bar 0-100% kèm thông tin site, nguồn, lỗi (nếu có) giúp theo dõi realtime.
 
 ## 🤖 Sử dụng Telegram Bot
 
