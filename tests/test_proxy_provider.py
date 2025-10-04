@@ -1,3 +1,4 @@
+import asyncio
 import os
 import pytest
 import time
@@ -19,6 +20,9 @@ def mock_proxy_state(monkeypatch):
     monkeypatch.setattr(proxy_provider, 'USE_PROXY', True)  # Enable proxy logic for tests
     monkeypatch.setattr(proxy_provider, '_last_proxy_mtime', 0)
     monkeypatch.setattr(proxy_provider, 'PROXY_API_URL', None)
+    monkeypatch.setattr(proxy_provider, 'PROXY_NOTIFIED', False)
+    monkeypatch.setattr(proxy_provider, 'FAILED_PROXY_TIMES', [])
+    monkeypatch.setattr(proxy_provider, 'MAX_FAIL_RATE', 10)
 
     return loaded_proxies, cooldown_proxies, bad_proxy_counts
 
@@ -48,6 +52,37 @@ def test_get_round_robin_proxy(mock_proxy_state, monkeypatch):
     assert proxy_provider.get_proxy_url() == "http://p2"
     assert proxy_provider.get_proxy_url() == "http://p3"
     assert proxy_provider.get_proxy_url() == "http://p1"  # Wraps around
+
+
+def test_get_proxy_url_use_proxy_disabled(mock_proxy_state, monkeypatch):
+    loaded_proxies, _, _ = mock_proxy_state
+    loaded_proxies.extend(["p1"])
+
+    monkeypatch.setattr(proxy_provider, 'USE_PROXY', False)
+    proxy_provider.PROXY_NOTIFIED = False
+
+    assert proxy_provider.get_proxy_url() is None
+    assert proxy_provider.PROXY_NOTIFIED is False
+
+
+def test_get_proxy_url_empty_pool_sets_notification_flag(mock_proxy_state, monkeypatch):
+    loaded_proxies, _, _ = mock_proxy_state
+
+    monkeypatch.setattr(proxy_provider.random, 'choice', lambda seq: seq[0])
+
+    # No proxies loaded -> None and notification flag set once
+    assert proxy_provider.get_proxy_url() is None
+    assert proxy_provider.PROXY_NOTIFIED is True
+
+    # Second call still returns None but keeps the notification flag
+    assert proxy_provider.get_proxy_url() is None
+    assert proxy_provider.PROXY_NOTIFIED is True
+
+    loaded_proxies.append("proxy1:8000")
+
+    # Once proxies appear, the flag should reset and a proxy URL should be returned
+    assert proxy_provider.get_proxy_url() == "http://proxy1:8000"
+    assert proxy_provider.PROXY_NOTIFIED is False
 
 
 @pytest.mark.asyncio
@@ -184,6 +219,47 @@ def test_get_random_proxy_url_formats(monkeypatch, mock_proxy_state):
         proxy_provider.get_random_proxy_url(username="user", password="pwd")
         == "http://user:pwd@proxy3:9100"
     )
+
+
+@pytest.mark.asyncio
+async def test_mark_bad_proxy_auto_ban_and_telegram_alert(mock_proxy_state, monkeypatch):
+    loaded_proxies, _, bad_counts = mock_proxy_state
+
+    proxies_to_ban = [f"http://proxy{i}:8000" for i in range(10)]
+    loaded_proxies.extend(proxies_to_ban + ["http://spare:8000", "http://spare2:8000"])
+
+    notifications = []
+    created_tasks = []
+
+    async def fake_send_telegram_notify(message, status=None):
+        notifications.append((message, status))
+
+    original_create_task = asyncio.create_task
+
+    def fake_create_task(coro):
+        created_tasks.append(coro)
+        return original_create_task(coro)
+
+    monkeypatch.setattr(proxy_provider, 'send_telegram_notify', fake_send_telegram_notify)
+    monkeypatch.setattr(asyncio, 'create_task', fake_create_task)
+    monkeypatch.setattr(proxy_provider.time, 'time', lambda: 1_000_000)
+
+    for proxy in proxies_to_ban:
+        for _ in range(3):
+            await proxy_provider.mark_bad_proxy(proxy)
+        assert proxy not in loaded_proxies
+        assert bad_counts[proxy] >= 3
+
+    # Allow any scheduled tasks to run
+    await asyncio.sleep(0)
+
+    assert len(notifications) == 1
+    message, status = notifications[0]
+    assert "Cảnh báo" in message
+    assert status == "error"
+    assert len(created_tasks) == 1
+    assert proxy_provider.FAILED_PROXY_TIMES == []
+
 
 
 def test_shuffle_proxies(monkeypatch, mock_proxy_state):
