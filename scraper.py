@@ -123,10 +123,13 @@ async def _make_request_playwright(
     timeout: int = 30,
     max_retries: int = 5,
     wait_for_selector: str | None = None,
+    extra_headers: Optional[Dict[str, str]] = None,
 ):
     """Load trang bằng Playwright."""
     global browser
     headers = await get_random_headers(site_key)
+    if extra_headers:
+        headers.update(extra_headers)
     last_exception = None
 
     if async_playwright is None:
@@ -363,4 +366,11 @@ async def make_request(
             return resp
     logger.info("[request] Fallback to Playwright due to block or bad status")
     fallback_stats["fallback_count"][site_key] += 1
-    return await _make_request_playwright(url, site_key, timeout, max_retries, wait_for_selector=wait_for_selector)
+    return await _make_request_playwright(
+        url,
+        site_key,
+        timeout,
+        max_retries,
+        wait_for_selector=wait_for_selector,
+        extra_headers=extra_headers,
+    )
