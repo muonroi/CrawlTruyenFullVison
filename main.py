@@ -77,8 +77,11 @@ from workers.crawler_missing_chapter import (
     check_and_crawl_missing_all_stories,
 )
 from workers.crawler_single_missing_chapter import crawl_single_story_worker
+from workers.multi_source_story_crawler import (
+    StoryCrawlRequest,
+    multi_source_story_crawler,
+)
 
-from utils.chapter_utils import slugify_title
 from kafka.kafka_producer import send_job, close_producer
 from workers.missing_background_loop import (
     start_missing_background_loop,
@@ -265,138 +268,18 @@ async def crawl_all_sources_until_full(
     state_file=None,
     adapter: BaseSiteAdapter = None,  # type: ignore
 ):
-    sources = sort_sources(story_data_item.get("sources", []))
-    error_count_by_source = {src["url"]: 0 for src in sources}
-    MAX_SOURCE_RETRY = 3
-
-    adapter_cache: Dict[str, BaseSiteAdapter] = getattr(
-        crawl_all_sources_until_full, "_adapter_cache", {}
+    request = StoryCrawlRequest(
+        site_key=site_key,
+        session=session,
+        story_data_item=story_data_item,
+        current_discovery_genre_data=current_discovery_genre_data,
+        story_folder_path=story_folder_path,
+        crawl_state=crawl_state,
+        num_batches=num_batches,
+        state_file=state_file,
+        adapter=adapter,
     )
-    if adapter and site_key not in adapter_cache:
-        adapter_cache[site_key] = adapter
-    crawl_all_sources_until_full._adapter_cache = adapter_cache  # type: ignore[attr-defined]
-
-    total_chapters = story_data_item.get(
-        "total_chapters_on_site"
-    ) or story_data_item.get("total_chapters")
-    if not total_chapters:
-        logger.error(
-            f"Không xác định được tổng số chương cho '{story_data_item['title']}'"
-        )
-        return
-
-    if not sources:
-        logger.warning(
-            f"[AUTO-FIX] Chưa có sources cho '{story_data_item['title']}', auto thêm nguồn chính."
-        )
-        url = story_data_item.get("url")
-        if url:
-            sources = [{"url": url, "site_key": site_key, "priority": 1}]
-            story_data_item["sources"] = sources
-        else:
-            logger.error(
-                f"Không xác định được URL cho '{story_data_item['title']}', không thể auto-fix sources."
-            )
-            return
-
-    retry_full = 0
-    applied_chapter_limit: Optional[int] = None
-    while True:
-        if is_story_skipped(story_data_item):
-            logger.warning(f"[SKIP][LOOP] Truyện '{story_data_item['title']}' đã bị đánh dấu skip, bỏ qua vòng lặp sources.")
-            break
-        files_before = len(get_saved_chapters_files(story_folder_path))
-        crawled = False
-        for source in sources:
-            url = source.get("url")
-            if not url:
-                continue
-            if error_count_by_source.get(url, 0) >= MAX_SOURCE_RETRY:
-                logger.warning(f"[SKIP] Nguồn {url} bị lỗi quá nhiều, bỏ qua.")
-                continue
-            source_site_key = (
-                source.get("site_key")
-                or story_data_item.get("site_key")
-                or get_site_key_from_url(url)
-                or site_key
-            )
-            try:
-                if source_site_key not in crawl_all_sources_until_full._adapter_cache:  # type: ignore[attr-defined]
-                    crawl_all_sources_until_full._adapter_cache[source_site_key] = get_adapter(source_site_key)
-                    await initialize_scraper(source_site_key)
-                source_adapter = crawl_all_sources_until_full._adapter_cache[source_site_key]
-            except Exception as ex:
-                logger.warning(
-                    f"[SOURCE] Không lấy được adapter cho site '{source_site_key}' (url={url}): {ex}"
-                )
-                continue
-            try:
-                chapters = await source_adapter.get_chapter_list(
-                    story_url=url,
-                    story_title=story_data_item["title"],
-                    site_key=source_site_key,
-                    total_chapters=total_chapters,
-                    max_pages=app_config.MAX_CHAPTER_PAGES_TO_CRAWL,
-                )
-            except Exception as ex:
-                logger.warning(f"[SOURCE] Lỗi crawl chapters từ {url}: {ex}")
-                error_count_by_source[url] = error_count_by_source.get(url, 0) + 1
-                continue
-
-            limit_from_missing = await crawl_missing_chapters_for_story(
-                source_site_key,
-                session,
-                chapters,
-                story_data_item,
-                current_discovery_genre_data,
-                story_folder_path,
-                crawl_state,
-                num_batches=num_batches,
-                state_file=state_file,
-                adapter=source_adapter,
-            )
-            if isinstance(limit_from_missing, int):
-                applied_chapter_limit = (
-                    limit_from_missing
-                    if applied_chapter_limit is None
-                    else min(applied_chapter_limit, limit_from_missing)
-                )
-            load_skipped_stories()
-            if is_story_skipped(story_data_item):
-                logger.warning(f"[SKIP][AFTER CRAWL] Truyện '{story_data_item['title']}' đã bị đánh dấu skip, thoát khỏi vòng lặp sources.")
-                break
-            files_now = len(get_saved_chapters_files(story_folder_path))
-            if (files_now + count_dead_chapters(story_folder_path)) >= (len(chapters) if chapters else (total_chapters or 0)):
-                logger.info(
-                    f"Đã crawl đủ chương {files_now}/{total_chapters} cho '{story_data_item['title']}' (từ nguồn {source_site_key})"
-                )
-                return
-            crawled = True
-
-            files_after = len(get_saved_chapters_files(story_folder_path))
-            if (files_after + count_dead_chapters(story_folder_path)) >= (len(chapters) if chapters else (total_chapters or 0)):
-                break
-            if not crawled or files_after == files_before:
-                logger.warning(
-                    f"[ALERT] Đã thử hết nguồn nhưng không crawl thêm được chương nào cho '{story_data_item['title']}'. Đánh dấu skip và next truyện."
-                )
-                mark_story_as_skipped(story_data_item, reason="sources_fail_or_all_chapter_skipped")
-                break 
-            retry_full += 1
-        if retry_full >= app_config.RETRY_STORY_ROUND_LIMIT:
-            logger.error(
-                f"[FATAL] Vượt quá retry cho truyện {story_data_item['title']}, sẽ bỏ qua."
-            )
-            break
-        if retry_full % 20 == 0:
-            logger.error(
-                f"[ALERT] Truyện '{story_data_item['title']}' còn thiếu {total_chapters - files_after} chương sau {retry_full} vòng thử tất cả nguồn."
-            )
-        await smart_delay()
-
-    if applied_chapter_limit is not None:
-        story_data_item["_chapter_limit"] = applied_chapter_limit
-    return applied_chapter_limit
+    return await multi_source_story_crawler.crawl_story_until_complete(request)
 
 
 async def initialize_and_log_setup_with_state(site_key) -> Tuple[str, Dict[str, Any]]:
