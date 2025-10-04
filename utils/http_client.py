@@ -59,7 +59,11 @@ async def fetch(
         if extra_headers:
             headers.update(extra_headers)
 
-        proxy_url = get_proxy_url(GLOBAL_PROXY_USERNAME, GLOBAL_PROXY_PASSWORD)
+        proxy_url = get_proxy_url(
+            GLOBAL_PROXY_USERNAME,
+            GLOBAL_PROXY_PASSWORD,
+            site_key=site_key,
+        )
         try:
             client_kwargs = {
                 'headers': headers,
@@ -87,7 +91,7 @@ async def fetch(
                 return resp
             logger.warning(f"[httpx] Potential anti-bot or bad status for {url} (status: {resp.status_code})")
             if proxy_url and should_blacklist_proxy(proxy_url, LOADED_PROXIES):
-                await mark_bad_proxy(proxy_url)
+                await mark_bad_proxy(proxy_url, site_key=site_key)
         except Exception as e:
             logger.warning(f"[httpx] request error {e} for {url}")
             if proxy_url and should_blacklist_proxy(proxy_url, LOADED_PROXIES):

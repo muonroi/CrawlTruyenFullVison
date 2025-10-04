@@ -95,3 +95,21 @@ async def test_make_request_handles_404_without_fallback(monkeypatch):
     assert response.status_code == 404
     assert response.text == "Missing"
     mock_playwright_request.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_make_request_skips_playwright_for_server_error(monkeypatch):
+    mock_httpx_fetch = AsyncMock(return_value=MockResponse("Server exploded", 500))
+    monkeypatch.setattr("scraper.fetch", mock_httpx_fetch)
+
+    mock_is_anti_bot = MagicMock(return_value=False)
+    monkeypatch.setattr("scraper.is_anti_bot_content", mock_is_anti_bot)
+
+    mock_playwright_request = AsyncMock()
+    monkeypatch.setattr("scraper._make_request_playwright", mock_playwright_request)
+
+    response = await make_request("https://example.com/error", "test_site")
+
+    mock_playwright_request.assert_not_called()
+    assert response.status_code == 500
+    assert response.text == "Server exploded"

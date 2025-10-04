@@ -41,6 +41,33 @@ fallback_stats = {
     "fallback_count": {},
 }
 
+_BLOCK_STATUS_CODES = {401, 403, 406, 407, 429, 451, 503}
+
+
+def _should_use_playwright(
+    response,
+    response_text: Optional[str] = None,
+    anti_bot_detected: Optional[bool] = None,
+) -> bool:
+    if response is None:
+        return True
+
+    status = getattr(response, "status_code", None)
+    text = response_text if response_text is not None else getattr(response, "text", "")
+
+    if status in _BLOCK_STATUS_CODES:
+        return True
+
+    if status == 200:
+        if not text:
+            return True
+        if anti_bot_detected is None:
+            anti_bot_detected = is_anti_bot_content(text)
+        if anti_bot_detected:
+            return True
+
+    return False
+
 
 async def initialize_scraper(
     site_key, override_headers: Optional[Dict[str, str]] = None
@@ -146,7 +173,11 @@ async def _make_request_playwright(
 
             proxy_settings = None
             if USE_PROXY:
-                proxy_url = get_proxy_url(GLOBAL_PROXY_USERNAME, GLOBAL_PROXY_PASSWORD)
+                proxy_url = get_proxy_url(
+                    GLOBAL_PROXY_USERNAME,
+                    GLOBAL_PROXY_PASSWORD,
+                    site_key=site_key,
+                )
                 if proxy_url:
                     from urllib.parse import urlparse
                     p = urlparse(proxy_url)
@@ -181,7 +212,7 @@ async def _make_request_playwright(
                 else:
                     logger.warning("[playwright] Anti-bot persisted after waits")
                     if USE_PROXY and proxy_settings and proxy_url:
-                        await mark_bad_proxy(proxy_url)
+                        await mark_bad_proxy(proxy_url, site_key=site_key)
                     await asyncio.sleep(random.uniform(2, 4))
                     if proxy_settings is not None:
                         await release_context(proxy_settings)
@@ -201,7 +232,12 @@ async def _make_request_playwright(
         except Exception as ex:
             last_exception = ex
             logger.warning(f"[make_request] Lỗi lần {attempt} khi truy cập {url}: {ex}")
-            if USE_PROXY and proxy_settings and should_blacklist_proxy(proxy_url, LOADED_PROXIES):
+            if (
+                USE_PROXY
+                and proxy_settings
+                and proxy_url
+                and should_blacklist_proxy(proxy_url, LOADED_PROXIES)
+            ):
                 remove_bad_proxy(proxy_url)
         await asyncio.sleep(random.uniform(1, 2))
 
@@ -239,7 +275,11 @@ async def _make_request_playwright_post(
 
             proxy_settings = None
             if USE_PROXY:
-                proxy_url = get_proxy_url(GLOBAL_PROXY_USERNAME, GLOBAL_PROXY_PASSWORD)
+                proxy_url = get_proxy_url(
+                    GLOBAL_PROXY_USERNAME,
+                    GLOBAL_PROXY_PASSWORD,
+                    site_key=site_key,
+                )
                 if proxy_url:
                     from urllib.parse import urlparse
 
@@ -287,14 +327,14 @@ async def _make_request_playwright_post(
                 f"[playwright][POST] Potential anti-bot or bad status for {url} (status: {status})"
             )
             if USE_PROXY and proxy_settings and proxy_url and should_blacklist_proxy(proxy_url, LOADED_PROXIES):
-                await mark_bad_proxy(proxy_url)
+                await mark_bad_proxy(proxy_url, site_key=site_key)
                 await release_context(proxy_settings)
             await asyncio.sleep(random.uniform(1, 3))
         except Exception as ex:
             last_exception = ex
             logger.warning(f"[make_request][POST] Lỗi lần {attempt} khi truy cập {url}: {ex}")
             if USE_PROXY and proxy_settings and proxy_url and should_blacklist_proxy(proxy_url, LOADED_PROXIES):
-                await remove_bad_proxy(proxy_url)
+                remove_bad_proxy(proxy_url)
                 await release_context(proxy_settings)
             await asyncio.sleep(random.uniform(1, 3))
         finally:
@@ -317,19 +357,32 @@ async def make_request(
     extra_headers: Optional[Dict[str, str]] = None
 ):
     """Try httpx first then fallback to Playwright when blocked."""
+    fallback_stats["httpx_success"].setdefault(site_key, 0)
+    fallback_stats["fallback_count"].setdefault(site_key, 0)
+
     if method.upper() == 'POST':
-        resp = await fetch(url, site_key, timeout, method=method, data=data, extra_headers=extra_headers)
-        fallback_stats["httpx_success"].setdefault(site_key, 0)
-        fallback_stats["fallback_count"].setdefault(site_key, 0)
-        if resp and resp.status_code == 200:
-            class R:
-                def __init__(self, text):
-                    self.text = text
+        resp = await fetch(
+            url,
+            site_key,
+            timeout,
+            method=method,
+            data=data,
+            extra_headers=extra_headers,
+        )
+        if resp:
+            text = getattr(resp, "text", "")
+            anti_bot_detected = is_anti_bot_content(text) if text else False
+            if resp.status_code == 404:
+                logger.warning(f"[{site_key}] Received HTTP 404 for {url}; skipping Playwright fallback.")
+                return resp
+            if resp.status_code == 200 and text and not anti_bot_detected:
+                fallback_stats["httpx_success"][site_key] += 1
+                return resp
+            if not _should_use_playwright(resp, text, anti_bot_detected=anti_bot_detected):
+                return resp
+        else:
+            logger.info(f"[{site_key}] HTTP client returned no response for {url}; considering Playwright fallback.")
 
-            fallback_stats["httpx_success"][site_key] += 1
-            return R(resp.text)
-
-        logger.warning(f"[{site_key}] POST request to {url} failed with httpx. Trying Playwright fallback.")
         fallback_stats["fallback_count"][site_key] += 1
         text = await _make_request_playwright_post(
             url,
@@ -344,28 +397,28 @@ async def make_request(
             return None
 
         class R:
-            def __init__(self, text):
-                self.text = text
+            def __init__(self, value: str):
+                self.text = value
 
         return R(text)
 
     resp = await fetch(url, site_key, timeout, extra_headers=extra_headers)
-    fallback_stats["httpx_success"].setdefault(site_key, 0)
-    fallback_stats["fallback_count"].setdefault(site_key, 0)
     if resp:
-        if resp.status_code == 200 and resp.text and not is_anti_bot_content(resp.text):
-            class R:
-                def __init__(self, text):
-                    self.text = text
-
+        text = getattr(resp, "text", "")
+        anti_bot_detected = is_anti_bot_content(text) if text else False
+        if resp.status_code == 200 and text and not anti_bot_detected:
             fallback_stats["httpx_success"][site_key] += 1
-            return R(resp.text)
-
+            return resp
         if resp.status_code == 404:
             logger.warning(f"[{site_key}] Received HTTP 404 for {url}; skipping Playwright fallback.")
             return resp
-    logger.info("[request] Fallback to Playwright due to block or bad status")
+        if not _should_use_playwright(resp, text, anti_bot_detected=anti_bot_detected):
+            return resp
+    else:
+        logger.debug(f"[{site_key}] HTTP client returned no response for {url}; evaluating Playwright fallback.")
+
     fallback_stats["fallback_count"][site_key] += 1
+    logger.info("[request] Fallback to Playwright due to block or anti-bot detection")
     return await _make_request_playwright(
         url,
         site_key,
