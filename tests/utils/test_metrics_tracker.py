@@ -9,7 +9,15 @@ def test_metrics_tracker_story_lifecycle(monkeypatch, tmp_path):
     monkeypatch.setenv("STORYFLOW_DASHBOARD_FILE", str(dashboard))
 
     tracker = CrawlMetricsTracker()
-    tracker.story_started("story-1", "Truyện A", 120, primary_site="site-a")
+    tracker.story_started(
+        "story-1",
+        "Truyện A",
+        120,
+        primary_site="site-a",
+        genre_name="Tiên Hiệp",
+        genre_url="https://example.com/genre/tien-hiep",
+        genre_site_key="site-a",
+    )
     tracker.update_story_progress(
         "story-1",
         crawled_chapters=10,
@@ -34,6 +42,11 @@ def test_metrics_tracker_story_lifecycle(monkeypatch, tmp_path):
     assert sites[0]["success"] == 5
     assert sites[0]["failure"] == 1
 
+    completed_story = snapshot["stories"]["completed"][0]
+    assert completed_story["genre_name"] == "Tiên Hiệp"
+    assert completed_story["genre_url"] == "https://example.com/genre/tien-hiep"
+    assert completed_story["genre_site_key"] == "site-a"
+
     with open(dashboard, "r", encoding="utf-8") as f:
         persisted = json.load(f)
     assert persisted["aggregates"]["stories_completed"] == 1
@@ -44,12 +57,24 @@ def test_metrics_tracker_story_skipped(monkeypatch, tmp_path):
     monkeypatch.setenv("STORYFLOW_DASHBOARD_FILE", str(dashboard))
 
     tracker = CrawlMetricsTracker()
-    tracker.story_started("story-2", "Truyện B", 50, primary_site="site-b")
+    tracker.story_started(
+        "story-2",
+        "Truyện B",
+        50,
+        primary_site="site-b",
+        genre_name="Huyền Ảo",
+        genre_url="https://example.com/genre/huyen-ao",
+        genre_site_key="site-b",
+    )
     tracker.story_skipped("story-2", "Truyện B", "anti_bot")
 
     snapshot = tracker.get_snapshot()
     assert snapshot["aggregates"]["stories_skipped"] == 1
-    assert snapshot["stories"]["skipped"][0]["last_error"] == "anti_bot"
+    skipped_story = snapshot["stories"]["skipped"][0]
+    assert skipped_story["last_error"] == "anti_bot"
+    assert skipped_story["genre_name"] == "Huyền Ảo"
+    assert skipped_story["genre_url"] == "https://example.com/genre/huyen-ao"
+    assert skipped_story["genre_site_key"] == "site-b"
 
     tracker.story_failed("story-2", "retry_limit")
     assert tracker.get_snapshot()["stories"]["skipped"][0]["last_error"] == "anti_bot"

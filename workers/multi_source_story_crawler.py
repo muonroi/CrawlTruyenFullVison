@@ -228,6 +228,10 @@ class MultiSourceStoryCrawler:
             story["title"],
             total_chapters,
             primary_site=request.site_key,
+            genre_name=request.current_discovery_genre_data.get("name"),
+            genre_url=request.current_discovery_genre_data.get("url"),
+            genre_site_key=request.current_discovery_genre_data.get("site_key")
+            or request.site_key,
         )
         progress_logger.info(
             f"[START] Bắt đầu crawl '{story['title']}' với {total_chapters} chương (site chính: {request.site_key})."

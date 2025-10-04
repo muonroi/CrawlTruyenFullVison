@@ -21,6 +21,9 @@ class StoryProgress:
     missing_chapters: int = 0
     status: str = "queued"
     primary_site: Optional[str] = None
+    genre_name: Optional[str] = None
+    genre_url: Optional[str] = None
+    genre_site_key: Optional[str] = None
     last_source: Optional[str] = None
     last_error: Optional[str] = None
     started_at: float = field(default_factory=time.time)
@@ -37,6 +40,9 @@ class StoryProgress:
             "missing_chapters": self.missing_chapters,
             "status": self.status,
             "primary_site": self.primary_site,
+            "genre_name": self.genre_name,
+            "genre_url": self.genre_url,
+            "genre_site_key": self.genre_site_key,
             "last_source": self.last_source,
             "last_error": self.last_error,
             "started_at": _to_iso(self.started_at),
@@ -169,6 +175,9 @@ class CrawlMetricsTracker:
         total_chapters: int,
         *,
         primary_site: Optional[str] = None,
+        genre_name: Optional[str] = None,
+        genre_url: Optional[str] = None,
+        genre_site_key: Optional[str] = None,
     ) -> None:
         progress = StoryProgress(
             story_id=story_id,
@@ -177,6 +186,9 @@ class CrawlMetricsTracker:
             missing_chapters=max(total_chapters or 0, 0),
             status="running",
             primary_site=primary_site,
+            genre_name=genre_name,
+            genre_url=genre_url,
+            genre_site_key=genre_site_key,
         )
         with self._lock:
             self._stories_in_progress[story_id] = progress
@@ -740,6 +752,9 @@ def _story_from_payload(payload: Dict[str, Any]) -> Optional[StoryProgress]:
         missing_chapters=int(payload.get("missing_chapters", 0)),
         status=payload.get("status", "queued"),
         primary_site=payload.get("primary_site"),
+        genre_name=payload.get("genre_name"),
+        genre_url=payload.get("genre_url"),
+        genre_site_key=payload.get("genre_site_key"),
         last_source=payload.get("last_source"),
         last_error=payload.get("last_error"),
     )

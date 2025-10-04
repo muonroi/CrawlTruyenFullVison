@@ -7,7 +7,7 @@ import argparse
 import json
 import os
 import sys
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, Iterable, List, Optional
 
 DEFAULT_DASHBOARD_FILE = os.environ.get(
     "STORYFLOW_DASHBOARD_FILE",
@@ -32,6 +32,18 @@ def _coerce_int(value: Any) -> Optional[int]:
         return int(value)
     except (TypeError, ValueError):
         return None
+
+
+def _latest_by_updated_at(entries: Iterable[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
+    entries = list(entries)
+    if not entries:
+        return None
+
+    def _key(item: Dict[str, Any]) -> str:
+        ts = item.get("updated_at")
+        return ts if isinstance(ts, str) else ""
+
+    return max(entries, key=_key)
 
 
 def format_genre_summary(genre: Dict[str, Any]) -> List[str]:
@@ -141,19 +153,78 @@ def print_dashboard(data: Dict[str, Any]) -> None:
         print(f"  - Thể loại hoàn thành: {genres_done}")
     print()
 
-    active = data.get("stories", {}).get("in_progress", [])
+    stories_section = data.get("stories", {})
+    active = stories_section.get("in_progress", [])
+    active_genres = data.get("genres", {}).get("in_progress", [])
+
+    current_genre = _latest_by_updated_at(active_genres)
+    current_story = _latest_by_updated_at(active)
+
+    if current_genre or current_story:
+        print("Tiến độ hiện tại:")
+    if current_genre:
+        site_key = current_genre.get("site_key") or "-"
+        genre_name = current_genre.get("name") or current_genre.get("url") or "?"
+        total_pages = _coerce_int(current_genre.get("total_pages"))
+        crawled_pages = _coerce_int(current_genre.get("crawled_pages")) or 0
+        current_page = _coerce_int(current_genre.get("current_page"))
+        if current_page:
+            if total_pages:
+                page_text = f"{current_page}/{total_pages}"
+            else:
+                page_text = str(current_page)
+        elif total_pages:
+            page_text = f"{crawled_pages}/{total_pages}"
+        else:
+            page_text = str(crawled_pages)
+        status = current_genre.get("status")
+        status_text = f" — trạng thái: {status.replace('_', ' ')}" if status else ""
+        print(
+            f"  - Thể loại: [{site_key}] {genre_name} — trang hiện tại: {page_text}{status_text}"
+        )
+    if current_story:
+        title = current_story.get("title") or current_story.get("id") or "?"
+        crawled_chapters = _coerce_int(current_story.get("crawled_chapters")) or 0
+        total_chapters = _coerce_int(current_story.get("total_chapters"))
+        if total_chapters:
+            chapter_text = f"{crawled_chapters}/{total_chapters}"
+        else:
+            chapter_text = str(crawled_chapters)
+        missing_chapters = _coerce_int(current_story.get("missing_chapters"))
+        details: List[str] = []
+        genre_name = current_story.get("genre_name")
+        if genre_name:
+            details.append(f"Thể loại: {genre_name}")
+        genre_site_key = current_story.get("genre_site_key") or current_story.get("primary_site")
+        if genre_site_key:
+            details.append(f"Site: {genre_site_key}")
+        detail_suffix = f" ({'; '.join(details)})" if details else ""
+        print(f"  - Truyện: {title} — chương hiện tại: {chapter_text}{detail_suffix}")
+        if missing_chapters:
+            print(f"      Còn thiếu: {missing_chapters} chương")
+    if current_genre or current_story:
+        print()
+
     if active:
         print("Đang crawl:")
         for story in active[:10]:  # show top 10
+            details: List[str] = []
+            genre_name = story.get("genre_name")
+            if genre_name:
+                details.append(f"thể loại: {genre_name}")
+            genre_site_key = story.get("genre_site_key") or story.get("primary_site")
+            if genre_site_key:
+                details.append(f"site: {genre_site_key}")
+            detail_suffix = f" ({'; '.join(details)})" if details else ""
             print(
                 f"  * {story.get('title')} — {story.get('crawled_chapters', 0)}/"
                 f"{story.get('total_chapters', 0)} chương, còn thiếu {story.get('missing_chapters', 0)}"
+                f"{detail_suffix}"
             )
         if len(active) > 10:
             print(f"  ... và {len(active) - 10} truyện khác")
         print()
 
-    active_genres = data.get("genres", {}).get("in_progress", [])
     if active_genres:
         print("Thể loại đang xử lý:")
         for genre in active_genres[:10]:
