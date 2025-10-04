@@ -48,6 +48,7 @@ from core.crawl_planner import (
     build_category_plan,
     build_crawl_plan,
 )
+from core.category_store import CategoryStore
 from utils.batch_utils import get_optimal_batch_size, smart_delay, split_batches
 from utils.chapter_utils import (
     crawl_missing_chapters_for_story,
@@ -126,6 +127,9 @@ def refresh_runtime_settings() -> None:
 
 
 refresh_runtime_settings()
+
+
+category_store = CategoryStore(app_config.CATEGORY_SNAPSHOT_DB_PATH)
 
 
 class WorkerSettings:
@@ -1198,6 +1202,16 @@ async def run_crawler(
         await save_crawl_state(crawl_state, state_file, site_key=site_key)
         return
 
+    snapshot_info = None
+    try:
+        snapshot_info = category_store.persist_snapshot(site_key, crawl_plan)
+    except Exception as exc:  # pragma: no cover - defensive logging
+        logger.error(
+            "[PLAN] Không thể lưu snapshot thể loại cho %s: %s",
+            site_key,
+            exc,
+        )
+
     max_stories_per_genre = app_config.MAX_STORIES_TOTAL_PER_GENRE
     if max_stories_per_genre:
         for category in crawl_plan.categories:
@@ -1205,6 +1219,8 @@ async def run_crawler(
                 category.stories = category.stories[:max_stories_per_genre]
 
     crawl_state["category_story_plan"] = crawl_plan.as_mapping()
+    if snapshot_info:
+        crawl_state.setdefault("category_snapshots", {})[site_key] = snapshot_info.to_dict()
     for category in crawl_plan.categories:
         _update_category_progress(crawl_state, category.name, len(category.stories), 0)
     await save_crawl_state(crawl_state, state_file, site_key=site_key)
