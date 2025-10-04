@@ -64,7 +64,12 @@ def test_metrics_tracker_genre_tracking(monkeypatch, tmp_path):
     tracker.genre_started("site-a", "Tiên Hiệp", "https://example.com/genre/tien-hiep", position=1, total_genres=3)
     tracker.update_genre_pages("site-a", "https://example.com/genre/tien-hiep", crawled_pages=1, total_pages=5, current_page=1)
     tracker.set_genre_story_total("site-a", "https://example.com/genre/tien-hiep", 2)
-    tracker.genre_story_started("site-a", "https://example.com/genre/tien-hiep", "Truyện A")
+    tracker.genre_story_started("site-a", "https://example.com/genre/tien-hiep", "Truyện A", story_page=2, story_position=3)
+    snapshot_active = tracker.get_snapshot()["genres"]["in_progress"][0]
+    assert snapshot_active["current_story_title"] == "Truyện A"
+    assert snapshot_active["current_story_page"] == 2
+    assert snapshot_active["current_story_position"] == 3
+    assert snapshot_active["active_story_details"][0]["page"] == 2
     tracker.genre_story_finished("site-a", "https://example.com/genre/tien-hiep", "Truyện A", processed=True)
     tracker.genre_completed("site-a", "https://example.com/genre/tien-hiep")
 

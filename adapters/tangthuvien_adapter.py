@@ -276,6 +276,8 @@ class TangThuVienAdapter(BaseSiteAdapter):
         )
 
         all_stories = list(first_page_stories)
+        for story in all_stories:
+            story.setdefault('_source_page', 1)
         seen_urls: Set[str] = set()
         for story in all_stories:
             url_key = story.get("url")
@@ -334,6 +336,7 @@ class TangThuVienAdapter(BaseSiteAdapter):
 
             new_batch: List[Dict[str, Any]] = []
             for story in stories:
+                story.setdefault('_source_page', page_number)
                 url_key = story.get("url")
                 if not url_key or url_key in seen_urls:
                     continue

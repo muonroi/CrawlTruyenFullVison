@@ -1,6 +1,6 @@
 
 import json
-from scripts.show_crawl_dashboard import load_dashboard
+from scripts.show_crawl_dashboard import load_dashboard, format_genre_summary
 import asyncio
 import os
 import glob
@@ -334,23 +334,8 @@ def format_dashboard_data(data: dict) -> str:
     if active_genres:
         output += "Thể loại đang xử lý:\n"
         for genre in active_genres[:10]:
-            total_pages = genre.get("total_pages") or "?"
-            current_page = genre.get("current_page") or genre.get("crawled_pages") or 0
-            total_stories = genre.get("total_stories") or "?"
-            processed = genre.get("processed_stories", 0)
-            position = genre.get("position")
-            total_genres = genre.get("total_genres")
-            prefix = f"[{genre.get('site_key')}] "
-            if position and total_genres:
-                prefix += f"({position}/{total_genres}) "
-            output += (
-                f"  - {prefix}{genre.get('name')} — Trang {current_page}/{total_pages}, "
-                f"Truyện {processed}/{total_stories}\n"
-            )
-            active_stories = genre.get("active_stories") or []
-            if active_stories:
-                joined = ", ".join(active_stories[:5])
-                output += f"      Đang crawl: {joined}\n"
+            for line in format_genre_summary(genre):
+                output += f"{line}\n"
         if len(active_genres) > 10:
             output += f"  ... và {len(active_genres) - 10} thể loại khác\n"
         output += "\n"

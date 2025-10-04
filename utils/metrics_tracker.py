@@ -82,6 +82,10 @@ class GenreProgress:
     total_stories: int = 0
     processed_stories: int = 0
     active_stories: List[str] = field(default_factory=list)
+    active_story_details: List[Dict[str, Any]] = field(default_factory=list)
+    current_story_title: Optional[str] = None
+    current_story_page: Optional[int] = None
+    current_story_position: Optional[int] = None
     status: str = "queued"
     last_error: Optional[str] = None
     started_at: float = field(default_factory=time.time)
@@ -101,6 +105,13 @@ class GenreProgress:
             "total_stories": self.total_stories,
             "processed_stories": self.processed_stories,
             "active_stories": list(self.active_stories),
+            "active_story_details": [
+                {k: v for k, v in detail.items() if v is not None}
+                for detail in self.active_story_details
+            ],
+            "current_story_title": self.current_story_title,
+            "current_story_page": self.current_story_page,
+            "current_story_position": self.current_story_position,
             "status": self.status,
             "last_error": self.last_error,
             "started_at": _to_iso(self.started_at),
@@ -333,7 +344,14 @@ class CrawlMetricsTracker:
             genre.updated_at = time.time()
             self._persist_locked()
 
-    def genre_story_started(self, site_key: str, genre_url: str, story_title: str) -> None:
+    def genre_story_started(
+        self,
+        site_key: str,
+        genre_url: str,
+        story_title: str,
+        story_page: Optional[int] = None,
+        story_position: Optional[int] = None,
+    ) -> None:
         key = self._genre_key(site_key, genre_url)
         with self._lock:
             genre = self._genres_in_progress.get(key)
@@ -343,10 +361,38 @@ class CrawlMetricsTracker:
                 genre.active_stories.append(story_title)
                 if len(genre.active_stories) > 5:
                     genre.active_stories = genre.active_stories[-5:]
+
+            def _positive_int(value: Optional[int]) -> Optional[int]:
+                try:
+                    if value is None:
+                        return None
+                    candidate = int(value)
+                except (TypeError, ValueError):
+                    return None
+                return candidate if candidate > 0 else None
+
+            detail: Dict[str, Any] = {"title": story_title}
+            page_value = _positive_int(story_page)
+            if page_value is not None:
+                detail["page"] = page_value
+                genre.current_story_page = page_value
+
+            position_value = _positive_int(story_position)
+            if position_value is not None:
+                detail["position"] = position_value
+                genre.current_story_position = position_value
+
+            genre.active_story_details = [
+                item for item in genre.active_story_details if item.get("title") != story_title
+            ]
+            genre.active_story_details.append(detail)
+            if len(genre.active_story_details) > 5:
+                genre.active_story_details = genre.active_story_details[-5:]
+
+            genre.current_story_title = story_title
             genre.status = "processing_stories"
             genre.updated_at = time.time()
             self._persist_locked()
-
     def genre_story_finished(
         self,
         site_key: str,
@@ -361,11 +407,22 @@ class CrawlMetricsTracker:
             if not genre:
                 return
             genre.active_stories = [title for title in genre.active_stories if title != story_title]
+            genre.active_story_details = [
+                item for item in genre.active_story_details if item.get("title") != story_title
+            ]
             if processed:
                 genre.processed_stories += 1
+            if genre.active_story_details:
+                last = genre.active_story_details[-1]
+                genre.current_story_title = last.get("title")
+                genre.current_story_page = last.get("page")
+                genre.current_story_position = last.get("position")
+            else:
+                genre.current_story_title = None
+                genre.current_story_page = None
+                genre.current_story_position = None
             genre.updated_at = time.time()
             self._persist_locked()
-
     def genre_completed(
         self,
         site_key: str,
@@ -385,6 +442,10 @@ class CrawlMetricsTracker:
             genre.status = "completed"
             genre.last_error = None
             genre.active_stories.clear()
+            genre.active_story_details.clear()
+            genre.current_story_title = None
+            genre.current_story_page = None
+            genre.current_story_position = None
             now = time.time()
             genre.completed_at = now
             genre.updated_at = now
@@ -429,6 +490,10 @@ class CrawlMetricsTracker:
             genre.status = "failed"
             genre.last_error = reason
             genre.active_stories.clear()
+            genre.active_story_details.clear()
+            genre.current_story_title = None
+            genre.current_story_page = None
+            genre.current_story_position = None
             now = time.time()
             genre.completed_at = now
             genre.updated_at = now
@@ -718,6 +783,30 @@ def _genre_from_payload(payload: Dict[str, Any]) -> Optional[GenreProgress]:
     active = payload.get("active_stories")
     if isinstance(active, list):
         progress.active_stories = [str(item) for item in active[:5]]
+
+    raw_details = payload.get("active_story_details")
+    details: List[Dict[str, Any]] = []
+    if isinstance(raw_details, list):
+        for item in raw_details[:5]:
+            if not isinstance(item, dict):
+                continue
+            entry: Dict[str, Any] = {}
+            title = item.get("title")
+            if title:
+                entry["title"] = str(title)
+            page = _coerce_int(item.get("page"))
+            if page:
+                entry["page"] = page
+            position = _coerce_int(item.get("position"))
+            if position:
+                entry["position"] = position
+            if entry:
+                details.append(entry)
+    progress.active_story_details = details
+    title = payload.get("current_story_title")
+    progress.current_story_title = str(title) if isinstance(title, str) and title else None
+    progress.current_story_page = _coerce_int(payload.get("current_story_page"))
+    progress.current_story_position = _coerce_int(payload.get("current_story_position"))
     progress.started_at = _from_iso(payload.get("started_at")) or time.time()
     progress.updated_at = _from_iso(payload.get("updated_at")) or progress.started_at
     progress.completed_at = _from_iso(payload.get("completed_at"))

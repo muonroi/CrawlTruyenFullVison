@@ -7,12 +7,17 @@ import argparse
 import json
 import os
 import sys
-from typing import Any, Dict
+from typing import Any, Dict, List, Optional
 
 DEFAULT_DASHBOARD_FILE = os.environ.get(
     "STORYFLOW_DASHBOARD_FILE",
     os.path.join("logs", "dashboard.json"),
 )
+
+for stream in (sys.stdout, sys.stderr):
+    if hasattr(stream, "reconfigure"):
+        stream.reconfigure(encoding="utf-8")
+
 
 
 def load_dashboard(path: str) -> Dict[str, Any]:
@@ -20,6 +25,101 @@ def load_dashboard(path: str) -> Dict[str, Any]:
         raise FileNotFoundError(f"Không tìm thấy dashboard tại {path}")
     with open(path, "r", encoding="utf-8") as f:
         return json.load(f)
+
+
+def _coerce_int(value: Any) -> Optional[int]:
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def format_genre_summary(genre: Dict[str, Any]) -> List[str]:
+    site_key = genre.get("site_key") or "-"
+    name = genre.get("name") or "?"
+    position = _coerce_int(genre.get("position"))
+    total_genres = _coerce_int(genre.get("total_genres"))
+    prefix = f"[{site_key}] "
+    if position and total_genres:
+        prefix += f"({position}/{total_genres}) "
+
+    total_pages = _coerce_int(genre.get("total_pages"))
+    crawled_pages = _coerce_int(genre.get("crawled_pages")) or 0
+    completed_pages = max(crawled_pages, 0)
+    if total_pages:
+        completed_pages = min(completed_pages, total_pages)
+        page_progress = f"{completed_pages}/{total_pages}"
+    else:
+        page_progress = str(completed_pages)
+    current_page = _coerce_int(genre.get("current_page"))
+    status = genre.get("status") or ""
+    page_note = None
+    if current_page and current_page > completed_pages:
+        page_note = f"đang lấy trang {current_page}"
+    elif status == "processing_stories" and total_pages:
+        page_note = "đã quét đủ"
+
+    processed = _coerce_int(genre.get("processed_stories")) or 0
+    processed = max(processed, 0)
+    total_stories = _coerce_int(genre.get("total_stories"))
+    total_stories_display = "?" if total_stories is None else str(max(total_stories, 0))
+    story_progress = f"{processed}/{total_stories_display}"
+
+    active_details = genre.get("active_story_details") or []
+    active_stories = genre.get("active_stories") or []
+    active_count = len(active_details) or len(active_stories)
+
+    headline = f"  - {prefix}{name} — Trang {page_progress}"
+    if page_note:
+        headline += f" ({page_note})"
+    headline += f", Truyện {story_progress}"
+    if active_count:
+        headline += f" (đang mở {active_count} truyện)"
+    lines_out: List[str] = [headline]
+
+    if status:
+        lines_out.append(f"      Trạng thái: {status.replace('_', ' ')}")
+
+    current_story_title = genre.get("current_story_title")
+    current_story_page = _coerce_int(genre.get("current_story_page"))
+    current_story_position = _coerce_int(genre.get("current_story_position"))
+    if current_story_title:
+        detail_bits = []
+        if current_story_page:
+            detail_bits.append(f"trang {current_story_page}")
+        if current_story_position:
+            detail_bits.append(f"vị trí #{current_story_position}")
+        suffix = f" ({', '.join(detail_bits)})" if detail_bits else ""
+        lines_out.append(f"      Đang xử lý: {current_story_title}{suffix}")
+
+    if active_details:
+        rendered = []
+        for item in active_details[:5]:
+            title = item.get("title")
+            if not title:
+                continue
+            bits = []
+            page_val = _coerce_int(item.get("page"))
+            if page_val:
+                bits.append(f"trang {page_val}")
+            pos_val = _coerce_int(item.get("position"))
+            if pos_val:
+                bits.append(f"#{pos_val}")
+            note = " (" + ", ".join(bits) + ")" if bits else ""
+            rendered.append(f"{title}{note}")
+        if rendered:
+            lines_out.append("      Hàng đợi truyện: " + "; ".join(rendered))
+    elif active_stories:
+        preview = ", ".join(active_stories[:5])
+        lines_out.append(f"      Tiến độ truyện: {preview}")
+        if len(active_stories) > 5:
+            lines_out.append(f"      ... và {len(active_stories) - 5} truyện khác")
+
+    last_error = genre.get("last_error")
+    if last_error:
+        lines_out.append(f"      Lỗi gần nhất: {last_error}")
+
+    return lines_out
 
 def print_dashboard(data: Dict[str, Any]) -> None:
     aggregates = data.get("aggregates", {})
@@ -57,22 +157,8 @@ def print_dashboard(data: Dict[str, Any]) -> None:
     if active_genres:
         print("Thể loại đang xử lý:")
         for genre in active_genres[:10]:
-            total_pages = genre.get("total_pages") or "?"
-            current_page = genre.get("current_page") or genre.get("crawled_pages") or 0
-            total_stories = genre.get("total_stories") or "?"
-            processed = genre.get("processed_stories", 0)
-            position = genre.get("position")
-            total_genres = genre.get("total_genres")
-            prefix = f"[{genre.get('site_key')}] "
-            if position and total_genres:
-                prefix += f"({position}/{total_genres}) "
-            print(
-                f"  - {prefix}{genre.get('name')} — Trang {current_page}/{total_pages}, Truyện {processed}/{total_stories}"
-            )
-            active_stories = genre.get("active_stories") or []
-            if active_stories:
-                joined = ", ".join(active_stories[:5])
-                print(f"      Đang crawl: {joined}")
+            for line in format_genre_summary(genre):
+                print(line)
         if len(active_genres) > 10:
             print(f"  ... và {len(active_genres) - 10} thể loại khác")
         print()

@@ -875,7 +875,13 @@ async def process_genre_item(
                 if isinstance(stored, (int, float)):
                     cooldown_candidate = max(cooldown_candidate or 0, float(stored))
 
-            metrics_tracker.genre_story_started(site_key, genre_data["url"], title)
+            metrics_tracker.genre_story_started(
+                site_key,
+                genre_data["url"],
+                title,
+                story_page=story.get("_source_page"),
+                story_position=idx + 1,
+            )
 
             skip_due_to_cooldown = False
             processed_successfully = False
