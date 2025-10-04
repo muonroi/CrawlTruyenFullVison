@@ -1,9 +1,15 @@
-def get_adapter(site_key: str):
-    if site_key == "xtruyen":
-        from adapters.xtruyen_adapter import XTruyenAdapter
-        return XTruyenAdapter()
-    if site_key == "tangthuvien":
-        from adapters.tangthuvien_adapter import TangThuVienAdapter
-        return TangThuVienAdapter()
-    raise ValueError(f"Unknown site: {site_key}")
+"""Factory helpers for retrieving site adapters."""
 
+from adapters.registry import adapter_registry
+
+
+def get_adapter(site_key: str):
+    """Return an adapter instance registered for ``site_key``."""
+
+    return adapter_registry.get(site_key)
+
+
+def available_site_keys():
+    """Return the discovered site keys that can be instantiated."""
+
+    return list(adapter_registry.available_site_keys())

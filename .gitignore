@@ -6,6 +6,8 @@
 /completed_stories/
 *.pyc
 *.json
+!config/sites/
+!config/sites/*.json
 /backup/
 /backup_truyen_data/
 /tmp_data/*

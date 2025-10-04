@@ -16,6 +16,7 @@ from config.config import BASE_URLS, get_random_headers
 from scraper import make_request
 from utils.chapter_utils import get_chapter_sort_key
 from utils.logger import logger
+from utils.site_config import load_site_config
 
 
 def _with_page_parameter(url: str, page: int) -> str:
@@ -48,17 +49,38 @@ def _with_page_parameter(url: str, page: int) -> str:
 
 
 class TangThuVienAdapter(BaseSiteAdapter):
-    _CHAPTER_PAGE_SIZE = 75
-    _GENRE_PAGING_FALLBACK_STEP = 5
-    _GENRE_PAGING_FALLBACK_MAX = 50
+    site_key = "tangthuvien"
+    _DEFAULT_CHAPTER_PAGE_SIZE = 75
+    _DEFAULT_GENRE_PAGING_FALLBACK_STEP = 5
+    _DEFAULT_GENRE_PAGING_FALLBACK_MAX = 50
+
     def __init__(self) -> None:
-        self.site_key = "tangthuvien"
-        configured_base_url = BASE_URLS.get(self.site_key)
+        self.site_key = self.__class__.site_key
+        site_config = load_site_config(self.site_key)
+        env_base_url = BASE_URLS.get(self.site_key)
+        configured_base_url = site_config.get("base_url", env_base_url)
         desktop_candidate = self._compute_desktop_base_url(configured_base_url)
 
         self._configured_base_url = configured_base_url
         self.base_url = desktop_candidate or configured_base_url
         self._desktop_base_url = desktop_candidate
+
+        chapter_page_size_raw = site_config.get("chapter_page_size", self._DEFAULT_CHAPTER_PAGE_SIZE)
+        self._chapter_page_size = self._coerce_positive_int(
+            chapter_page_size_raw, self._DEFAULT_CHAPTER_PAGE_SIZE
+        )
+        genre_fallback_step_raw = site_config.get(
+            "genre_paging_fallback_step", self._DEFAULT_GENRE_PAGING_FALLBACK_STEP
+        )
+        self._genre_paging_fallback_step = self._coerce_positive_int(
+            genre_fallback_step_raw, self._DEFAULT_GENRE_PAGING_FALLBACK_STEP
+        )
+        genre_fallback_max_raw = site_config.get(
+            "genre_paging_fallback_max", self._DEFAULT_GENRE_PAGING_FALLBACK_MAX
+        )
+        self._genre_paging_fallback_max = self._coerce_positive_int(
+            genre_fallback_max_raw, self._DEFAULT_GENRE_PAGING_FALLBACK_MAX
+        )
 
         if desktop_candidate and desktop_candidate != configured_base_url:
             logger.debug(
@@ -128,7 +150,15 @@ class TangThuVienAdapter(BaseSiteAdapter):
         return urlunparse(normalized)
 
     def get_chapters_per_page_hint(self) -> int:
-        return self._CHAPTER_PAGE_SIZE
+        return self._chapter_page_size
+
+    @staticmethod
+    def _coerce_positive_int(value: Any, default: int) -> int:
+        try:
+            candidate = int(value)
+        except (TypeError, ValueError):
+            return default
+        return candidate if candidate > 0 else default
 
     async def get_genres(self) -> List[Dict[str, str]]:
         html = await self._fetch_text(self.base_url, wait_for_selector="div.update-wrap")
@@ -243,11 +273,11 @@ class TangThuVienAdapter(BaseSiteAdapter):
             if url_key:
                 seen_urls.add(url_key)
 
-        limit_hint = max_pages or total_pages or self._GENRE_PAGING_FALLBACK_STEP
+        limit_hint = max_pages or total_pages or self._genre_paging_fallback_step
         limit_hint = max(limit_hint, 1)
         dynamic_limit = limit_hint
         if max_pages is None and (total_pages or 0) <= 1:
-            dynamic_limit = max(dynamic_limit, self._GENRE_PAGING_FALLBACK_STEP)
+            dynamic_limit = max(dynamic_limit, self._genre_paging_fallback_step)
         crawled_pages = 1
         observed_max_page = 1
         saw_new_items = False
@@ -260,11 +290,11 @@ class TangThuVienAdapter(BaseSiteAdapter):
             if max_pages is None and page_number > dynamic_limit:
                 if not saw_new_items:
                     break
-                if dynamic_limit >= self._GENRE_PAGING_FALLBACK_MAX:
+                if dynamic_limit >= self._genre_paging_fallback_max:
                     break
                 new_limit = min(
-                    max(dynamic_limit + self._GENRE_PAGING_FALLBACK_STEP, page_number),
-                    self._GENRE_PAGING_FALLBACK_MAX,
+                    max(dynamic_limit + self._genre_paging_fallback_step, page_number),
+                    self._genre_paging_fallback_max,
                 )
                 if new_limit == dynamic_limit:
                     break
@@ -338,7 +368,7 @@ class TangThuVienAdapter(BaseSiteAdapter):
             if max_pages is not None and page_index > max_pages:
                 break
 
-            query_url = f"{api_base}?page={page_index}&limit={self._CHAPTER_PAGE_SIZE}&web=1"
+            query_url = f"{api_base}?page={page_index}&limit={self._chapter_page_size}&web=1"
             headers = await self._build_request_headers(query_url)
             response = await make_request(
                 query_url,
@@ -375,7 +405,7 @@ class TangThuVienAdapter(BaseSiteAdapter):
             if total_expected and len(chapters) >= total_expected:
                 break
 
-            if new_items < self._CHAPTER_PAGE_SIZE:
+            if new_items < self._chapter_page_size:
                 break
 
             page_index += 1

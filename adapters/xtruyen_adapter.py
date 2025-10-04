@@ -15,6 +15,7 @@ from config.config import BASE_URLS
 from scraper import make_request
 from utils.chapter_utils import get_chapter_sort_key
 from utils.logger import logger
+from utils.site_config import load_site_config
 
 
 def _with_page_parameter(url: str, page: int) -> str:
@@ -47,11 +48,19 @@ def _with_page_parameter(url: str, page: int) -> str:
 
 
 class XTruyenAdapter(BaseSiteAdapter):
-    _CHAPTER_LIST_BATCH = 100
+    site_key = "xtruyen"
+    _DEFAULT_CHAPTER_LIST_BATCH = 100
 
     def __init__(self) -> None:
-        self.site_key = "xtruyen"
-        self.base_url = BASE_URLS.get(self.site_key, "https://xtruyen.vn")
+        self.site_key = self.__class__.site_key
+        site_config = load_site_config(self.site_key)
+        configured_base_url = site_config.get("base_url")
+        self.base_url = configured_base_url or BASE_URLS.get(self.site_key, "https://xtruyen.vn")
+        chapter_batch_raw = site_config.get("chapter_list_batch", self._DEFAULT_CHAPTER_LIST_BATCH)
+        self._chapter_list_batch = self._coerce_positive_int(
+            chapter_batch_raw, self._DEFAULT_CHAPTER_LIST_BATCH
+        )
+        self._ajax_endpoint = site_config.get("ajax_endpoint", "/wp-admin/admin-ajax.php")
         self._details_cache: Dict[str, Dict[str, Any]] = {}
         self._details_lock = asyncio.Lock()
 
@@ -95,7 +104,15 @@ class XTruyenAdapter(BaseSiteAdapter):
         return normalized
 
     def get_chapters_per_page_hint(self) -> int:
-        return self._CHAPTER_LIST_BATCH
+        return self._chapter_list_batch
+
+    @staticmethod
+    def _coerce_positive_int(value: Any, default: int) -> int:
+        try:
+            candidate = int(value)
+        except (TypeError, ValueError):
+            return default
+        return candidate if candidate > 0 else default
 
     async def _fetch_chapters_via_ajax(
         self,
@@ -110,7 +127,7 @@ class XTruyenAdapter(BaseSiteAdapter):
             logger.warning(f"[{self.site_key}] Missing manga_id for story {story_url}, cannot load chapters via AJAX.")
             return []
 
-        ajax_url = urljoin(self.base_url, '/wp-admin/admin-ajax.php')
+        ajax_url = urljoin(self.base_url, self._ajax_endpoint)
         collected: List[Dict[str, str]] = []
         seen_urls: Set[str] = set()
 
@@ -130,7 +147,7 @@ class XTruyenAdapter(BaseSiteAdapter):
             ranges = []
             start = 1
             while True:
-                end = start + self._CHAPTER_LIST_BATCH - 1
+                end = start + self._chapter_list_batch - 1
                 ranges.append((start, end))
                 if total_expected and end >= total_expected:
                     break
