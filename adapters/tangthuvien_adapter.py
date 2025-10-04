@@ -48,7 +48,7 @@ def _with_page_parameter(url: str, page: int) -> str:
 
 
 class TangThuVienAdapter(BaseSiteAdapter):
-    _CHAPTER_PAGE_SIZE = 50
+    _CHAPTER_PAGE_SIZE = 75
 
     def __init__(self) -> None:
         self.site_key = "tangthuvien"
@@ -189,29 +189,31 @@ class TangThuVienAdapter(BaseSiteAdapter):
             logger.warning(f"[{self.site_key}] Missing story identifier for {story_url}")
             return []
 
+        api_base = urljoin(self.base_url, f"/doc-truyen/page/{story_id}")
         chapters: List[Dict[str, str]] = []
         seen: Set[str] = set()
-        page_index = 0
+        page_index = 1
 
         while True:
-            if max_pages is not None and page_index >= max_pages:
+            if max_pages is not None and page_index > max_pages:
                 break
 
-            api_base = urljoin(self.base_url, f"/doc-truyen/page/{story_id}")
             query_url = f"{api_base}?page={page_index}&limit={self._CHAPTER_PAGE_SIZE}&web=1"
             response = await make_request(query_url, self.site_key)
             if isinstance(response, str):
-                text = response
+                text_payload = response
             elif response and getattr(response, "text", None):
-                text = response.text
+                text_payload = response.text
             else:
-                text = None
+                text_payload = None
 
-            if not text:
-                logger.info(f"[{self.site_key}] Empty chapter payload for {story_url} page {page_index}")
+            if not text_payload:
+                logger.info(
+                    f"[{self.site_key}] Empty chapter payload for {story_url} page {page_index}"
+                )
                 break
 
-            batch = parse_chapter_list(text, self.base_url)
+            batch = parse_chapter_list(text_payload, self.base_url)
             new_items = 0
             for chapter in batch:
                 url_key = chapter.get("url")
@@ -222,6 +224,9 @@ class TangThuVienAdapter(BaseSiteAdapter):
                 chapters.append(chapter)
                 new_items += 1
 
+            if new_items == 0:
+                break
+
             if total_expected and len(chapters) >= total_expected:
                 break
 
@@ -229,6 +234,61 @@ class TangThuVienAdapter(BaseSiteAdapter):
                 break
 
             page_index += 1
+
+        chapters.sort(key=get_chapter_sort_key)
+        return chapters
+
+    async def _fetch_chapters_via_html_pages(
+        self,
+        story_url: str,
+        total_expected: Optional[int] = None,
+        max_pages: Optional[int] = None,
+        initial_html: Optional[str] = None,
+    ) -> List[Dict[str, str]]:
+        chapters: List[Dict[str, str]] = []
+        seen: Set[str] = set()
+
+        def _ingest(html_fragment: str) -> int:
+            batch = parse_chapter_list(html_fragment, self.base_url)
+            new_items = 0
+            for chapter in batch:
+                url_key = chapter.get("url")
+                if not url_key or url_key in seen:
+                    continue
+                seen.add(url_key)
+                chapter.setdefault("site_key", self.site_key)
+                chapters.append(chapter)
+                new_items += 1
+            return new_items
+
+        page_number = 1
+        while True:
+            if page_number == 1 and initial_html:
+                html_content = initial_html
+            else:
+                page_url = _with_page_parameter(story_url, page_number)
+                html_content = await self._fetch_text(
+                    page_url, wait_for_selector="div.catalog-content"
+                )
+            if not html_content:
+                break
+
+            new_items = _ingest(html_content)
+            logger.debug(
+                f"[{self.site_key}] Parsed {new_items} chapters from page {page_number} of {story_url}"
+            )
+
+            if new_items == 0:
+                break
+
+            if total_expected and len(chapters) >= total_expected:
+                break
+
+            if max_pages is not None and page_number >= max_pages:
+                break
+
+            page_number += 1
+            await asyncio.sleep(0.3)
 
         chapters.sort(key=get_chapter_sort_key)
         return chapters
@@ -244,6 +304,7 @@ class TangThuVienAdapter(BaseSiteAdapter):
         if not isinstance(total_expected, int):
             total_expected = None
 
+        final_chapters = list(inline_chapters)
         needs_api = total_expected and len(inline_chapters) < total_expected
 
         if needs_api or not inline_chapters:
@@ -253,14 +314,31 @@ class TangThuVienAdapter(BaseSiteAdapter):
                 total_expected=total_expected,
             )
             if api_chapters:
-                details["chapters"] = api_chapters
+                final_chapters = api_chapters
             else:
-                for chapter in inline_chapters:
-                    chapter.setdefault("site_key", self.site_key)
-                details["chapters"] = inline_chapters
-        else:
-            for chapter in inline_chapters:
-                chapter.setdefault("site_key", self.site_key)
+                html_chapters = await self._fetch_chapters_via_html_pages(
+                    story_url=story_url,
+                    total_expected=total_expected,
+                    initial_html=html,
+                )
+                if html_chapters:
+                    final_chapters = html_chapters
+        elif total_expected and len(inline_chapters) < total_expected:
+            html_chapters = await self._fetch_chapters_via_html_pages(
+                story_url=story_url,
+                total_expected=total_expected,
+                initial_html=html,
+            )
+            if html_chapters and len(html_chapters) >= len(final_chapters):
+                final_chapters = html_chapters
+
+        if not final_chapters:
+            final_chapters = inline_chapters
+
+        for chapter in final_chapters:
+            chapter.setdefault("site_key", self.site_key)
+
+        details["chapters"] = final_chapters
 
         details["sources"] = [
             {"url": story_url, "site_key": self.site_key, "priority": 1}
@@ -296,15 +374,16 @@ class TangThuVienAdapter(BaseSiteAdapter):
             logger.error(f"[{self.site_key}] Could not load story details for {normalized_url}")
             return []
 
+        expected = None
+        if isinstance(total_chapters, int):
+            expected = total_chapters
+        elif isinstance(details.get("total_chapters_on_site"), int):
+            expected = details["total_chapters_on_site"]
+
         chapters = list(details.get("chapters") or [])
         chapter_source = "details"
-        if not chapters:
-            expected = None
-            if isinstance(total_chapters, int):
-                expected = total_chapters
-            elif isinstance(details.get("total_chapters_on_site"), int):
-                expected = details["total_chapters_on_site"]
 
+        if not chapters:
             chapters = await self._fetch_chapters_via_api(
                 story_id=details.get("story_id"),
                 story_url=normalized_url,
@@ -320,8 +399,18 @@ class TangThuVienAdapter(BaseSiteAdapter):
             if not html:
                 logger.error(f"[{self.site_key}] Fallback HTML fetch failed for {normalized_url}.")
                 return []
-            chapters = parse_chapter_list(html, self.base_url)
-            chapter_source = "html"
+            chapters = await self._fetch_chapters_via_html_pages(
+                story_url=normalized_url,
+                total_expected=expected,
+                max_pages=max_pages,
+                initial_html=html,
+            )
+            if chapters:
+                details["chapters"] = chapters
+                chapter_source = "html-pages"
+            else:
+                chapters = parse_chapter_list(html, self.base_url)
+                chapter_source = "html"
 
         for chapter in chapters:
             chapter.setdefault("site_key", self.site_key)

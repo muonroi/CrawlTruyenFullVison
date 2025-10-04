@@ -37,7 +37,7 @@ def _sanitize_base_url(raw_value: Optional[str], default: str) -> str:
 # ============ BASE URLs ============
 BASE_URLS = {
     "xtruyen": _sanitize_base_url(os.getenv("BASE_XTRUYEN"), "https://xtruyen.vn"),
-    "tangthuvien": _sanitize_base_url(os.getenv("BASE_TANGTHUVIEN"), "https://tangthuvien.net"),
+    "tangthuvien": _sanitize_base_url(os.getenv("BASE_TANGTHUVIEN"), "https://tangthuvien.net/tong-hop"),
 }
 
 # Allow restricting the active crawl sites via environment variable.
