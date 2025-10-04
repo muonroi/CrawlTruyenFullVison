@@ -128,18 +128,20 @@ class GenreProgress:
 
 
 def _story_completion_percent(progress: StoryProgress) -> int:
-    total = max(int(progress.total_chapters or 0), 0)
     crawled = max(int(progress.crawled_chapters or 0), 0)
+    missing = max(int(progress.missing_chapters or 0), 0)
+    configured_total = max(int(progress.total_chapters or 0), 0)
+    inferred_total = crawled + missing
+    dynamic_total = configured_total if configured_total > 0 else inferred_total
 
     if progress.status == "completed":
         return 100
 
-    if total > 0:
-        percent = round((crawled / total) * 100)
-    else:
-        percent = 0
+    if dynamic_total <= 0:
+        return 0
 
-    return max(0, min(int(percent), 100))
+    percent = int((crawled / dynamic_total) * 100)
+    return max(0, min(percent, 100))
 
 
 def _story_event_payload(progress: StoryProgress) -> Dict[str, Any]:

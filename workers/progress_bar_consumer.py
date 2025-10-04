@@ -41,7 +41,10 @@ class StoryView:
     def from_payload(cls, payload: Dict[str, Any], percent_fallback: int) -> "StoryView":
         total = int(payload.get("total_chapters") or 0)
         crawled = int(payload.get("crawled_chapters") or 0)
-        percent = _coerce_percent(payload.get("percent"), crawled, total, percent_fallback)
+        remaining = _as_optional_int(payload.get("remaining_chapters")) or 0
+        percent = _coerce_percent(
+            payload.get("percent"), crawled, total, remaining, percent_fallback
+        )
 
         return cls(
             story_id=str(payload.get("id")),
@@ -141,15 +144,22 @@ def _as_optional_int(value: Any) -> Optional[int]:
         return None
 
 
-def _coerce_percent(candidate: Any, crawled: int, total: int, fallback: int) -> int:
+def _coerce_percent(
+    candidate: Any, crawled: int, total: int, remaining: int, fallback: int
+) -> int:
     try:
         if candidate is not None:
             return max(0, min(int(candidate), 100))
     except (TypeError, ValueError):  # pragma: no cover
         pass
 
-    if total > 0:
-        percent = math.floor((crawled / total) * 100)
+    missing = max(remaining, 0)
+    configured_total = max(total, 0)
+    inferred_total = crawled + missing
+    dynamic_total = configured_total if configured_total > 0 else inferred_total
+
+    if dynamic_total > 0:
+        percent = math.floor((crawled / dynamic_total) * 100)
         return max(0, min(percent, 100))
     return fallback
 
