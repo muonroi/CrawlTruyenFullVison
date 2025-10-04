@@ -1,6 +1,24 @@
 from abc import ABC, abstractmethod
+from typing import ClassVar
+
 
 class BaseSiteAdapter(ABC):
+    """Base contract that all site adapters must follow."""
+
+    #: Identifier used by the plugin loader to register the adapter.
+    site_key: ClassVar[str]
+
+    @classmethod
+    def get_site_key(cls) -> str:
+        """Return the declared ``site_key`` for the adapter."""
+
+        key = getattr(cls, "site_key", "")
+        if not isinstance(key, str) or not key:
+            raise NotImplementedError(
+                f"Adapter {cls.__name__} must define a non-empty `site_key` class attribute."
+            )
+        return key
+
     @abstractmethod
     async def get_genres(self):
         pass
@@ -26,7 +44,7 @@ class BaseSiteAdapter(ABC):
         pass
 
     @abstractmethod
-    async def get_all_stories_from_genre_with_page_check(self, genre_name, genre_url, site_key,max_pages=None):
+    async def get_all_stories_from_genre_with_page_check(self, genre_name, genre_url, site_key, max_pages=None):
         pass
 
     def get_chapters_per_page_hint(self) -> int:
